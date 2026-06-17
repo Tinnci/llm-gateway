@@ -1,0 +1,47 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "LLM Gateway",
+        "description": "连接到兼容 OpenAI 接口的对话端点。默认指向 NVIDIA NIM，提供免费额度。",
+        "data": {
+          "base_url": "Base URL",
+          "api_key": "API 密钥"
+        },
+        "data_description": {
+          "base_url": "兼容 OpenAI 的 Base URL，需包含版本路径（如 /v1）。",
+          "api_key": "用于向端点鉴权的 Bearer Token。"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "无法连接到端点。",
+      "invalid_auth": "鉴权失败，请检查 API 密钥。"
+    },
+    "abort": {
+      "already_configured": "该端点已配置。"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "LLM Gateway 设置",
+        "data": {
+          "chat_model": "模型",
+          "llm_hass_api": "控制 Home Assistant",
+          "prompt": "系统提示词",
+          "max_tokens": "回复的最大 token 数",
+          "temperature": "Temperature",
+          "top_p": "Top P"
+        },
+        "data_description": {
+          "chat_model": "从端点提供的模型中选择，或手动输入自定义模型 id。",
+          "llm_hass_api": "选择一个或多个 API 以允许模型控制家居设备；留空则仅用于纯对话。",
+          "prompt": "告诉模型如何表现的系统指令。",
+          "temperature": "值越高输出越随机，越低越聚焦。",
+          "top_p": "核采样阈值。"
+        }
+      }
+    }
+  }
+}

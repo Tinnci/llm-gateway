@@ -1,0 +1,71 @@
+name: Validate
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: 📥 Checkout the repository
+        uses: actions/checkout@v4
+      - name: 🛠️ Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: 🧹 Ruff check
+        run: uvx ruff check custom_components tests
+      - name: 🎨 Ruff format check
+        run: uvx ruff format --check custom_components tests
+      - name: 🧪 Pytest
+        run: uv run pytest -q
+
+  validate-hassfest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout the repository
+        uses: actions/checkout@v4
+      - name: 🏃 Hassfest validation
+        uses: home-assistant/actions/hassfest@master
+
+  validate-hacs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout the repository
+        uses: actions/checkout@v4
+      - name: 🏃 HACS validation
+        uses: hacs/action@main
+        with:
+          category: integration
+
+  validate-homeassistant:
+    strategy:
+      fail-fast: false
+      matrix:
+        channel: [stable, beta, dev]
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout the repository
+        uses: actions/checkout@v4
+
+      - name: 🛠️ Home Assistant configuration
+        run: |
+          mkdir ./test_configuration
+          cp -r ./custom_components ./test_configuration
+          echo "default_config:" >> ./test_configuration/configuration.yaml
+
+      - name: 🏡 Home Assistant validation
+        uses: ludeeus/setup-homeassistant@main
+        with:
+          tag: ${{ matrix.channel }}
+          config-dir: test_configuration

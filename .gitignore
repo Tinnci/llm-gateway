@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.mypy_cache/
+test_configuration/
+custom_components/llm_gateway/llm_gateway.zip

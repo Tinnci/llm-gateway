@@ -1,0 +1,47 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "LLM Gateway",
+        "description": "Connect to an OpenAI-compatible chat endpoint. The default targets NVIDIA NIM, which offers a free tier.",
+        "data": {
+          "base_url": "Base URL",
+          "api_key": "API key"
+        },
+        "data_description": {
+          "base_url": "OpenAI-compatible base URL, including the version path (e.g. /v1).",
+          "api_key": "Bearer token used to authenticate with the endpoint."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the endpoint.",
+      "invalid_auth": "Authentication failed. Check the API key."
+    },
+    "abort": {
+      "already_configured": "This endpoint is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "LLM Gateway settings",
+        "data": {
+          "chat_model": "Model",
+          "llm_hass_api": "Control Home Assistant",
+          "prompt": "Instructions",
+          "max_tokens": "Maximum tokens to return in response",
+          "temperature": "Temperature",
+          "top_p": "Top P"
+        },
+        "data_description": {
+          "chat_model": "Pick from the models the endpoint advertises, or type a custom model id.",
+          "llm_hass_api": "Select one or more APIs to let the model control your home. Leave empty for chat only.",
+          "prompt": "System instructions that tell the model how to behave.",
+          "temperature": "Higher values make output more random; lower values make it more focused.",
+          "top_p": "Nucleus sampling threshold."
+        }
+      }
+    }
+  }
+}

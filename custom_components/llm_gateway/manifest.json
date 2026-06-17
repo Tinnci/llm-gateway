@@ -1,0 +1,14 @@
+{
+  "domain": "llm_gateway",
+  "name": "LLM Gateway",
+  "after_dependencies": ["assist_pipeline", "intent"],
+  "codeowners": ["@Tinnci"],
+  "config_flow": true,
+  "dependencies": ["conversation"],
+  "documentation": "https://github.com/Tinnci/llm-gateway",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/Tinnci/llm-gateway/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}

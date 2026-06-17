@@ -1,0 +1,52 @@
+target-version = "py313"
+line-length = 88
+
+[lint]
+select = ["ALL"]
+ignore = [
+    # Ruff formatter handles line wrapping and trailing commas.
+    "COM812",
+    "ISC001",
+
+    # This is a Home Assistant custom integration, not a public SDK. Module and
+    # method names follow HA conventions and are descriptive without docstrings.
+    "D100",
+    "D101",
+    "D102",
+    "D103",
+    "D104",
+    "D105",
+    "D107",
+    "D203",
+    "D213",
+
+    # Home Assistant components conventionally use relative imports (`.const`).
+    "TID252",
+
+    # Boundary error strings are short and surfaced directly in HA logs.
+    "EM101",
+    "EM102",
+    "TRY003",
+
+    # This integration intentionally carries Chinese prompts/responses; flagging
+    # full-width CJK punctuation as "ambiguous" is a false positive here.
+    "RUF001",
+    "RUF003",
+]
+
+[lint.mccabe]
+max-complexity = 25
+
+[lint.per-file-ignores]
+"tests/**" = [
+    "ANN001",
+    "ANN201",
+    "ANN202",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "S101",
+    "S105",
+    "S106",
+    "SLF001",
+]
