@@ -42,6 +42,20 @@
       "peak_dbfs": -16.4,
       "purpose": "Microphone is open and the user can speak."
     },
+    "processing_loop": {
+      "duration_ms": 340.0,
+      "lufs": -24.0,
+      "path": "processing_loop.wav",
+      "peak_dbfs": -12.0,
+      "purpose": "Assistant is still waiting on a slow provider; play quietly as a loop after the soft latency threshold."
+    },
+    "provider_fallback": {
+      "duration_ms": 190.0,
+      "lufs": -24.0,
+      "path": "provider_fallback.wav",
+      "peak_dbfs": -17.2,
+      "purpose": "Primary model provider was too slow or failed; the request is moving to a fallback provider."
+    },
     "search": {
       "duration_ms": 194.0,
       "lufs": -24.0,

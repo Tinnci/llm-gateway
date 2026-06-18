@@ -120,6 +120,23 @@ PROMPT_POLICIES: list[dict[str, Any]] = [
         "rules": ["external_facts_only", "cite_in_panel", "short_tts"],
     },
     {
+        "id": "latency_wait",
+        "title": "长延迟等待提示",
+        "title_i18n": {"en": "Long-latency wait", "zh-Hans": "长延迟等待提示"},
+        "risk": "low",
+        "spoken": "还在查询，请稍等。",
+        "spoken_i18n": {
+            "en": "Still checking. Please wait.",
+            "zh-Hans": "还在查询，请稍等。",
+        },
+        "rules": [
+            "local_clip_preferred",
+            "do_not_repeat",
+            "do_not_extend_dialog",
+            "stop_when_final_tts_starts",
+        ],
+    },
+    {
         "id": "error_repair",
         "title": "错误修复",
         "title_i18n": {"en": "Error repair", "zh-Hans": "错误修复"},

@@ -175,6 +175,20 @@ The pack currently uses WAV for deterministic short cues. OPUS fallback spoken
 clips are a separate satellite-level task and are not part of this integration
 yet.
 
+The pack includes two latency-oriented cues:
+
+- `processing_loop.wav`: a short loopable cue for slow LLM/search waits. The
+  satellite should play it at reduced gain after a soft latency threshold and
+  stop it before final TTS starts.
+- `provider_fallback.wav`: a one-shot cue for future model-provider fallback
+  when the primary provider is too slow or fails.
+
+Provider fallback should be implemented as ordered failover with per-provider
+health scoring, not as blind round-robin load balancing. Search provider
+fallback already follows a priority list. Model provider fallback is a planned
+next layer that needs provider profiles, soft timeouts, circuit breakers, and
+diagnostic trace fields for provider and fallback reason.
+
 ## Development
 
 Use `uv` for Python and `bun` for frontend syntax/build checks:

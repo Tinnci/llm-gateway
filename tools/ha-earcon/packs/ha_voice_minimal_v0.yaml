@@ -130,6 +130,39 @@ earcons:
       attack_ms: 5
       release_ms: 24
 
+  processing_loop:
+    type: tone_sequence
+    purpose: Assistant is still waiting on a slow provider; play quietly as a loop after the soft latency threshold.
+    peak: 0.12
+    tones:
+      - freq: 523.25
+        ms: 34
+        amp: 0.10
+      - silence_ms: 92
+      - freq: 659.25
+        ms: 40
+        amp: 0.10
+      - silence_ms: 174
+    envelope:
+      attack_ms: 6
+      release_ms: 26
+
+  provider_fallback:
+    type: tone_sequence
+    purpose: Primary model provider was too slow or failed; the request is moving to a fallback provider.
+    peak: 0.16
+    tones:
+      - start_freq: 622
+        end_freq: 494
+        ms: 70
+      - silence_ms: 28
+      - start_freq: 494
+        end_freq: 740
+        ms: 92
+    envelope:
+      attack_ms: 7
+      release_ms: 30
+
   deep_task:
     type: tone_sequence
     purpose: Long reasoning has been handed off to a background task.
