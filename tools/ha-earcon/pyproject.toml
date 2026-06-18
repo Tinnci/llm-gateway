@@ -1,0 +1,34 @@
+[project]
+name = "ha-earcon"
+version = "0.1.0"
+description = "Deterministic earcon renderer for the LLM Gateway Voice Harness"
+requires-python = ">=3.11,<3.15"
+dependencies = [
+    "numpy>=2.0",
+    "pyloudnorm>=0.1.1",
+    "pyyaml>=6.0",
+    "rich>=13.0",
+    "soundfile>=0.12",
+    "typer>=0.12",
+]
+
+[project.optional-dependencies]
+play = ["sounddevice>=0.5"]
+
+[project.scripts]
+ha-earcon = "ha_earcon.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+package = true
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

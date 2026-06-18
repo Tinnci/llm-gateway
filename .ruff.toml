@@ -50,3 +50,16 @@ max-complexity = 25
     "S106",
     "SLF001",
 ]
+"tools/ha-earcon/src/ha_earcon/cli.py" = [
+    # Typer documents Argument/Option calls as the normal CLI declaration style.
+    "B008",
+    # sounddevice is an optional play extra and should stay lazy.
+    "PLC0415",
+    "TC003",
+]
+"tools/ha-earcon/src/ha_earcon/manifest.py" = ["TC003"]
+"tools/ha-earcon/src/ha_earcon/synth.py" = ["TC003"]
+"tools/ha-earcon/tests/**" = [
+    "PLR2004",
+    "S101",
+]

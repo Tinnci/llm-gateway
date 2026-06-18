@@ -1,0 +1,146 @@
+name: ha_voice_minimal_v0
+sample_rate: 16000
+target_lufs: -24.0
+true_peak_dbfs: -3.0
+
+earcons:
+  wake:
+    type: tone_sequence
+    purpose: Wake word accepted; assistant is entering the voice path.
+    peak: 0.24
+    harmonics:
+      - multiple: 2
+        gain: 0.08
+    tones:
+      - freq: 659.25
+        ms: 54
+      - silence_ms: 24
+      - freq: 880.0
+        ms: 72
+    envelope:
+      attack_ms: 6
+      release_ms: 24
+
+  listening_start:
+    type: tone_sequence
+    purpose: Microphone is open and the user can speak.
+    peak: 0.22
+    tones:
+      - start_freq: 520
+        end_freq: 760
+        ms: 95
+      - silence_ms: 18
+      - freq: 760
+        ms: 42
+    envelope:
+      attack_ms: 5
+      release_ms: 22
+
+  listening_end:
+    type: tone_sequence
+    purpose: Speech capture ended and the assistant is processing.
+    peak: 0.20
+    tones:
+      - freq: 740
+        ms: 42
+      - silence_ms: 18
+      - start_freq: 690
+        end_freq: 520
+        ms: 88
+    envelope:
+      attack_ms: 5
+      release_ms: 24
+
+  success:
+    type: tone_sequence
+    purpose: Low-risk command completed.
+    peak: 0.22
+    harmonics:
+      - multiple: 2
+        gain: 0.06
+    tones:
+      - freq: 783.99
+        ms: 46
+      - silence_ms: 22
+      - freq: 987.77
+        ms: 68
+    envelope:
+      attack_ms: 5
+      release_ms: 25
+
+  failure:
+    type: tone_sequence
+    purpose: Request failed or the assistant cannot continue safely.
+    peak: 0.21
+    tones:
+      - freq: 440.0
+        ms: 78
+      - silence_ms: 30
+      - freq: 329.63
+        ms: 138
+    envelope:
+      attack_ms: 8
+      release_ms: 44
+
+  confirmation:
+    type: tone_sequence
+    purpose: High-risk action needs explicit user confirmation.
+    peak: 0.20
+    tones:
+      - freq: 392.0
+        ms: 68
+      - silence_ms: 34
+      - freq: 392.0
+        ms: 68
+    envelope:
+      attack_ms: 7
+      release_ms: 35
+
+  clarification:
+    type: tone_sequence
+    purpose: The assistant needs one missing detail before acting.
+    peak: 0.20
+    tones:
+      - freq: 523.25
+        ms: 56
+      - silence_ms: 26
+      - freq: 587.33
+        ms: 56
+    envelope:
+      attack_ms: 6
+      release_ms: 26
+
+  search:
+    type: tone_sequence
+    purpose: Web search is being used for current external information.
+    peak: 0.20
+    harmonics:
+      - multiple: 2
+        gain: 0.04
+    tones:
+      - freq: 587.33
+        ms: 50
+      - silence_ms: 18
+      - freq: 739.99
+        ms: 50
+      - silence_ms: 18
+      - freq: 880.0
+        ms: 58
+    envelope:
+      attack_ms: 5
+      release_ms: 24
+
+  deep_task:
+    type: tone_sequence
+    purpose: Long reasoning has been handed off to a background task.
+    peak: 0.19
+    tones:
+      - start_freq: 440
+        end_freq: 660
+        ms: 120
+      - silence_ms: 24
+      - freq: 660
+        ms: 90
+    envelope:
+      attack_ms: 8
+      release_ms: 35

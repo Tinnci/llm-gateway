@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from http import HTTPStatus
-from typing import Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
-from aiohttp import web
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
 from homeassistant.helpers.http import HomeAssistantView
 
 from .const import (
@@ -41,7 +40,75 @@ from .router import select_model_route
 from .search import search_providers_from_options
 from .voice_text import markdown_to_spoken_text
 
+if TYPE_CHECKING:
+    from aiohttp import web
+    from homeassistant.config_entries import ConfigEntry
+    from homeassistant.core import HomeAssistant
+
+    from .router import ModelRoute
+
 API_BASE = f"/api/{DOMAIN}"
+STATIC_BASE = f"{API_BASE}/static"
+EARCON_PACK = "ha_voice_minimal_v0"
+EARCON_MANIFEST = (
+    Path(__file__).parent
+    / "frontend"
+    / "earcons"
+    / EARCON_PACK
+    / "manifest.json"
+)
+
+PROMPT_POLICIES: list[dict[str, Any]] = [
+    {
+        "id": "low_risk_success",
+        "title": "Low-risk success",
+        "risk": "low",
+        "spoken": "好了。",
+        "rules": ["max_one_sentence", "no_tool_details", "no_entity_id"],
+    },
+    {
+        "id": "state_query",
+        "title": "State query",
+        "risk": "low",
+        "spoken": "先回答结论，不展开长解释。",
+        "rules": ["answer_first", "no_long_list", "no_url"],
+    },
+    {
+        "id": "clarification",
+        "title": "Clarification",
+        "risk": "medium",
+        "spoken": "一次只问一个最小澄清问题。",
+        "rules": ["one_question", "no_action_before_clarity"],
+    },
+    {
+        "id": "high_risk_confirmation",
+        "title": "High-risk confirmation",
+        "risk": "high",
+        "spoken": "要操作{target}吗？请确认。",
+        "rules": ["must_confirm", "name_target", "no_action_before_confirmation"],
+    },
+    {
+        "id": "search_summary",
+        "title": "Search summary",
+        "risk": "medium",
+        "spoken": "先说结论，来源和长列表放到屏幕。",
+        "rules": ["external_facts_only", "cite_in_panel", "short_tts"],
+    },
+    {
+        "id": "error_repair",
+        "title": "Error repair",
+        "risk": "medium",
+        "spoken": "说明下一步，而不是只说没听懂。",
+        "rules": ["actionable_repair", "no_blame", "one_next_step"],
+    },
+    {
+        "id": "deep_task",
+        "title": "Deep task",
+        "risk": "low",
+        "spoken": "我会继续分析，完成后发到 Home Assistant 通知里。",
+        "rules": ["non_blocking_voice", "no_direct_ha_action"],
+    },
+]
 
 SAMPLE_SCENARIOS: list[dict[str, Any]] = [
     {
@@ -106,6 +173,8 @@ class HarnessStatusView(HomeAssistantView):
                     "api_base": API_BASE,
                 },
                 "entries": [_entry_status(entry) for entry in _entries(hass)],
+                "earcons": _earcon_pack_status(),
+                "prompt_policies": PROMPT_POLICIES,
                 "sample_scenarios": SAMPLE_SCENARIOS,
             }
         )
@@ -214,7 +283,9 @@ def _entry_status(entry: ConfigEntry) -> dict[str, Any]:
                 provider.name for provider in search_providers_from_options(options)
             ],
         },
-        "memory": runtime.memory.snapshot() if runtime else {"facts": [], "sessions": []},
+        "memory": (
+            runtime.memory.snapshot() if runtime else {"facts": [], "sessions": []}
+        ),
         "deep_tasks": runtime.deep_tasks.snapshot() if runtime else [],
     }
 
@@ -254,7 +325,7 @@ def _options_status(options: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _route_status(route: Any) -> dict[str, Any]:
+def _route_status(route: ModelRoute) -> dict[str, Any]:
     return {
         "kind": route.kind,
         "model": route.model,
@@ -282,4 +353,27 @@ def _actual_from_payload(payload: dict[str, Any], response_text: str) -> dict[st
     return {
         "response": response_text,
         "called_service": bool(payload.get("called_service")),
+    }
+
+
+def _earcon_pack_status() -> dict[str, Any]:
+    try:
+        data = json.loads(EARCON_MANIFEST.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {
+            "pack": EARCON_PACK,
+            "base_url": f"{STATIC_BASE}/earcons/{EARCON_PACK}",
+            "files": {},
+        }
+
+    base_url = f"{STATIC_BASE}/earcons/{data.get('pack') or EARCON_PACK}"
+    files = data.get("files") if isinstance(data.get("files"), dict) else {}
+    return {
+        **data,
+        "base_url": base_url,
+        "files": {
+            name: {**item, "url": f"{base_url}/{item.get('path')}"}
+            for name, item in files.items()
+            if isinstance(item, dict) and item.get("path")
+        },
     }

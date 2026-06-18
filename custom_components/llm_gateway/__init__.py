@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING
 from homeassistant.const import CONF_API_KEY, Platform
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.typing import ConfigType
 
 from .api import LLMGatewayAuthError, LLMGatewayClient, LLMGatewayError
 from .const import CONF_BASE_URL, DEFAULT_BASE_URL
@@ -17,13 +16,14 @@ from .runtime import DeepTaskManager, LLMGatewayRuntimeData
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
+    from homeassistant.helpers.typing import ConfigType
 
     from .config_entry import LLMGatewayConfigEntry
 
 PLATFORMS = [Platform.CONVERSATION]
 
 
-async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+async def async_setup(hass: HomeAssistant, _config: ConfigType) -> bool:
     """Set up domain-level resources for LLM Gateway."""
     await async_setup_panel(hass)
     return True

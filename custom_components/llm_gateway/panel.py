@@ -28,7 +28,7 @@ async def async_setup_panel(hass: HomeAssistant) -> None:
     hass.data[DATA_PANEL_SETUP] = True
     frontend_path = Path(__file__).parent / "frontend"
     await hass.http.async_register_static_paths(
-        [StaticPathConfig(URL_BASE, str(frontend_path), True)]
+        [StaticPathConfig(URL_BASE, str(frontend_path), cache_headers=True)]
     )
     async_register_views(hass)
     frontend.async_register_built_in_panel(

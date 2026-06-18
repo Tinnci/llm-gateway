@@ -1,0 +1,71 @@
+{
+  "files": {
+    "clarification": {
+      "duration_ms": 138.0,
+      "lufs": -24.0,
+      "path": "clarification.wav",
+      "peak_dbfs": -16.1,
+      "purpose": "The assistant needs one missing detail before acting."
+    },
+    "confirmation": {
+      "duration_ms": 170.0,
+      "lufs": -24.0,
+      "path": "confirmation.wav",
+      "peak_dbfs": -15.9,
+      "purpose": "High-risk action needs explicit user confirmation."
+    },
+    "deep_task": {
+      "duration_ms": 234.0,
+      "lufs": -24.0,
+      "path": "deep_task.wav",
+      "peak_dbfs": -17.2,
+      "purpose": "Long reasoning has been handed off to a background task."
+    },
+    "failure": {
+      "duration_ms": 246.0,
+      "lufs": -24.0,
+      "path": "failure.wav",
+      "peak_dbfs": -17.5,
+      "purpose": "Request failed or the assistant cannot continue safely."
+    },
+    "listening_end": {
+      "duration_ms": 148.0,
+      "lufs": -24.0,
+      "path": "listening_end.wav",
+      "peak_dbfs": -16.5,
+      "purpose": "Speech capture ended and the assistant is processing."
+    },
+    "listening_start": {
+      "duration_ms": 155.0,
+      "lufs": -24.0,
+      "path": "listening_start.wav",
+      "peak_dbfs": -16.4,
+      "purpose": "Microphone is open and the user can speak."
+    },
+    "search": {
+      "duration_ms": 194.0,
+      "lufs": -24.0,
+      "path": "search.wav",
+      "peak_dbfs": -16.5,
+      "purpose": "Web search is being used for current external information."
+    },
+    "success": {
+      "duration_ms": 136.0,
+      "lufs": -24.0,
+      "path": "success.wav",
+      "peak_dbfs": -17.2,
+      "purpose": "Low-risk command completed."
+    },
+    "wake": {
+      "duration_ms": 150.0,
+      "lufs": -24.0,
+      "path": "wake.wav",
+      "peak_dbfs": -16.9,
+      "purpose": "Wake word accepted; assistant is entering the voice path."
+    }
+  },
+  "pack": "ha_voice_minimal_v0",
+  "sample_rate": 16000,
+  "target_lufs": -24.0,
+  "true_peak_dbfs": -3.0
+}

@@ -5,7 +5,11 @@ from __future__ import annotations
 from homeassistant.components import frontend
 from homeassistant.setup import async_setup_component
 
-from custom_components.llm_gateway.panel import PANEL_MODULE, PANEL_URL, async_setup_panel
+from custom_components.llm_gateway.panel import (
+    PANEL_MODULE,
+    PANEL_URL,
+    async_setup_panel,
+)
 
 
 async def test_panel_registers_sidebar_entry(hass):
@@ -34,6 +38,11 @@ async def test_harness_status_api(hass, hass_client):
     assert response.status == 200
     data = await response.json()
     assert data["panel"]["url_path"] == PANEL_URL
+    assert data["earcons"]["pack"] == "ha_voice_minimal_v0"
+    assert data["earcons"]["files"]["confirmation"]["url"].endswith(
+        "/confirmation.wav"
+    )
+    assert data["prompt_policies"]
     assert data["sample_scenarios"]
 
 

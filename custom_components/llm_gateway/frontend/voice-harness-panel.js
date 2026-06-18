@@ -4,6 +4,7 @@ const TABS = [
   ["scenarios", "Scenarios", "mdi:clipboard-text-search-outline"],
   ["search", "Search Lab", "mdi:web"],
   ["memory", "Memory Lab", "mdi:database-eye-outline"],
+  ["earcons", "Earcons", "mdi:music-note-outline"],
   ["regression", "Regression", "mdi:chart-timeline-variant"],
 ];
 
@@ -116,6 +117,10 @@ class VoiceHarnessPanel extends HTMLElement {
       this._load();
       return;
     }
+    if (button.dataset.earcon) {
+      this._playEarcon(button.dataset.earcon);
+      return;
+    }
     const sampleId = button.dataset.sample;
     if (sampleId) {
       const sample = this._data?.sample_scenarios?.find((item) => item.id === sampleId);
@@ -161,6 +166,18 @@ class VoiceHarnessPanel extends HTMLElement {
       user: this._draft.user,
       response: this._draft.response,
       expected,
+    });
+  }
+
+  _playEarcon(name) {
+    const file = this._data?.earcons?.files?.[name];
+    if (!file?.url) {
+      return;
+    }
+    const audio = new Audio(file.url);
+    audio.play().catch((err) => {
+      this._error = err.message || String(err);
+      this._render();
     });
   }
 
@@ -223,6 +240,9 @@ class VoiceHarnessPanel extends HTMLElement {
     if (this._activeTab === "memory") {
       return this._renderMemory(entries);
     }
+    if (this._activeTab === "earcons") {
+      return this._renderEarcons();
+    }
     return this._renderRegression();
   }
 
@@ -261,23 +281,25 @@ class VoiceHarnessPanel extends HTMLElement {
   }
 
   _renderPolicies(entries) {
+    const policies = this._data?.prompt_policies || [];
     return `
       <div class="policyGrid">
-        ${entries.map((entry) => `
+        ${policies.map((policy) => `
           <article class="surface">
             <div class="sectionHead">
               <div>
-                <h2>${escapeHtml(entry.title)}</h2>
-                <div class="meta">Routing: ${escapeHtml(entry.options.routing_mode)}</div>
+                <h2>${escapeHtml(policy.title)}</h2>
+                <div class="meta">${escapeHtml(policy.spoken)}</div>
               </div>
-              <span class="chip ${entry.search.enabled ? "ok" : "muted"}">
-                ${entry.search.enabled ? "Search keys present" : "Search disabled"}
-              </span>
+              <span class="chip ${policy.risk === "high" ? "bad" : "muted"}">${escapeHtml(policy.risk)}</span>
             </div>
-            ${this._modelRows(entry.options)}
+            <div class="ruleList">
+              ${(policy.rules || []).map((rule) => `<span>${escapeHtml(rule)}</span>`).join("")}
+            </div>
           </article>
-        `).join("") || `<div class="empty">No policy data.</div>`}
+        `).join("") || `<div class="empty">No prompt policies.</div>`}
       </div>
+      ${entries.length ? `<div class="surface modelSurface">${entries.map((entry) => this._modelRows(entry.options)).join("")}</div>` : ""}
     `;
   }
 
@@ -360,6 +382,39 @@ class VoiceHarnessPanel extends HTMLElement {
             </div>
           </article>
         `).join("") || `<div class="empty">No active memory sessions.</div>`}
+      </div>
+    `;
+  }
+
+  _renderEarcons() {
+    const pack = this._data?.earcons || {};
+    const files = Object.entries(pack.files || {});
+    return `
+      <div class="surface earconHeader">
+        <div>
+          <h2>${escapeHtml(pack.pack || "No earcon pack")}</h2>
+          <div class="meta">${pack.sample_rate || 0} Hz · ${pack.target_lufs || "?"} LUFS target · ${pack.true_peak_dbfs || "?"} dBFS ceiling</div>
+        </div>
+      </div>
+      <div class="earconGrid">
+        ${files.map(([name, file]) => `
+          <article class="surface earcon">
+            <div class="sectionHead">
+              <div>
+                <h2>${escapeHtml(name)}</h2>
+                <div class="meta">${escapeHtml(file.purpose || "")}</div>
+              </div>
+              <button class="iconButton" data-earcon="${escapeHtml(name)}" title="Play ${escapeHtml(name)}">
+                <ha-icon icon="mdi:play"></ha-icon>
+              </button>
+            </div>
+            <div class="meterRow">
+              <span>${escapeHtml(file.duration_ms)} ms</span>
+              <span>${escapeHtml(file.lufs)} LUFS</span>
+              <span>${escapeHtml(file.peak_dbfs)} dBFS peak</span>
+            </div>
+          </article>
+        `).join("") || `<div class="empty">No rendered earcons.</div>`}
       </div>
     `;
   }
@@ -543,7 +598,7 @@ const styles = `
 
   .tabs {
     display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-columns: repeat(7, minmax(0, 1fr));
     gap: 8px;
     margin: 14px 0 18px;
   }
@@ -602,7 +657,8 @@ const styles = `
   .grid,
   .entryGrid,
   .policyGrid,
-  .memoryGrid {
+  .memoryGrid,
+  .earconGrid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
     gap: 14px;
@@ -704,6 +760,28 @@ const styles = `
   .table {
     display: grid;
     gap: 8px;
+  }
+
+  .modelSurface {
+    margin-top: 14px;
+  }
+
+  .ruleList {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .ruleList span,
+  .meterRow span {
+    min-height: 26px;
+    border-radius: 999px;
+    border: 1px solid var(--divider-color);
+    display: inline-flex;
+    align-items: center;
+    padding: 0 10px;
+    color: var(--secondary-text-color);
+    font-size: 12px;
   }
 
   .row {
@@ -817,6 +895,23 @@ const styles = `
     gap: 10px;
   }
 
+  .earconHeader {
+    min-height: 72px;
+    display: flex;
+    align-items: center;
+    margin-bottom: 14px;
+  }
+
+  .earcon {
+    min-height: 146px;
+  }
+
+  .meterRow {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
   .sample {
     min-height: 78px;
     display: flex;
@@ -864,7 +959,8 @@ const styles = `
     .grid,
     .entryGrid,
     .policyGrid,
-    .memoryGrid {
+    .memoryGrid,
+    .earconGrid {
       grid-template-columns: 1fr;
     }
 
