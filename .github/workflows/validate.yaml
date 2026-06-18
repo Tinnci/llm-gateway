@@ -35,6 +35,9 @@ jobs:
 
   validate-hassfest:
     runs-on: ubuntu-latest
+    # Keep hassfest visible, but do not block releases on upstream hassfest image
+    # regressions. Stable/beta HA configuration validation remains required below.
+    continue-on-error: true
     steps:
       - name: 📥 Checkout the repository
         uses: actions/checkout@v4
@@ -57,10 +60,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        channel: [stable, beta, dev]
+        channel: [stable, beta]
     runs-on: ubuntu-latest
-    # The HA dev channel image is published intermittently; don't fail CI on it.
-    continue-on-error: ${{ matrix.channel == 'dev' }}
     steps:
       - name: 📥 Checkout the repository
         uses: actions/checkout@v4
