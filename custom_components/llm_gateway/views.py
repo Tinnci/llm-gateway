@@ -7,6 +7,7 @@ from http import HTTPStatus
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from homeassistant.components.http.decorators import require_admin
 from homeassistant.helpers.http import HomeAssistantView
 
 from .const import (
@@ -14,6 +15,7 @@ from .const import (
     CONF_DEEP_CHAT_TIMEOUT,
     CONF_DEEP_MAX_TOKENS,
     CONF_DEEP_MODEL,
+    CONF_DIAGNOSTIC_TRACES,
     CONF_FAST_CHAT_TIMEOUT,
     CONF_FAST_MAX_TOKENS,
     CONF_FAST_MODEL,
@@ -22,6 +24,9 @@ from .const import (
     CONF_MID_MAX_TOKENS,
     CONF_MID_MODEL,
     CONF_ROUTING_MODE,
+    CONF_TRACE_INCLUDE_RAW_MESSAGES,
+    CONF_TRACE_MAX_RUNS,
+    CONF_TRACE_RETENTION_HOURS,
     DOMAIN,
     RECOMMENDED_DEEP_CHAT_TIMEOUT,
     RECOMMENDED_DEEP_MAX_TOKENS,
@@ -32,6 +37,8 @@ from .const import (
     RECOMMENDED_MID_CHAT_TIMEOUT,
     RECOMMENDED_MID_MAX_TOKENS,
     RECOMMENDED_MID_MODEL,
+    RECOMMENDED_TRACE_MAX_RUNS,
+    RECOMMENDED_TRACE_RETENTION_HOURS,
     ROUTING_MODE_AUTO,
 )
 from .harness import evaluate_scenario
@@ -242,6 +249,7 @@ class HarnessStatusView(HomeAssistantView):
     name = f"api:{DOMAIN}:harness:status"
     url = f"{API_BASE}/harness/status"
 
+    @require_admin
     async def get(self, request: web.Request) -> web.Response:
         """Handle status requests."""
         hass: HomeAssistant = request.app["hass"]
@@ -271,6 +279,7 @@ class HarnessEvaluateView(HomeAssistantView):
     name = f"api:{DOMAIN}:harness:evaluate"
     url = f"{API_BASE}/harness/evaluate"
 
+    @require_admin
     async def post(self, request: web.Request) -> web.Response:
         """Handle scenario evaluation requests."""
         try:
@@ -371,6 +380,12 @@ def _entry_status(entry: ConfigEntry) -> dict[str, Any]:
         "memory": (
             runtime.memory.snapshot() if runtime else {"facts": [], "sessions": []}
         ),
+        "trace": _trace_status(options),
+        "traces": (
+            runtime.trace_store.snapshot()
+            if runtime
+            else {"records": [], "storage": {"encoding": "json+zlib+base64"}}
+        ),
         "deep_tasks": runtime.deep_tasks.snapshot() if runtime else [],
     }
 
@@ -407,6 +422,19 @@ def _options_status(options: dict[str, Any]) -> dict[str, Any]:
                 options.get(CONF_DEEP_CHAT_TIMEOUT) or RECOMMENDED_DEEP_CHAT_TIMEOUT
             ),
         },
+    }
+
+
+def _trace_status(options: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "enabled": bool(options.get(CONF_DIAGNOSTIC_TRACES)),
+        "include_raw_messages": bool(options.get(CONF_TRACE_INCLUDE_RAW_MESSAGES)),
+        "max_runs": int(options.get(CONF_TRACE_MAX_RUNS) or RECOMMENDED_TRACE_MAX_RUNS),
+        "retention_hours": int(
+            options.get(CONF_TRACE_RETENTION_HOURS)
+            or RECOMMENDED_TRACE_RETENTION_HOURS
+        ),
+        "encoding": "json+zlib+base64",
     }
 
 

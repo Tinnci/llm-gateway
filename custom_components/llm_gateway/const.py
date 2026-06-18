@@ -40,6 +40,10 @@ CONF_TAVILY_API_KEY = "tavily_api_key"
 CONF_SERPER_API_KEY = "serper_api_key"
 CONF_FIRECRAWL_API_KEY = "firecrawl_api_key"
 CONF_BRAVE_API_KEY = "brave_api_key"
+CONF_DIAGNOSTIC_TRACES = "diagnostic_traces"
+CONF_TRACE_INCLUDE_RAW_MESSAGES = "trace_include_raw_messages"
+CONF_TRACE_MAX_RUNS = "trace_max_runs"
+CONF_TRACE_RETENTION_HOURS = "trace_retention_hours"
 # CONF_PROMPT and CONF_LLM_HASS_API come from homeassistant.const.
 
 ROUTING_MODE_AUTO = "auto"
@@ -70,6 +74,10 @@ RECOMMENDED_MID_CHAT_TIMEOUT = 90
 RECOMMENDED_DEEP_CHAT_TIMEOUT = 180
 MAX_CONFIGURED_TOKENS = 16384
 MAX_CHAT_TIMEOUT = 300
+RECOMMENDED_TRACE_MAX_RUNS = 30
+RECOMMENDED_TRACE_RETENTION_HOURS = 24
+MAX_TRACE_RUNS = 200
+MAX_TRACE_RETENTION_HOURS = 168
 
 # Safety bound on tool-call round trips per user turn.
 MAX_TOOL_ITERATIONS = 6

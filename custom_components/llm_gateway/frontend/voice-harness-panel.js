@@ -33,6 +33,18 @@ const I18N = {
     "status.no_entries": "No LLM Gateway config entries loaded yet",
     "status.entries": "{count} config entries loaded",
     "runs.empty": "No configured LLM Gateway entries.",
+    "runs.trace_disabled": "Diagnostic traces are disabled",
+    "runs.trace_empty": "No recorded runs yet.",
+    "runs.trace_enabled": "Traces on",
+    "runs.raw_enabled": "raw compressed",
+    "runs.raw_disabled": "summary only",
+    "runs.retention": "{count} runs · {hours}h",
+    "runs.user": "User",
+    "runs.assistant": "Assistant",
+    "runs.tools": "{count} tool events",
+    "runs.raw_payload": "Raw compressed payload",
+    "runs.no_raw": "Raw payload was not stored for this run.",
+    "runs.storage": "{records} records · {bytes} compressed bytes",
     "entry.base_url_missing": "Base URL not configured",
     "policies.empty": "No prompt policies.",
     "scenario.user": "User input",
@@ -103,6 +115,18 @@ const I18N = {
     "status.no_entries": "尚未加载 LLM Gateway 配置项",
     "status.entries": "已加载 {count} 个配置项",
     "runs.empty": "没有已配置的 LLM Gateway 条目。",
+    "runs.trace_disabled": "诊断记录未开启",
+    "runs.trace_empty": "还没有运行记录。",
+    "runs.trace_enabled": "诊断记录已开启",
+    "runs.raw_enabled": "原始内容已压缩",
+    "runs.raw_disabled": "仅摘要",
+    "runs.retention": "{count} 条 · {hours} 小时",
+    "runs.user": "用户",
+    "runs.assistant": "助手",
+    "runs.tools": "{count} 个工具事件",
+    "runs.raw_payload": "压缩原始 payload",
+    "runs.no_raw": "本次运行未保存原始 payload。",
+    "runs.storage": "{records} 条记录 · {bytes} 压缩字节",
     "entry.base_url_missing": "未配置 Base URL",
     "policies.empty": "没有提示策略。",
     "scenario.user": "用户输入",
@@ -437,9 +461,68 @@ class VoiceHarnessPanel extends HTMLElement {
             <div class="routeGrid">
               ${(entry.routes || []).map((route) => this._routeCard(route)).join("")}
             </div>
+            ${this._renderTracePanel(entry)}
           </article>
         `).join("")}
       </div>
+    `;
+  }
+
+  _renderTracePanel(entry) {
+    const trace = entry.trace || {};
+    const records = entry.traces?.records || [];
+    const storage = entry.traces?.storage || {};
+    return `
+      <section class="tracePanel">
+        <div class="traceHeader">
+          <div>
+            <h2>${escapeHtml(trace.enabled ? this._t("runs.trace_enabled") : this._t("runs.trace_disabled"))}</h2>
+            <div class="meta">${escapeHtml(this._t("runs.retention", {
+              count: trace.max_runs || 0,
+              hours: trace.retention_hours || 0,
+            }))} · ${escapeHtml(trace.include_raw_messages ? this._t("runs.raw_enabled") : this._t("runs.raw_disabled"))}</div>
+          </div>
+          <span class="chip muted">${escapeHtml(this._t("runs.storage", {
+            records: storage.records || 0,
+            bytes: storage.compressed_bytes || 0,
+          }))}</span>
+        </div>
+        <div class="traceList">
+          ${records.map((record) => this._traceCard(record)).join("") || `<div class="empty mini">${escapeHtml(this._t("runs.trace_empty"))}</div>`}
+        </div>
+      </section>
+    `;
+  }
+
+  _traceCard(record) {
+    const rawMeta = record.raw_payload_meta || {};
+    return `
+      <details class="traceCard">
+        <summary>
+          <div>
+            <strong>${escapeHtml(this._formatTime(record.created_at))}</strong>
+            <span>${escapeHtml(record.conversation_id || "no conversation id")}</span>
+          </div>
+          <span class="chip ${record.status === "error" ? "bad" : "ok"}">${escapeHtml(record.status || "unknown")}</span>
+        </summary>
+        <div class="traceBody">
+          <div class="traceText">
+            <strong>${escapeHtml(this._t("runs.user"))}</strong>
+            <p>${escapeHtml(record.user_text || "")}</p>
+            <strong>${escapeHtml(this._t("runs.assistant"))}</strong>
+            <p>${escapeHtml(record.assistant_text || "")}</p>
+          </div>
+          <div class="meterRow">
+            <span>${escapeHtml(record.route?.kind || "")}</span>
+            <span>${escapeHtml(record.route?.model || "")}</span>
+            <span>${Number(record.latency_ms || 0)} ms</span>
+            <span>${escapeHtml(this._t("runs.tools", { count: (record.tools || []).length }))}</span>
+            ${rawMeta.compressed_bytes ? `<span>${rawMeta.compressed_bytes}/${rawMeta.uncompressed_bytes} B</span>` : ""}
+          </div>
+          <h3>${escapeHtml(this._t("runs.raw_payload"))}</h3>
+          ${record.raw_payload ? `<pre>${escapeHtml(JSON.stringify(record.raw_payload, null, 2))}</pre>` : `<div class="empty mini">${escapeHtml(this._t("runs.no_raw"))}</div>`}
+        </div>
+      </details>
     `;
   }
 
@@ -725,6 +808,23 @@ class VoiceHarnessPanel extends HTMLElement {
     const table = I18N[this._locale()] || I18N.en;
     return table[key] || I18N.en[key] || fallback || "";
   }
+
+  _formatTime(value) {
+    if (!value) {
+      return "";
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return String(value);
+    }
+    return new Intl.DateTimeFormat(this._locale(), {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    }).format(date);
+  }
 }
 
 function escapeHtml(value) {
@@ -765,7 +865,7 @@ const styles = `
     margin-bottom: 14px;
   }
 
-  h1, h2, p {
+  h1, h2, h3, p {
     margin: 0;
   }
 
@@ -779,6 +879,12 @@ const styles = `
     font-size: 15px;
     font-weight: 650;
     line-height: 1.3;
+  }
+
+  h3 {
+    font-size: 13px;
+    font-weight: 650;
+    line-height: 1.35;
   }
 
   .subline,
@@ -878,6 +984,12 @@ const styles = `
     color: var(--secondary-text-color);
   }
 
+  .empty.mini {
+    min-height: 54px;
+    padding: 10px 12px;
+    text-align: center;
+  }
+
   .banner {
     border-radius: 8px;
     padding: 12px 14px;
@@ -945,6 +1057,80 @@ const styles = `
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 10px;
+  }
+
+  .tracePanel {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--divider-color);
+    display: grid;
+    gap: 12px;
+  }
+
+  .traceHeader {
+    min-height: 38px;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .traceList {
+    display: grid;
+    gap: 10px;
+  }
+
+  .traceCard {
+    border: 1px solid var(--divider-color);
+    border-radius: 8px;
+    background: var(--primary-background-color);
+    overflow: hidden;
+  }
+
+  .traceCard summary {
+    min-height: 54px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    cursor: pointer;
+  }
+
+  .traceCard summary > div {
+    min-width: 0;
+    display: grid;
+    gap: 2px;
+  }
+
+  .traceCard summary span {
+    color: var(--secondary-text-color);
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .traceBody {
+    border-top: 1px solid var(--divider-color);
+    padding: 12px;
+    display: grid;
+    gap: 12px;
+  }
+
+  .traceText {
+    display: grid;
+    gap: 6px;
+  }
+
+  .traceText strong {
+    color: var(--secondary-text-color);
+    font-size: 12px;
+    text-transform: uppercase;
+  }
+
+  .traceText p {
+    line-height: 1.45;
+    overflow-wrap: anywhere;
   }
 
   .route {

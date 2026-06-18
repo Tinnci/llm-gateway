@@ -8,8 +8,8 @@ shim, and similar providers.
 
 The current implementation is no longer a single-model chat proxy. It is a
 routed assistant runtime with short spoken answers, Home Assistant tool policy,
-search gating, short session memory, a localized Voice Harness panel, and a
-small earcon toolchain.
+search gating, short session memory, compressed diagnostic traces, a localized
+Voice Harness panel, and a small earcon toolchain.
 
 ## Current capabilities
 
@@ -29,6 +29,9 @@ small earcon toolchain.
   the conversation log.
 - **Short session memory**: recent turns are stored with a short TTL using Home
   Assistant `Store` and injected only when a conversation id is present.
+- **Diagnostic run traces**: when explicitly enabled, completed turns are stored
+  as bounded Voice Harness records. Summary fields are readable in the panel;
+  optional raw chat/tool payloads are redacted and stored as `json+zlib+base64`.
 - **Voice Harness panel**: the integration auto-registers an admin-only sidebar
   panel named `Voice Harness`; no manual `panel_custom` YAML is required. Panel
   chrome, prompt policies, scenarios, and earcon descriptions render in English
@@ -39,9 +42,9 @@ small earcon toolchain.
 
 ## What is intentionally not done yet
 
-- Real run capture for every Assist pipeline event is not complete yet; the
-  panel currently exposes configuration state, scenario evaluation, policies,
-  memory snapshots, search provider visibility, and earcon playback.
+- Full Assist pipeline event capture is not complete yet. LLM Gateway records
+  the post-STT text/LLM/tool/final-speech turn, but not wake word timing, raw
+  audio, VAD chunks, or OPUS clips from the satellite.
 - Local OPUS spoken fallback clips for network/TTS/port failures are not wired
   into the satellite playback chain yet.
 - Durable alias memory and vector RAG are intentionally not defaults. Chinese
@@ -78,7 +81,8 @@ Then restart Home Assistant.
    - token budgets and request timeouts,
    - extra request JSON per tier,
    - Home Assistant control exposure,
-   - optional search provider keys.
+   - optional search provider keys,
+   - optional diagnostic trace recording for the Voice Harness panel.
 
 Set LLM Gateway as the Conversation agent in the Assist pipeline that serves
 your voice satellite.
@@ -109,7 +113,9 @@ The sidebar URL is `voice-harness`, and the panel calls:
 
 Current panel views:
 
-- `Runs / 运行记录`: config entries, model routes, provider state.
+- `Runs / 运行记录`: config entries, model routes, provider state, recent
+  diagnostic text traces, latency, tool event counts, and optional compressed
+  raw payloads.
 - `Prompt Policies / 提示策略`: spoken prompt policies and risk rules.
 - `Scenarios / 场景测试`: ad hoc prompt policy evaluation.
 - `Search Lab / 搜索实验室`: search gate visibility and scenario checks.
@@ -120,6 +126,40 @@ Current panel views:
 Home Assistant translation files cover the config/options flow. The custom
 panel has its own small frontend dictionary because HA custom panel modules do
 not automatically receive integration translation strings.
+
+## Diagnostic traces and chat history
+
+Diagnostic traces are separate from short session memory:
+
+- Memory is runtime context for the assistant. It keeps a small recent window
+  for follow-up turns such as "make it dimmer".
+- Traces are admin diagnostics for Voice Harness. They are disabled by default
+  and are meant for reproducing routing, prompt, search, and Home Assistant tool
+  behaviour after a bad run.
+
+Options:
+
+- `diagnostic_traces`: enables bounded per-turn records.
+- `trace_include_raw_messages`: additionally stores redacted raw chat/tool
+  payloads as `json+zlib+base64`.
+- `trace_max_runs`: caps records per config entry.
+- `trace_retention_hours`: drops older records.
+
+Each trace summary includes timestamp, conversation id, user text, final spoken
+assistant text, route tier/model, latency, status, tool event summary, and
+compressed payload size. Raw payload capture is opt-in because it can contain
+household state, entity names, prompts, and device context. Secret-looking keys
+such as API keys, authorization headers, passwords, tokens, and secrets are
+redacted before compression.
+
+This follows the same operational pattern used by production LLM observability
+systems such as LangSmith-style run traces and OpenTelemetry-style spans:
+record small indexed summaries by default, keep raw payload capture explicit,
+bound retention, redact secrets before storage, and make traces replayable
+enough for diagnosis without turning them into permanent user transcripts.
+LLM Gateway does not store raw microphone audio; OPUS/FLAC audio history should
+be implemented in the satellite or ASR project with its own short retention and
+local-only controls.
 
 ## Earcon workflow
 
@@ -150,6 +190,8 @@ bun build --target=browser custom_components/llm_gateway/frontend/voice-harness-
 - API keys are configuration data and must not be logged.
 - Search traces should record provider, query, latency, and result count, but
   never provider secrets.
+- Diagnostic traces are off by default. Enable raw payload capture only while
+  debugging, then disable it again.
 - Home Assistant actions from search results must still pass the same tool
   policy as direct user requests.
 

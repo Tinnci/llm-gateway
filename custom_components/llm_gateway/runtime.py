@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
     from .memory import VoiceMemory
     from .router import ModelRoute
+    from .traces import TraceStore
 
 
 @dataclass(slots=True)
@@ -41,6 +42,7 @@ class LLMGatewayRuntimeData:
     session: aiohttp.ClientSession
     memory: VoiceMemory
     deep_tasks: DeepTaskManager
+    trace_store: TraceStore
 
 
 class DeepTaskManager:

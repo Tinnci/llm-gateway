@@ -40,6 +40,7 @@ from .const import (
     CONF_DEEP_EXTRA_BODY,
     CONF_DEEP_MAX_TOKENS,
     CONF_DEEP_MODEL,
+    CONF_DIAGNOSTIC_TRACES,
     CONF_EXTRA_BODY,
     CONF_FAST_CHAT_TIMEOUT,
     CONF_FAST_EXTRA_BODY,
@@ -57,11 +58,16 @@ from .const import (
     CONF_TAVILY_API_KEY,
     CONF_TEMPERATURE,
     CONF_TOP_P,
+    CONF_TRACE_INCLUDE_RAW_MESSAGES,
+    CONF_TRACE_MAX_RUNS,
+    CONF_TRACE_RETENTION_HOURS,
     DEFAULT_BASE_URL,
     DEFAULT_NAME,
     DOMAIN,
     MAX_CHAT_TIMEOUT,
     MAX_CONFIGURED_TOKENS,
+    MAX_TRACE_RETENTION_HOURS,
+    MAX_TRACE_RUNS,
     RECOMMENDED_CHAT_MODEL,
     RECOMMENDED_CHAT_TIMEOUT,
     RECOMMENDED_DEEP_CHAT_TIMEOUT,
@@ -77,6 +83,8 @@ from .const import (
     RECOMMENDED_MID_MODEL,
     RECOMMENDED_TEMPERATURE,
     RECOMMENDED_TOP_P,
+    RECOMMENDED_TRACE_MAX_RUNS,
+    RECOMMENDED_TRACE_RETENTION_HOURS,
     ROUTING_MODE_AUTO,
     ROUTING_MODES,
 )
@@ -316,6 +324,29 @@ class LLMGatewayOptionsFlow(OptionsFlow):
                     )
                 ),
                 vol.Optional(CONF_SEARCH_ENABLED, default=False): BooleanSelector(),
+                vol.Optional(CONF_DIAGNOSTIC_TRACES, default=False): BooleanSelector(),
+                vol.Optional(
+                    CONF_TRACE_INCLUDE_RAW_MESSAGES, default=False
+                ): BooleanSelector(),
+                vol.Optional(
+                    CONF_TRACE_MAX_RUNS, default=RECOMMENDED_TRACE_MAX_RUNS
+                ): NumberSelector(
+                    NumberSelectorConfig(
+                        min=1,
+                        max=MAX_TRACE_RUNS,
+                        mode=NumberSelectorMode.BOX,
+                    )
+                ),
+                vol.Optional(
+                    CONF_TRACE_RETENTION_HOURS,
+                    default=RECOMMENDED_TRACE_RETENTION_HOURS,
+                ): NumberSelector(
+                    NumberSelectorConfig(
+                        min=1,
+                        max=MAX_TRACE_RETENTION_HOURS,
+                        mode=NumberSelectorMode.BOX,
+                    )
+                ),
                 vol.Optional(CONF_TAVILY_API_KEY): TextSelector(
                     TextSelectorConfig(type=TextSelectorType.PASSWORD)
                 ),

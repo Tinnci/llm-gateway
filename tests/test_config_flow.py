@@ -14,6 +14,7 @@ from custom_components.llm_gateway.const import (
     CONF_DEEP_CHAT_TIMEOUT,
     CONF_DEEP_MAX_TOKENS,
     CONF_DEEP_MODEL,
+    CONF_DIAGNOSTIC_TRACES,
     CONF_EXTRA_BODY,
     CONF_FAST_MODEL,
     CONF_MAX_TOKENS,
@@ -22,6 +23,9 @@ from custom_components.llm_gateway.const import (
     CONF_SEARCH_ENABLED,
     CONF_TEMPERATURE,
     CONF_TOP_P,
+    CONF_TRACE_INCLUDE_RAW_MESSAGES,
+    CONF_TRACE_MAX_RUNS,
+    CONF_TRACE_RETENTION_HOURS,
     DEFAULT_BASE_URL,
     DOMAIN,
     ROUTING_MODE_AUTO,
@@ -96,6 +100,10 @@ async def test_options_flow(hass, aioclient_mock, mock_config_entry):
             CONF_CHAT_TIMEOUT: 180,
             CONF_DEEP_CHAT_TIMEOUT: 180,
             CONF_SEARCH_ENABLED: True,
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
+            CONF_TRACE_MAX_RUNS: 20,
+            CONF_TRACE_RETENTION_HOURS: 12,
         },
     )
     assert result2["type"] == FlowResultType.CREATE_ENTRY
@@ -104,6 +112,10 @@ async def test_options_flow(hass, aioclient_mock, mock_config_entry):
     assert result2["data"][CONF_DEEP_MAX_TOKENS] == 16384
     assert result2["data"][CONF_EXTRA_BODY] == '{"reasoning_budget": 16384}'
     assert result2["data"][CONF_CHAT_TIMEOUT] == 180
+    assert result2["data"][CONF_DIAGNOSTIC_TRACES]
+    assert result2["data"][CONF_TRACE_INCLUDE_RAW_MESSAGES]
+    assert result2["data"][CONF_TRACE_MAX_RUNS] == 20
+    assert result2["data"][CONF_TRACE_RETENTION_HOURS] == 12
 
 
 async def test_options_flow_rejects_invalid_extra_body(

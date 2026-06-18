@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import TYPE_CHECKING, Any, Literal
 
 from homeassistant.components import conversation
@@ -33,6 +34,7 @@ from .search import (
     available_search_tools,
     mark_external_tool_calls,
 )
+from .traces import TraceTurn
 from .voice_text import markdown_to_spoken_text
 
 if TYPE_CHECKING:
@@ -184,6 +186,7 @@ class LLMGatewayConversationEntity(
         chat_log: conversation.ChatLog,
     ) -> conversation.ConversationResult:
         """Process one user turn."""
+        started = time.monotonic()
         options = self.entry.options
         try:
             await chat_log.async_provide_llm_data(
@@ -228,10 +231,36 @@ class LLMGatewayConversationEntity(
         spoken = result.response.speech.get("plain", {}).get("speech", "")
         if spoken:
             result.response.async_set_speech(markdown_to_spoken_text(spoken))
+        assistant_text = result.response.speech.get("plain", {}).get("speech", "")
         await runtime.memory.async_record_turn(
             user_input.conversation_id,
             user_input.text,
-            result.response.speech.get("plain", {}).get("speech", ""),
+            assistant_text,
+        )
+        await runtime.trace_store.async_record_turn(
+            options,
+            TraceTurn(
+                conversation_id=user_input.conversation_id,
+                user_text=user_input.text,
+                assistant_text=assistant_text,
+                route=_route_trace(route),
+                latency_ms=int((time.monotonic() - started) * 1000),
+                status=_trace_status(assistant_text),
+                raw_payload={
+                    "input": {
+                        "text": user_input.text,
+                        "conversation_id": user_input.conversation_id or "",
+                        "language": getattr(user_input, "language", "") or "",
+                        "device_id": getattr(user_input, "device_id", "") or "",
+                    },
+                    "route": _route_trace(route),
+                    "messages": _content_to_messages(chat_log.content),
+                    "speech": {
+                        "final": assistant_text,
+                        "tts_cleaned": bool(spoken),
+                    },
+                },
+            ),
         )
         return result
 
@@ -381,3 +410,23 @@ class LLMGatewayConversationEntity(
             )
             return decision.spoken_prompt or "这个操作需要先确认。"
         return None
+
+
+def _route_trace(route: ModelRoute) -> dict[str, Any]:
+    """Return route metadata safe for diagnostic traces."""
+    return {
+        "kind": route.kind,
+        "model": route.model,
+        "max_tokens": route.max_tokens,
+        "timeout_s": route.timeout_s,
+        "async_deep_task": route.async_deep_task,
+    }
+
+
+def _trace_status(assistant_text: str) -> str:
+    """Classify the completed turn for trace filtering."""
+    if assistant_text in {GATEWAY_ERROR_SPEECH, TOOL_LOOP_ERROR_SPEECH}:
+        return "error"
+    if assistant_text == DEEP_TASK_ACK_SPEECH:
+        return "queued"
+    return "complete"

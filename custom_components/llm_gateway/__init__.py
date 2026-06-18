@@ -13,6 +13,7 @@ from .const import CONF_BASE_URL, DEFAULT_BASE_URL
 from .memory import VoiceMemory
 from .panel import async_setup_panel
 from .runtime import DeepTaskManager, LLMGatewayRuntimeData
+from .traces import TraceStore
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -48,11 +49,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: LLMGatewayConfigEntry) -
 
     memory = VoiceMemory(hass, entry.entry_id)
     await memory.async_load()
+    trace_store = TraceStore(hass, entry.entry_id)
+    await trace_store.async_load()
     entry.runtime_data = LLMGatewayRuntimeData(
         client=client,
         session=session,
         memory=memory,
         deep_tasks=DeepTaskManager(hass, client),
+        trace_store=trace_store,
     )
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
