@@ -3,6 +3,7 @@ name = "ha-earcon"
 version = "0.1.0"
 description = "Deterministic earcon renderer for the LLM Gateway Voice Harness"
 requires-python = ">=3.11,<3.15"
+license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
 dependencies = [
     "numpy>=2.0",
     "pyloudnorm>=0.1.1",

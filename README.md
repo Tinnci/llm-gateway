@@ -211,4 +211,11 @@ bun build --target=browser custom_components/llm_gateway/frontend/voice-harness-
 
 ## License
 
-MIT
+Source-available for non-commercial use under the PolyForm Noncommercial
+License 1.0.0. See `LICENSE`.
+
+Commercial use is not permitted without a separate license. This is not an OSI
+open-source license because commercial use is restricted.
+
+Third-party dependencies and services keep their own licenses and terms. See
+`NOTICE.md`.
