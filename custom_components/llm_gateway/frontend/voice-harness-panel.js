@@ -1,5 +1,26 @@
+// @ts-check
+
+/**
+ * @typedef {"auto" | "fast" | "mid" | "deep"} RouteKind
+ * @typedef {{ fast: string, mid: string, deep: string }} TierTextMap
+ * @typedef {{ fast: number, mid: number, deep: number }} TierNumberMap
+ * @typedef {{ kind: RouteKind, model: string, max_tokens: number, timeout_s: number, async_deep_task: boolean }} RouteStatus
+ * @typedef {{ routing_mode: RouteKind, models: TierTextMap, max_tokens: TierNumberMap, timeouts: TierNumberMap }} HarnessOptions
+ * @typedef {{ enabled: boolean, include_raw_messages: boolean, max_runs: number, retention_hours: number }} TraceOptions
+ * @typedef {{ entry_id: string, title: string, state: string, base_url?: string, options: HarnessOptions, routes: RouteStatus[], trace: TraceOptions, traces?: unknown, memory?: unknown, search?: { providers?: string[] } }} HarnessEntry
+ * @typedef {{ routing_modes: RouteKind[], max_tokens: { min: number, max: number }, timeouts: { min: number, max: number }, trace_max_runs: { min: number, max: number }, trace_retention_hours: { min: number, max: number } }} EditableSchema
+ * @typedef {{ id: string, risk?: string, title?: string, title_i18n?: Record<string, string>, spoken?: string, spoken_i18n?: Record<string, string>, rules?: string[] }} PromptPolicy
+ * @typedef {{ id: string, name?: string, name_i18n?: Record<string, string>, user?: string, user_i18n?: Record<string, string>, response?: string, response_i18n?: Record<string, string>, expected?: Record<string, unknown>, expected_i18n?: Record<string, Record<string, unknown>> }} SampleScenario
+ * @typedef {{ path?: string, url?: string, duration_ms?: number, lufs?: number, peak_dbfs?: number, purpose?: string, purpose_i18n?: Record<string, string> }} EarconFile
+ * @typedef {{ pack?: string, sample_rate?: number, target_lufs?: number, true_peak_dbfs?: number, files?: Record<string, EarconFile> }} EarconPack
+ * @typedef {{ entries: HarnessEntry[], editable: EditableSchema, earcons?: EarconPack, prompt_policies?: PromptPolicy[], sample_scenarios?: SampleScenario[] }} HarnessStatus
+ * @typedef {{ entry_id: string, options: { routing_mode: RouteKind, models: TierTextMap, max_tokens: TierNumberMap, timeouts: TierNumberMap, trace: TraceOptions } }} OptionsUpdateRequest
+ * @typedef {{ user: string, response: string, expected: string }} ScenarioDraft
+ */
+
 const TABS = [
   ["runs", "tab.runs", "mdi:play-circle-outline"],
+  ["settings", "tab.settings", "mdi:tune-variant"],
   ["policies", "tab.policies", "mdi:shield-check-outline"],
   ["scenarios", "tab.scenarios", "mdi:clipboard-text-search-outline"],
   ["search", "tab.search", "mdi:web"],
@@ -16,12 +37,26 @@ const DEFAULT_EXPECTED = {
   },
 };
 
+/** @type {EditableSchema} */
+const DEFAULT_EDITABLE = {
+  routing_modes: ["auto", "fast", "mid", "deep"],
+  max_tokens: { min: 1, max: 16384 },
+  timeouts: { min: 5, max: 300 },
+  trace_max_runs: { min: 1, max: 200 },
+  trace_retention_hours: { min: 1, max: 168 },
+};
+
 const I18N = {
   en: {
     "app.title": "Voice Harness",
     "aria.views": "Voice Harness views",
     "common.refresh": "Refresh",
+    "common.save": "Save",
+    "common.saved": "Saved",
+    "common.enabled": "Enabled",
+    "common.disabled": "Disabled",
     "tab.runs": "Runs",
+    "tab.settings": "Settings",
     "tab.policies": "Prompt Policies",
     "tab.scenarios": "Scenarios",
     "tab.search": "Search Lab",
@@ -45,7 +80,24 @@ const I18N = {
     "runs.raw_payload": "Raw compressed payload",
     "runs.no_raw": "Raw payload was not stored for this run.",
     "runs.storage": "{records} records · {bytes} compressed bytes",
+    "runs.no_conversation": "No conversation id",
     "entry.base_url_missing": "Base URL not configured",
+    "settings.empty": "No editable config entries.",
+    "settings.title": "Editable runtime settings",
+    "settings.description": "These fields update the safe options subset. Secrets, base URL, HA LLM API exposure and the system prompt stay in Home Assistant options.",
+    "settings.routing": "Routing",
+    "settings.routing_mode": "Routing mode",
+    "settings.models": "Models",
+    "settings.budgets": "Budgets",
+    "settings.traces": "Diagnostic traces",
+    "settings.model": "{tier} model",
+    "settings.max_tokens": "{tier} max tokens",
+    "settings.timeout": "{tier} timeout",
+    "settings.diagnostic_traces": "Enable diagnostic traces",
+    "settings.include_raw": "Store compressed raw messages",
+    "settings.max_runs": "Maximum diagnostic runs",
+    "settings.retention_hours": "Diagnostic retention hours",
+    "settings.saved": "Settings saved.",
     "policies.empty": "No prompt policies.",
     "scenario.user": "User input",
     "scenario.response": "Assistant response",
@@ -65,12 +117,50 @@ const I18N = {
     "earcon.empty": "No rendered earcons.",
     "regression.run": "Run",
     "route.timeout": "{seconds}s timeout",
+    "route.tokens": "{count} tokens",
     "result.empty": "No run result yet.",
     "result.passed": "Passed",
     "result.failed": "Failed",
     "result.meta": "Route: {route} · Search: {search}",
     "search.allowed": "allowed",
     "search.blocked": "blocked",
+    "mode.auto": "Auto",
+    "mode.fast": "Fast",
+    "mode.mid": "Mid",
+    "mode.deep": "Deep",
+    "tier.fast": "Fast",
+    "tier.mid": "Mid",
+    "tier.deep": "Deep",
+    "risk.low": "Low",
+    "risk.medium": "Medium",
+    "risk.high": "High",
+    "trace.status.complete": "Complete",
+    "trace.status.queued": "Queued",
+    "trace.status.error": "Error",
+    "trace.status.unknown": "Unknown",
+    "rule.max_one_sentence": "One sentence",
+    "rule.no_tool_details": "No tool details",
+    "rule.no_entity_id": "No entity ids",
+    "rule.answer_first": "Answer first",
+    "rule.no_long_list": "No long lists",
+    "rule.no_url": "No URLs",
+    "rule.one_question": "One question",
+    "rule.no_action_before_clarity": "Clarify before action",
+    "rule.must_confirm": "Must confirm",
+    "rule.name_target": "Name target",
+    "rule.no_action_before_confirmation": "No action before confirmation",
+    "rule.external_facts_only": "External facts only",
+    "rule.cite_in_panel": "Cite in panel",
+    "rule.short_tts": "Short TTS",
+    "rule.local_clip_preferred": "Prefer local clip",
+    "rule.do_not_repeat": "Do not repeat",
+    "rule.do_not_extend_dialog": "Do not extend dialog",
+    "rule.stop_when_final_tts_starts": "Stop when final TTS starts",
+    "rule.actionable_repair": "Actionable repair",
+    "rule.no_blame": "No blame",
+    "rule.one_next_step": "One next step",
+    "rule.non_blocking_voice": "Non-blocking voice",
+    "rule.no_direct_ha_action": "No direct HA action",
     "error.invalid_expected_json": "Expected JSON is not valid.",
     "policy.low_risk_success.title": "Low-risk success",
     "policy.low_risk_success.spoken": "Done.",
@@ -105,7 +195,12 @@ const I18N = {
     "app.title": "语音测试台",
     "aria.views": "语音测试台视图",
     "common.refresh": "刷新",
+    "common.save": "保存",
+    "common.saved": "已保存",
+    "common.enabled": "已启用",
+    "common.disabled": "未启用",
     "tab.runs": "运行记录",
+    "tab.settings": "配置",
     "tab.policies": "提示策略",
     "tab.scenarios": "场景测试",
     "tab.search": "搜索实验室",
@@ -129,7 +224,24 @@ const I18N = {
     "runs.raw_payload": "压缩原始 payload",
     "runs.no_raw": "本次运行未保存原始 payload。",
     "runs.storage": "{records} 条记录 · {bytes} 压缩字节",
+    "runs.no_conversation": "无会话 id",
     "entry.base_url_missing": "未配置 Base URL",
+    "settings.empty": "没有可编辑的配置项。",
+    "settings.title": "可编辑运行配置",
+    "settings.description": "这些字段只会更新安全的 options 子集。密钥、Base URL、HA LLM API 暴露范围和系统提示词仍在 Home Assistant options flow 中编辑。",
+    "settings.routing": "路由",
+    "settings.routing_mode": "路由模式",
+    "settings.models": "模型",
+    "settings.budgets": "预算",
+    "settings.traces": "诊断记录",
+    "settings.model": "{tier} 模型",
+    "settings.max_tokens": "{tier} 最大令牌",
+    "settings.timeout": "{tier} 超时",
+    "settings.diagnostic_traces": "启用诊断记录",
+    "settings.include_raw": "保存压缩原始消息",
+    "settings.max_runs": "最多诊断运行数",
+    "settings.retention_hours": "诊断保留小时数",
+    "settings.saved": "配置已保存。",
     "policies.empty": "没有提示策略。",
     "scenario.user": "用户输入",
     "scenario.response": "助手回复",
@@ -149,12 +261,50 @@ const I18N = {
     "earcon.empty": "没有已渲染的提示音。",
     "regression.run": "运行",
     "route.timeout": "{seconds}s 超时",
+    "route.tokens": "{count} 个令牌",
     "result.empty": "还没有运行结果。",
     "result.passed": "通过",
     "result.failed": "失败",
     "result.meta": "路由：{route} · 搜索：{search}",
     "search.allowed": "允许",
     "search.blocked": "阻止",
+    "mode.auto": "自动",
+    "mode.fast": "快速",
+    "mode.mid": "均衡",
+    "mode.deep": "深度",
+    "tier.fast": "快速",
+    "tier.mid": "均衡",
+    "tier.deep": "深度",
+    "risk.low": "低",
+    "risk.medium": "中",
+    "risk.high": "高",
+    "trace.status.complete": "完成",
+    "trace.status.queued": "排队",
+    "trace.status.error": "错误",
+    "trace.status.unknown": "未知",
+    "rule.max_one_sentence": "一句话内",
+    "rule.no_tool_details": "不说工具细节",
+    "rule.no_entity_id": "不说 entity_id",
+    "rule.answer_first": "先答结论",
+    "rule.no_long_list": "不读长列表",
+    "rule.no_url": "不读 URL",
+    "rule.one_question": "一次一个问题",
+    "rule.no_action_before_clarity": "澄清前不执行",
+    "rule.must_confirm": "必须确认",
+    "rule.name_target": "复述对象",
+    "rule.no_action_before_confirmation": "确认前不执行",
+    "rule.external_facts_only": "仅外部事实",
+    "rule.cite_in_panel": "来源放面板",
+    "rule.short_tts": "短 TTS",
+    "rule.local_clip_preferred": "优先本地片段",
+    "rule.do_not_repeat": "不重复提示",
+    "rule.do_not_extend_dialog": "不延长对话",
+    "rule.stop_when_final_tts_starts": "最终 TTS 开始时停止",
+    "rule.actionable_repair": "给出可执行修复",
+    "rule.no_blame": "不责备用户",
+    "rule.one_next_step": "只给下一步",
+    "rule.non_blocking_voice": "语音不阻塞",
+    "rule.no_direct_ha_action": "不直接控制 HA",
     "error.invalid_expected_json": "期望 JSON 格式不正确。",
     "policy.low_risk_success.title": "低风险成功",
     "policy.low_risk_success.spoken": "好了。",
@@ -205,12 +355,15 @@ class VoiceHarnessPanel extends HTMLElement {
     super();
     this.attachShadow({ mode: "open" });
     this._activeTab = "runs";
+    /** @type {HarnessStatus | null} */
     this._data = null;
     this._error = "";
     this._busy = false;
     this._result = null;
+    this._settingsSaved = "";
     this._draftLocale = this._locale();
     this._draftTouched = false;
+    /** @type {ScenarioDraft} */
     this._draft = this._defaultDraft(this._draftLocale);
   }
 
@@ -265,6 +418,31 @@ class VoiceHarnessPanel extends HTMLElement {
     this._render();
     try {
       this._result = await this._api("POST", "llm_gateway/harness/evaluate", payload);
+    } catch (err) {
+      this._error = err.message || String(err);
+    } finally {
+      this._busy = false;
+      this._render();
+    }
+  }
+
+  /** @param {OptionsUpdateRequest} payload */
+  async _saveOptions(payload) {
+    this._busy = true;
+    this._error = "";
+    this._settingsSaved = "";
+    this._render();
+    try {
+      const result = await this._api("POST", "llm_gateway/harness/options", payload);
+      if (result.entry && this._data?.entries) {
+        this._data = {
+          ...this._data,
+          entries: this._data.entries.map((entry) =>
+            entry.entry_id === result.entry.entry_id ? result.entry : entry
+          ),
+        };
+      }
+      this._settingsSaved = this._t("settings.saved");
     } catch (err) {
       this._error = err.message || String(err);
     } finally {
@@ -342,6 +520,10 @@ class VoiceHarnessPanel extends HTMLElement {
   _onSubmit(event) {
     event.preventDefault();
     const form = event.target;
+    if (form.dataset.form === "settings") {
+      this._submitSettingsForm(form);
+      return;
+    }
     if (form.dataset.form !== "scenario") {
       return;
     }
@@ -357,6 +539,39 @@ class VoiceHarnessPanel extends HTMLElement {
       user: this._draft.user,
       response: this._draft.response,
       expected,
+    });
+  }
+
+  /** @param {HTMLFormElement} form */
+  _submitSettingsForm(form) {
+    const data = new FormData(form);
+    const numberValue = (name) => Number(data.get(name) || 0);
+    this._saveOptions({
+      entry_id: form.dataset.entryId || "",
+      options: {
+        routing_mode: this._routeKind(data.get("routing_mode")),
+        models: {
+          fast: String(data.get("fast_model") || ""),
+          mid: String(data.get("mid_model") || ""),
+          deep: String(data.get("deep_model") || ""),
+        },
+        max_tokens: {
+          fast: numberValue("fast_max_tokens"),
+          mid: numberValue("mid_max_tokens"),
+          deep: numberValue("deep_max_tokens"),
+        },
+        timeouts: {
+          fast: numberValue("fast_timeout"),
+          mid: numberValue("mid_timeout"),
+          deep: numberValue("deep_timeout"),
+        },
+        trace: {
+          enabled: data.get("diagnostic_traces") === "on",
+          include_raw_messages: data.get("trace_include_raw_messages") === "on",
+          max_runs: numberValue("trace_max_runs"),
+          retention_hours: numberValue("trace_retention_hours"),
+        },
+      },
     });
   }
 
@@ -419,6 +634,9 @@ class VoiceHarnessPanel extends HTMLElement {
     if (this._activeTab === "runs") {
       return this._renderRuns(entries);
     }
+    if (this._activeTab === "settings") {
+      return this._renderSettings(entries);
+    }
     if (this._activeTab === "policies") {
       return this._renderPolicies(entries);
     }
@@ -472,6 +690,102 @@ class VoiceHarnessPanel extends HTMLElement {
     `;
   }
 
+  _renderSettings(entries) {
+    if (!entries.length) {
+      return `<div class="empty">${escapeHtml(this._t("settings.empty"))}</div>`;
+    }
+    return `
+      <div class="settingsGrid">
+        ${this._settingsSaved ? `<div class="banner success">${escapeHtml(this._settingsSaved)}</div>` : ""}
+        ${entries.map((entry) => this._settingsForm(entry)).join("")}
+      </div>
+    `;
+  }
+
+  _settingsForm(entry) {
+    const options = entry.options || {};
+    const trace = entry.trace || {};
+    const editable = this._data?.editable || DEFAULT_EDITABLE;
+    const tokenRange = editable.max_tokens || { min: 1, max: 16384 };
+    const timeoutRange = editable.timeouts || { min: 5, max: 300 };
+    const traceRunsRange = editable.trace_max_runs || { min: 1, max: 200 };
+    const traceHoursRange = editable.trace_retention_hours || { min: 1, max: 168 };
+    const routingModes = editable.routing_modes || ["auto", "fast", "mid", "deep"];
+    return `
+      <form class="surface settingsForm" data-form="settings" data-entry-id="${escapeHtml(entry.entry_id)}">
+        <div class="sectionHead">
+          <div>
+            <h2>${escapeHtml(this._t("settings.title"))}</h2>
+            <div class="meta">${escapeHtml(entry.title)} · ${escapeHtml(entry.base_url || this._t("entry.base_url_missing"))}</div>
+          </div>
+          <button class="primary" type="submit" ${this._busy ? "disabled" : ""}>
+            <ha-icon icon="mdi:content-save-outline"></ha-icon>
+            <span>${escapeHtml(this._t("common.save"))}</span>
+          </button>
+        </div>
+        <p class="settingsNote">${escapeHtml(this._t("settings.description"))}</p>
+        <fieldset>
+          <legend>${escapeHtml(this._t("settings.routing"))}</legend>
+          <label>
+            <span>${escapeHtml(this._t("settings.routing_mode"))}</span>
+            <select name="routing_mode">
+              ${routingModes.map((mode) => `
+                <option value="${escapeHtml(mode)}" ${options.routing_mode === mode ? "selected" : ""}>
+                  ${escapeHtml(this._modeLabel(mode))}
+                </option>
+              `).join("")}
+            </select>
+          </label>
+        </fieldset>
+        <fieldset>
+          <legend>${escapeHtml(this._t("settings.models"))}</legend>
+          ${["fast", "mid", "deep"].map((tier) => `
+            <label>
+              <span>${escapeHtml(this._t("settings.model", { tier: this._tierLabel(tier) }))}</span>
+              <input name="${tier}_model" value="${escapeHtml(options.models?.[tier] || "")}" autocomplete="off" required maxlength="256">
+            </label>
+          `).join("")}
+        </fieldset>
+        <fieldset>
+          <legend>${escapeHtml(this._t("settings.budgets"))}</legend>
+          <div class="settingsTriples">
+            ${["fast", "mid", "deep"].map((tier) => `
+              <label>
+                <span>${escapeHtml(this._t("settings.max_tokens", { tier: this._tierLabel(tier) }))}</span>
+                <input name="${tier}_max_tokens" type="number" min="${tokenRange.min}" max="${tokenRange.max}" step="1" value="${Number(options.max_tokens?.[tier] || 0)}" required>
+              </label>
+              <label>
+                <span>${escapeHtml(this._t("settings.timeout", { tier: this._tierLabel(tier) }))}</span>
+                <input name="${tier}_timeout" type="number" min="${timeoutRange.min}" max="${timeoutRange.max}" step="1" value="${Number(options.timeouts?.[tier] || 0)}" required>
+              </label>
+            `).join("")}
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>${escapeHtml(this._t("settings.traces"))}</legend>
+          <label class="checkRow">
+            <input name="diagnostic_traces" type="checkbox" ${trace.enabled ? "checked" : ""}>
+            <span>${escapeHtml(this._t("settings.diagnostic_traces"))}</span>
+          </label>
+          <label class="checkRow">
+            <input name="trace_include_raw_messages" type="checkbox" ${trace.include_raw_messages ? "checked" : ""}>
+            <span>${escapeHtml(this._t("settings.include_raw"))}</span>
+          </label>
+          <div class="settingsTriples two">
+            <label>
+              <span>${escapeHtml(this._t("settings.max_runs"))}</span>
+              <input name="trace_max_runs" type="number" min="${traceRunsRange.min}" max="${traceRunsRange.max}" step="1" value="${Number(trace.max_runs || 0)}" required>
+            </label>
+            <label>
+              <span>${escapeHtml(this._t("settings.retention_hours"))}</span>
+              <input name="trace_retention_hours" type="number" min="${traceHoursRange.min}" max="${traceHoursRange.max}" step="1" value="${Number(trace.retention_hours || 0)}" required>
+            </label>
+          </div>
+        </fieldset>
+      </form>
+    `;
+  }
+
   _renderTracePanel(entry) {
     const trace = entry.trace || {};
     const records = entry.traces?.records || [];
@@ -505,9 +819,9 @@ class VoiceHarnessPanel extends HTMLElement {
         <summary>
           <div>
             <strong>${escapeHtml(this._formatTime(record.created_at))}</strong>
-            <span>${escapeHtml(record.conversation_id || "no conversation id")}</span>
+            <span>${escapeHtml(record.conversation_id || this._t("runs.no_conversation"))}</span>
           </div>
-          <span class="chip ${record.status === "error" ? "bad" : "ok"}">${escapeHtml(record.status || "unknown")}</span>
+          <span class="chip ${record.status === "error" ? "bad" : "ok"}">${escapeHtml(this._traceStatusLabel(record.status))}</span>
         </summary>
         <div class="traceBody">
           <div class="traceText">
@@ -517,7 +831,7 @@ class VoiceHarnessPanel extends HTMLElement {
             <p>${escapeHtml(record.assistant_text || "")}</p>
           </div>
           <div class="meterRow">
-            <span>${escapeHtml(record.route?.kind || "")}</span>
+            <span>${escapeHtml(this._routeLabel(record.route?.kind))}</span>
             <span>${escapeHtml(record.route?.model || "")}</span>
             <span>${Number(record.latency_ms || 0)} ms</span>
             <span>${escapeHtml(this._t("runs.tools", { count: (record.tools || []).length }))}</span>
@@ -541,10 +855,10 @@ class VoiceHarnessPanel extends HTMLElement {
                 <h2>${escapeHtml(this._policyTitle(policy))}</h2>
                 <div class="meta">${escapeHtml(this._policySpoken(policy))}</div>
               </div>
-              <span class="chip ${policy.risk === "high" ? "bad" : "muted"}">${escapeHtml(policy.risk)}</span>
+              <span class="chip ${policy.risk === "high" ? "bad" : "muted"}">${escapeHtml(this._riskLabel(policy.risk))}</span>
             </div>
             <div class="ruleList">
-              ${(policy.rules || []).map((rule) => `<span>${escapeHtml(rule)}</span>`).join("")}
+              ${(policy.rules || []).map((rule) => `<span>${escapeHtml(this._ruleLabel(rule))}</span>`).join("")}
             </div>
           </article>
         `).join("") || `<div class="empty">${escapeHtml(this._t("policies.empty"))}</div>`}
@@ -696,9 +1010,9 @@ class VoiceHarnessPanel extends HTMLElement {
   _routeCard(route) {
     return `
       <div class="route ${escapeHtml(route.kind)}">
-        <span class="routeKind">${escapeHtml(route.kind)}</span>
+        <span class="routeKind">${escapeHtml(this._routeLabel(route.kind))}</span>
         <strong>${escapeHtml(route.model)}</strong>
-        <span>${route.max_tokens} tokens · ${escapeHtml(this._t("route.timeout", { seconds: route.timeout_s }))}</span>
+        <span>${escapeHtml(this._t("route.tokens", { count: route.max_tokens }))} · ${escapeHtml(this._t("route.timeout", { seconds: route.timeout_s }))}</span>
       </div>
     `;
   }
@@ -709,9 +1023,9 @@ class VoiceHarnessPanel extends HTMLElement {
       <div class="table">
         ${tiers.map((tier) => `
           <div class="row">
-            <span class="tier ${tier}">${tier}</span>
+            <span class="tier ${tier}">${escapeHtml(this._tierLabel(tier))}</span>
             <strong>${escapeHtml(options.models[tier])}</strong>
-            <span>${options.max_tokens[tier]} tokens</span>
+            <span>${escapeHtml(this._t("route.tokens", { count: options.max_tokens[tier] }))}</span>
             <span>${options.timeouts[tier]}s</span>
           </div>
         `).join("")}
@@ -731,7 +1045,7 @@ class VoiceHarnessPanel extends HTMLElement {
         <div class="sectionHead">
           <div>
             <h2>${escapeHtml(passed)}</h2>
-            <div class="meta">${escapeHtml(this._t("result.meta", { route: result.route.kind, search }))}</div>
+            <div class="meta">${escapeHtml(this._t("result.meta", { route: this._routeLabel(result.route.kind), search }))}</div>
           </div>
           <span class="chip ${result.passed ? "ok" : "bad"}">${escapeHtml(passed)}</span>
         </div>
@@ -747,7 +1061,21 @@ class VoiceHarnessPanel extends HTMLElement {
   }
 
   _locale() {
-    const language = this.hass?.locale?.language || this.hass?.language || navigator.language || "en";
+    let storedLanguage = "";
+    try {
+      storedLanguage = localStorage.getItem("selectedLanguage") || "";
+    } catch (_err) {
+      storedLanguage = "";
+    }
+    const language = [
+      this.hass?.locale?.language,
+      this.hass?.selectedLanguage,
+      this.hass?.language,
+      this._panel?.language,
+      document?.documentElement?.lang,
+      storedLanguage,
+      navigator.language,
+    ].find(Boolean) || "en";
     return String(language).toLowerCase().startsWith("zh") ? "zh-Hans" : "en";
   }
 
@@ -806,6 +1134,50 @@ class VoiceHarnessPanel extends HTMLElement {
   _earconPurpose(name, file) {
     const key = `earcon.${name}.purpose`;
     return this._localize(file.purpose_i18n, this._lookup(key, file.purpose || ""));
+  }
+
+  _modeLabel(value) {
+    const mode = String(value || "auto");
+    return this._lookup(`mode.${mode}`, mode);
+  }
+
+  /** @returns {RouteKind} */
+  _routeKind(value) {
+    const candidate = String(value || "auto");
+    switch (candidate) {
+      case "fast":
+      case "mid":
+      case "deep":
+      case "auto":
+        return candidate;
+      default:
+        return "auto";
+    }
+  }
+
+  _routeLabel(value) {
+    const kind = String(value || "unknown");
+    return this._lookup(`mode.${kind}`, kind);
+  }
+
+  _tierLabel(value) {
+    const tier = String(value || "");
+    return this._lookup(`tier.${tier}`, tier);
+  }
+
+  _riskLabel(value) {
+    const risk = String(value || "low");
+    return this._lookup(`risk.${risk}`, risk);
+  }
+
+  _ruleLabel(value) {
+    const rule = String(value || "");
+    return this._lookup(`rule.${rule}`, rule);
+  }
+
+  _traceStatusLabel(value) {
+    const status = String(value || "unknown");
+    return this._lookup(`trace.status.${status}`, status);
   }
 
   _lookup(key, fallback = "") {
@@ -920,6 +1292,11 @@ const styles = `
     border-color: var(--primary-color);
   }
 
+  button:disabled {
+    cursor: not-allowed;
+    opacity: 0.58;
+  }
+
   button ha-icon {
     width: 20px;
     height: 20px;
@@ -944,7 +1321,7 @@ const styles = `
 
   .tabs {
     display: grid;
-    grid-template-columns: repeat(7, minmax(0, 1fr));
+    grid-template-columns: repeat(8, minmax(0, 1fr));
     gap: 8px;
     margin: 14px 0 18px;
   }
@@ -1006,14 +1383,104 @@ const styles = `
     background: color-mix(in srgb, var(--error-color) 10%, var(--card-background-color));
   }
 
+  .banner.success {
+    color: var(--success-color);
+    background: color-mix(in srgb, var(--success-color) 10%, var(--card-background-color));
+  }
+
   .grid,
   .entryGrid,
   .policyGrid,
   .memoryGrid,
-  .earconGrid {
+  .earconGrid,
+  .settingsGrid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
     gap: 14px;
+  }
+
+  .settingsGrid .banner {
+    grid-column: 1 / -1;
+  }
+
+  .settingsForm {
+    display: grid;
+    gap: 14px;
+  }
+
+  .settingsNote {
+    color: var(--secondary-text-color);
+    font-size: 13px;
+    line-height: 1.45;
+  }
+
+  fieldset {
+    border: 1px solid var(--divider-color);
+    border-radius: 8px;
+    padding: 12px;
+    display: grid;
+    gap: 12px;
+  }
+
+  legend {
+    padding: 0 6px;
+    color: var(--secondary-text-color);
+    font-size: 12px;
+    font-weight: 650;
+  }
+
+  label {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  label span {
+    color: var(--secondary-text-color);
+    font-size: 12px;
+    line-height: 1.35;
+  }
+
+  input,
+  select,
+  textarea {
+    width: 100%;
+    min-height: 40px;
+    border: 1px solid var(--divider-color);
+    border-radius: 8px;
+    background: var(--primary-background-color);
+    color: var(--primary-text-color);
+    font: inherit;
+    padding: 8px 10px;
+  }
+
+  input:focus,
+  select:focus,
+  textarea:focus {
+    border-color: var(--primary-color);
+    outline: none;
+  }
+
+  .settingsTriples {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .settingsTriples.two {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .checkRow {
+    min-height: 36px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .checkRow input {
+    width: 18px;
+    min-height: 18px;
   }
 
   .workbench {
@@ -1367,6 +1834,11 @@ const styles = `
     .routeGrid {
       grid-template-columns: 1fr;
     }
+
+    .settingsTriples,
+    .settingsTriples.two {
+      grid-template-columns: 1fr;
+    }
   }
 
   @media (max-width: 560px) {
@@ -1386,7 +1858,8 @@ const styles = `
     .entryGrid,
     .policyGrid,
     .memoryGrid,
-    .earconGrid {
+    .earconGrid,
+    .settingsGrid {
       grid-template-columns: 1fr;
     }
 

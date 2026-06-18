@@ -28,6 +28,10 @@ from .const import (
     CONF_TRACE_MAX_RUNS,
     CONF_TRACE_RETENTION_HOURS,
     DOMAIN,
+    MAX_CHAT_TIMEOUT,
+    MAX_CONFIGURED_TOKENS,
+    MAX_TRACE_RETENTION_HOURS,
+    MAX_TRACE_RUNS,
     RECOMMENDED_DEEP_CHAT_TIMEOUT,
     RECOMMENDED_DEEP_MAX_TOKENS,
     RECOMMENDED_DEEP_MODEL,
@@ -40,6 +44,7 @@ from .const import (
     RECOMMENDED_TRACE_MAX_RUNS,
     RECOMMENDED_TRACE_RETENTION_HOURS,
     ROUTING_MODE_AUTO,
+    ROUTING_MODES,
 )
 from .harness import evaluate_scenario
 from .policy import should_allow_search
@@ -57,6 +62,7 @@ if TYPE_CHECKING:
 API_BASE = f"/api/{DOMAIN}"
 STATIC_BASE = f"{API_BASE}/static"
 EARCON_PACK = "ha_voice_minimal_v0"
+MAX_MODEL_ID_LENGTH = 256
 EARCON_MANIFEST = (
     Path(__file__).parent / "frontend" / "earcons" / EARCON_PACK / "manifest.json"
 )
@@ -258,6 +264,7 @@ def async_register_views(hass: HomeAssistant) -> None:
     """Register Voice Harness API views."""
     hass.http.register_view(HarnessStatusView)
     hass.http.register_view(HarnessEvaluateView)
+    hass.http.register_view(HarnessOptionsView)
 
 
 class HarnessStatusView(HomeAssistantView):
@@ -283,6 +290,7 @@ class HarnessStatusView(HomeAssistantView):
                     "api_base": API_BASE,
                 },
                 "entries": [_entry_status(entry) for entry in _entries(hass)],
+                "editable": _editable_schema(),
                 "earcons": await hass.async_add_executor_job(_earcon_pack_status),
                 "prompt_policies": PROMPT_POLICIES,
                 "sample_scenarios": SAMPLE_SCENARIOS,
@@ -354,6 +362,62 @@ class HarnessEvaluateView(HomeAssistantView):
                 "spoken": markdown_to_spoken_text(response_text),
             }
         )
+
+
+class HarnessOptionsView(HomeAssistantView):
+    """Update a safe subset of config entry options from the panel."""
+
+    name = f"api:{DOMAIN}:harness:options"
+    url = f"{API_BASE}/harness/options"
+
+    @require_admin
+    async def post(self, request: web.Request) -> web.Response:
+        """Handle safe option updates."""
+        try:
+            payload = await request.json()
+        except ValueError:
+            return self.json_message(
+                "Invalid JSON body", HTTPStatus.BAD_REQUEST, "invalid_json"
+            )
+
+        if not isinstance(payload, dict):
+            return self.json_message(
+                "JSON body must be an object",
+                HTTPStatus.BAD_REQUEST,
+                "invalid_payload",
+            )
+
+        hass: HomeAssistant = request.app["hass"]
+        entry = _select_entry(hass, payload.get("entry_id"))
+        if entry is None:
+            return self.json_message(
+                "No LLM Gateway config entry found",
+                HTTPStatus.NOT_FOUND,
+                "entry_not_found",
+            )
+
+        options_payload = payload.get("options")
+        if not isinstance(options_payload, dict):
+            return self.json_message(
+                "options must be an object",
+                HTTPStatus.BAD_REQUEST,
+                "invalid_options",
+            )
+
+        try:
+            updates = _validate_editable_options(options_payload)
+        except ValueError as err:
+            return self.json_message(
+                str(err), HTTPStatus.BAD_REQUEST, "invalid_options"
+            )
+
+        new_options = dict(entry.options)
+        new_options.update(updates)
+        if updates.get(CONF_FAST_MODEL):
+            new_options[CONF_CHAT_MODEL] = updates[CONF_FAST_MODEL]
+        hass.config_entries.async_update_entry(entry, options=new_options)
+
+        return self.json({"entry": _entry_status(entry)})
 
 
 def _entries(hass: HomeAssistant) -> list[ConfigEntry]:
@@ -440,6 +504,140 @@ def _options_status(options: dict[str, Any]) -> dict[str, Any]:
             ),
         },
     }
+
+
+def _editable_schema() -> dict[str, Any]:
+    return {
+        "routing_modes": list(ROUTING_MODES),
+        "max_tokens": {"min": 1, "max": MAX_CONFIGURED_TOKENS},
+        "timeouts": {"min": 5, "max": MAX_CHAT_TIMEOUT},
+        "trace_max_runs": {"min": 1, "max": MAX_TRACE_RUNS},
+        "trace_retention_hours": {"min": 1, "max": MAX_TRACE_RETENTION_HOURS},
+    }
+
+
+def _validate_editable_options(payload: dict[str, Any]) -> dict[str, Any]:
+    updates: dict[str, Any] = {}
+
+    if CONF_ROUTING_MODE in payload:
+        routing_mode = str(payload[CONF_ROUTING_MODE]).strip()
+        if routing_mode not in ROUTING_MODES:
+            raise ValueError("routing_mode is not supported")
+        updates[CONF_ROUTING_MODE] = routing_mode
+
+    models = payload.get("models")
+    if models is not None:
+        if not isinstance(models, dict):
+            raise ValueError("models must be an object")
+        updates.update(
+            {
+                CONF_FAST_MODEL: _required_text(models.get("fast"), "models.fast"),
+                CONF_MID_MODEL: _required_text(models.get("mid"), "models.mid"),
+                CONF_DEEP_MODEL: _required_text(models.get("deep"), "models.deep"),
+            }
+        )
+
+    max_tokens = payload.get("max_tokens")
+    if max_tokens is not None:
+        if not isinstance(max_tokens, dict):
+            raise ValueError("max_tokens must be an object")
+        updates.update(
+            {
+                CONF_FAST_MAX_TOKENS: _bounded_int(
+                    max_tokens.get("fast"),
+                    "max_tokens.fast",
+                    minimum=1,
+                    maximum=MAX_CONFIGURED_TOKENS,
+                ),
+                CONF_MID_MAX_TOKENS: _bounded_int(
+                    max_tokens.get("mid"),
+                    "max_tokens.mid",
+                    minimum=1,
+                    maximum=MAX_CONFIGURED_TOKENS,
+                ),
+                CONF_DEEP_MAX_TOKENS: _bounded_int(
+                    max_tokens.get("deep"),
+                    "max_tokens.deep",
+                    minimum=1,
+                    maximum=MAX_CONFIGURED_TOKENS,
+                ),
+            }
+        )
+
+    timeouts = payload.get("timeouts")
+    if timeouts is not None:
+        if not isinstance(timeouts, dict):
+            raise ValueError("timeouts must be an object")
+        updates.update(
+            {
+                CONF_FAST_CHAT_TIMEOUT: _bounded_int(
+                    timeouts.get("fast"),
+                    "timeouts.fast",
+                    minimum=5,
+                    maximum=MAX_CHAT_TIMEOUT,
+                ),
+                CONF_MID_CHAT_TIMEOUT: _bounded_int(
+                    timeouts.get("mid"),
+                    "timeouts.mid",
+                    minimum=5,
+                    maximum=MAX_CHAT_TIMEOUT,
+                ),
+                CONF_DEEP_CHAT_TIMEOUT: _bounded_int(
+                    timeouts.get("deep"),
+                    "timeouts.deep",
+                    minimum=5,
+                    maximum=MAX_CHAT_TIMEOUT,
+                ),
+            }
+        )
+
+    trace = payload.get("trace")
+    if trace is not None:
+        if not isinstance(trace, dict):
+            raise ValueError("trace must be an object")
+        updates.update(
+            {
+                CONF_DIAGNOSTIC_TRACES: bool(trace.get("enabled")),
+                CONF_TRACE_INCLUDE_RAW_MESSAGES: bool(
+                    trace.get("include_raw_messages")
+                ),
+                CONF_TRACE_MAX_RUNS: _bounded_int(
+                    trace.get("max_runs"),
+                    "trace.max_runs",
+                    minimum=1,
+                    maximum=MAX_TRACE_RUNS,
+                ),
+                CONF_TRACE_RETENTION_HOURS: _bounded_int(
+                    trace.get("retention_hours"),
+                    "trace.retention_hours",
+                    minimum=1,
+                    maximum=MAX_TRACE_RETENTION_HOURS,
+                ),
+            }
+        )
+
+    return updates
+
+
+def _required_text(value: object, field: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError(f"{field} is required")
+    if len(text) > MAX_MODEL_ID_LENGTH:
+        raise ValueError(f"{field} is too long")
+    return text
+
+
+def _bounded_int(
+    value: object, field: str, *, minimum: int, maximum: int
+) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as err:
+        raise ValueError(f"{field} must be an integer") from err
+    if parsed < minimum or parsed > maximum:
+        raise ValueError(f"{field} must be between {minimum} and {maximum}")
+    return parsed
 
 
 def _trace_status(options: dict[str, Any]) -> dict[str, Any]:

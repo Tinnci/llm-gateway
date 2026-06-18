@@ -116,6 +116,9 @@ Current panel views:
 - `Runs / 运行记录`: config entries, model routes, provider state, recent
   diagnostic text traces, latency, tool event counts, and optional compressed
   raw payloads.
+- `Settings / 配置`: editable safe options for routing mode, Fast/Mid/Deep
+  model ids, token budgets, request timeouts, and bounded diagnostic trace
+  retention.
 - `Prompt Policies / 提示策略`: spoken prompt policies and risk rules.
 - `Scenarios / 场景测试`: ad hoc prompt policy evaluation.
 - `Search Lab / 搜索实验室`: search gate visibility and scenario checks.
@@ -125,7 +128,17 @@ Current panel views:
 
 Home Assistant translation files cover the config/options flow. The custom
 panel has its own small frontend dictionary because HA custom panel modules do
-not automatically receive integration translation strings.
+not automatically receive integration translation strings. The panel localizes
+human-facing labels, route names, risk levels, trace statuses, and policy rule
+ids; internal model ids and raw diagnostic payloads are intentionally shown as
+raw technical values.
+
+The panel intentionally does not edit API keys, base URL, exposed Home
+Assistant LLM APIs, search provider secrets, or the system prompt. Those stay in
+the Home Assistant options flow so sensitive fields keep the standard HA
+selector and storage behaviour. The editable panel API accepts only a typed
+whitelist and validates every numeric range server-side before updating config
+entry options.
 
 ## Diagnostic traces and chat history
 
@@ -191,12 +204,15 @@ diagnostic trace fields for provider and fallback reason.
 
 ## Development
 
-Use `uv` for Python and `bun` for frontend syntax/build checks:
+Use `uv` for Python, `bun` for frontend build checks, and `tsgo` through
+`@typescript/native-preview` for frontend contract checks:
 
 ```bash
 uv sync --dev
+bun install
 uv run pytest
-bun build --target=browser custom_components/llm_gateway/frontend/voice-harness-panel.js --outfile=/tmp/voice-harness-panel.js
+bun run typecheck
+bun run build:panel
 ```
 
 ## Security notes
