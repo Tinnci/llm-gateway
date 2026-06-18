@@ -35,6 +35,7 @@ from .search import (
     mark_external_tool_calls,
 )
 from .traces import TraceTurn
+from .voice_controls import async_handle_voice_runtime_command
 from .voice_text import markdown_to_spoken_text
 
 if TYPE_CHECKING:
@@ -199,6 +200,30 @@ class LLMGatewayConversationEntity(
             return err.as_conversation_result()
 
         runtime = self.entry.runtime_data
+        local_control_speech = await async_handle_voice_runtime_command(
+            self.hass, user_input.text
+        )
+        if local_control_speech is not None:
+            async for _tool_result in chat_log.async_add_assistant_content(
+                conversation.AssistantContent(
+                    agent_id=self.entity_id,
+                    content=local_control_speech,
+                )
+            ):
+                pass
+            return await self._async_finalize_turn(
+                user_input,
+                chat_log,
+                started,
+                {
+                    "kind": "local_control",
+                    "model": "voice_runtime_control",
+                    "max_tokens": 0,
+                    "timeout_s": 0,
+                    "async_deep_task": False,
+                },
+            )
+
         route = select_model_route(user_input.text, options)
         self._inject_memory_context(chat_log, runtime, user_input.conversation_id)
 
@@ -227,6 +252,23 @@ class LLMGatewayConversationEntity(
         else:
             await self._async_run_chat_log(chat_log, route, user_input.text)
 
+        return await self._async_finalize_turn(
+            user_input,
+            chat_log,
+            started,
+            _route_trace(route),
+        )
+
+    async def _async_finalize_turn(
+        self,
+        user_input: conversation.ConversationInput,
+        chat_log: conversation.ChatLog,
+        started: float,
+        route_trace: dict[str, Any],
+    ) -> conversation.ConversationResult:
+        """Build the HA result, clean TTS, and record diagnostics."""
+        options = self.entry.options
+        runtime = self.entry.runtime_data
         result = conversation.async_get_result_from_chat_log(user_input, chat_log)
         spoken = result.response.speech.get("plain", {}).get("speech", "")
         if spoken:
@@ -243,7 +285,7 @@ class LLMGatewayConversationEntity(
                 conversation_id=user_input.conversation_id,
                 user_text=user_input.text,
                 assistant_text=assistant_text,
-                route=_route_trace(route),
+                route=route_trace,
                 latency_ms=int((time.monotonic() - started) * 1000),
                 status=_trace_status(assistant_text),
                 raw_payload={
@@ -253,7 +295,7 @@ class LLMGatewayConversationEntity(
                         "language": getattr(user_input, "language", "") or "",
                         "device_id": getattr(user_input, "device_id", "") or "",
                     },
-                    "route": _route_trace(route),
+                    "route": route_trace,
                     "messages": _content_to_messages(chat_log.content),
                     "speech": {
                         "final": assistant_text,

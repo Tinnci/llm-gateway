@@ -117,6 +117,62 @@ async def test_converse_plain(hass, aioclient_mock, mock_config_entry):
     assert result.response.speech["plain"]["speech"] == "你好，有什么可以帮您？"
 
 
+async def test_converse_voice_pause_command_calls_local_service(
+    hass, aioclient_mock, mock_config_entry
+):
+    calls = []
+
+    async def handle_pause(call):
+        calls.append(dict(call.data))
+
+    hass.services.async_register("rest_command", "kukui_voice_pause", handle_pause)
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    mock_config_entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    ent_reg = er.async_get(hass)
+    entities = er.async_entries_for_config_entry(ent_reg, mock_config_entry.entry_id)
+    agent_id = entities[0].entity_id
+
+    result = await conversation.async_converse(
+        hass, "闭嘴 5 分钟", None, Context(), agent_id=agent_id
+    )
+
+    assert result.response.speech["plain"]["speech"] == "我会停止响应语音唤醒 5 分钟。"
+    assert calls == [{"seconds": 300, "reason": "voice_command"}]
+
+
+async def test_converse_voice_resume_command_calls_local_service(
+    hass, aioclient_mock, mock_config_entry
+):
+    calls = []
+
+    async def handle_resume(call):
+        calls.append(dict(call.data))
+
+    hass.services.async_register("rest_command", "kukui_voice_resume", handle_resume)
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    mock_config_entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    ent_reg = er.async_get(hass)
+    entities = er.async_entries_for_config_entry(ent_reg, mock_config_entry.entry_id)
+    agent_id = entities[0].entity_id
+
+    result = await conversation.async_converse(
+        hass, "恢复语音唤醒", None, Context(), agent_id=agent_id
+    )
+
+    assert result.response.speech["plain"]["speech"] == "语音唤醒已恢复。"
+    assert calls == [{}]
+
+
 async def test_converse_sanitizes_markdown_for_tts(
     hass, aioclient_mock, mock_config_entry
 ):
