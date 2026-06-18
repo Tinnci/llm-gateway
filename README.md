@@ -8,8 +8,8 @@ shim, and similar providers.
 
 The current implementation is no longer a single-model chat proxy. It is a
 routed assistant runtime with short spoken answers, Home Assistant tool policy,
-search gating, short session memory, a Chinese Voice Harness panel, and a small
-earcon toolchain.
+search gating, short session memory, a localized Voice Harness panel, and a
+small earcon toolchain.
 
 ## Current capabilities
 
@@ -30,7 +30,9 @@ earcon toolchain.
 - **Short session memory**: recent turns are stored with a short TTL using Home
   Assistant `Store` and injected only when a conversation id is present.
 - **Voice Harness panel**: the integration auto-registers an admin-only sidebar
-  panel named `语音测试台`; no manual `panel_custom` YAML is required.
+  panel named `Voice Harness`; no manual `panel_custom` YAML is required. Panel
+  chrome, prompt policies, scenarios, and earcon descriptions render in English
+  or Simplified Chinese based on the Home Assistant/browser locale.
 - **Earcon pack support**: rendered WAV earcons are served through the panel's
   static path. The `tools/ha-earcon` uv project renders and lints deterministic
   prompt sounds.
@@ -107,13 +109,17 @@ The sidebar URL is `voice-harness`, and the panel calls:
 
 Current panel views:
 
-- `运行记录`: config entries, model routes, provider state.
-- `提示策略`: spoken prompt policies and risk rules.
-- `场景测试`: ad hoc prompt policy evaluation.
-- `搜索实验室`: search gate visibility and scenario checks.
-- `记忆实验室`: short memory snapshots.
-- `提示音`: rendered earcon manifest and playback.
-- `回归测试`: bundled scenario samples.
+- `Runs / 运行记录`: config entries, model routes, provider state.
+- `Prompt Policies / 提示策略`: spoken prompt policies and risk rules.
+- `Scenarios / 场景测试`: ad hoc prompt policy evaluation.
+- `Search Lab / 搜索实验室`: search gate visibility and scenario checks.
+- `Memory Lab / 记忆实验室`: short memory snapshots.
+- `Earcons / 提示音`: rendered earcon manifest and playback.
+- `Regression / 回归测试`: bundled scenario samples.
+
+Home Assistant translation files cover the config/options flow. The custom
+panel has its own small frontend dictionary because HA custom panel modules do
+not automatically receive integration translation strings.
 
 ## Earcon workflow
 

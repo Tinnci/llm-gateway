@@ -1,11 +1,11 @@
 const TABS = [
-  ["runs", "运行记录", "mdi:play-circle-outline"],
-  ["policies", "提示策略", "mdi:shield-check-outline"],
-  ["scenarios", "场景测试", "mdi:clipboard-text-search-outline"],
-  ["search", "搜索实验室", "mdi:web"],
-  ["memory", "记忆实验室", "mdi:database-eye-outline"],
-  ["earcons", "提示音", "mdi:music-note-outline"],
-  ["regression", "回归测试", "mdi:chart-timeline-variant"],
+  ["runs", "tab.runs", "mdi:play-circle-outline"],
+  ["policies", "tab.policies", "mdi:shield-check-outline"],
+  ["scenarios", "tab.scenarios", "mdi:clipboard-text-search-outline"],
+  ["search", "tab.search", "mdi:web"],
+  ["memory", "tab.memory", "mdi:database-eye-outline"],
+  ["earcons", "tab.earcons", "mdi:music-note-outline"],
+  ["regression", "tab.regression", "mdi:chart-timeline-variant"],
 ];
 
 const DEFAULT_EXPECTED = {
@@ -13,6 +13,162 @@ const DEFAULT_EXPECTED = {
   spoken_response: {
     max_sentences: 2,
     must_not_mention: ["entity_id"],
+  },
+};
+
+const I18N = {
+  en: {
+    "app.title": "Voice Harness",
+    "aria.views": "Voice Harness views",
+    "common.refresh": "Refresh",
+    "tab.runs": "Runs",
+    "tab.policies": "Prompt Policies",
+    "tab.scenarios": "Scenarios",
+    "tab.search": "Search Lab",
+    "tab.memory": "Memory Lab",
+    "tab.earcons": "Earcons",
+    "tab.regression": "Regression",
+    "status.loading": "Reading integration status",
+    "status.waiting": "Waiting for Home Assistant",
+    "status.no_entries": "No LLM Gateway config entries loaded yet",
+    "status.entries": "{count} config entries loaded",
+    "runs.empty": "No configured LLM Gateway entries.",
+    "entry.base_url_missing": "Base URL not configured",
+    "policies.empty": "No prompt policies.",
+    "scenario.user": "User input",
+    "scenario.response": "Assistant response",
+    "scenario.expected": "Expected JSON",
+    "scenario.run": "Run scenario",
+    "search.gating": "Search gating",
+    "search.no_providers": "No search provider key exposed",
+    "search.evaluate": "Evaluate gating",
+    "memory.turns": "{count} turns",
+    "memory.user": "User",
+    "memory.assistant": "Assistant",
+    "memory.empty": "No active memory sessions.",
+    "earcon.no_pack": "No earcon pack",
+    "earcon.meta": "{sampleRate} Hz · target {targetLufs} LUFS · peak limit {peakDbfs} dBFS",
+    "earcon.play": "Play {name}",
+    "earcon.peak": "{peak} dBFS peak",
+    "earcon.empty": "No rendered earcons.",
+    "regression.run": "Run",
+    "route.timeout": "{seconds}s timeout",
+    "result.empty": "No run result yet.",
+    "result.passed": "Passed",
+    "result.failed": "Failed",
+    "result.meta": "Route: {route} · Search: {search}",
+    "search.allowed": "allowed",
+    "search.blocked": "blocked",
+    "error.invalid_expected_json": "Expected JSON is not valid.",
+    "policy.low_risk_success.title": "Low-risk success",
+    "policy.low_risk_success.spoken": "Done.",
+    "policy.state_query.title": "State query",
+    "policy.state_query.spoken": "Answer the conclusion first without long explanation.",
+    "policy.clarification.title": "Minimal clarification",
+    "policy.clarification.spoken": "Ask only one minimal clarification question.",
+    "policy.high_risk_confirmation.title": "High-risk confirmation",
+    "policy.high_risk_confirmation.spoken": "Do you want to operate {target}? Please confirm.",
+    "policy.search_summary.title": "Search summary",
+    "policy.search_summary.spoken": "Say the conclusion first; put sources and long lists on screen.",
+    "policy.error_repair.title": "Error repair",
+    "policy.error_repair.spoken": "Give the next step instead of only saying you did not understand.",
+    "policy.deep_task.title": "Deep task",
+    "policy.deep_task.spoken": "I will keep analyzing and send the result to Home Assistant notifications.",
+    "sample.fast-light.name": "Basic light control",
+    "sample.mid-search.name": "Fresh information query",
+    "sample.risk-confirmation.name": "High-risk action confirmation",
+    "earcon.clarification.purpose": "The assistant needs one missing detail before acting.",
+    "earcon.confirmation.purpose": "High-risk action needs explicit user confirmation.",
+    "earcon.deep_task.purpose": "Long reasoning has been handed off to a background task.",
+    "earcon.failure.purpose": "Request failed or the assistant cannot continue safely.",
+    "earcon.listening_end.purpose": "Speech capture ended and the assistant is processing.",
+    "earcon.listening_start.purpose": "Microphone is open and the user can speak.",
+    "earcon.search.purpose": "Web search is being used for current external information.",
+    "earcon.success.purpose": "Low-risk command completed.",
+    "earcon.wake.purpose": "Wake word accepted; assistant is entering the voice path.",
+  },
+  "zh-Hans": {
+    "app.title": "语音测试台",
+    "aria.views": "语音测试台视图",
+    "common.refresh": "刷新",
+    "tab.runs": "运行记录",
+    "tab.policies": "提示策略",
+    "tab.scenarios": "场景测试",
+    "tab.search": "搜索实验室",
+    "tab.memory": "记忆实验室",
+    "tab.earcons": "提示音",
+    "tab.regression": "回归测试",
+    "status.loading": "正在读取集成状态",
+    "status.waiting": "等待 Home Assistant",
+    "status.no_entries": "尚未加载 LLM Gateway 配置项",
+    "status.entries": "已加载 {count} 个配置项",
+    "runs.empty": "没有已配置的 LLM Gateway 条目。",
+    "entry.base_url_missing": "未配置 Base URL",
+    "policies.empty": "没有提示策略。",
+    "scenario.user": "用户输入",
+    "scenario.response": "助手回复",
+    "scenario.expected": "期望 JSON",
+    "scenario.run": "运行场景",
+    "search.gating": "搜索门控",
+    "search.no_providers": "未暴露搜索 provider key",
+    "search.evaluate": "评估门控",
+    "memory.turns": "{count} 轮",
+    "memory.user": "用户",
+    "memory.assistant": "助手",
+    "memory.empty": "没有活跃记忆会话。",
+    "earcon.no_pack": "没有提示音包",
+    "earcon.meta": "{sampleRate} Hz · 目标 {targetLufs} LUFS · 峰值上限 {peakDbfs} dBFS",
+    "earcon.play": "播放 {name}",
+    "earcon.peak": "{peak} dBFS 峰值",
+    "earcon.empty": "没有已渲染的提示音。",
+    "regression.run": "运行",
+    "route.timeout": "{seconds}s 超时",
+    "result.empty": "还没有运行结果。",
+    "result.passed": "通过",
+    "result.failed": "失败",
+    "result.meta": "路由：{route} · 搜索：{search}",
+    "search.allowed": "允许",
+    "search.blocked": "阻止",
+    "error.invalid_expected_json": "期望 JSON 格式不正确。",
+    "policy.low_risk_success.title": "低风险成功",
+    "policy.low_risk_success.spoken": "好了。",
+    "policy.state_query.title": "状态查询",
+    "policy.state_query.spoken": "先回答结论，不展开长解释。",
+    "policy.clarification.title": "最小澄清",
+    "policy.clarification.spoken": "一次只问一个最小澄清问题。",
+    "policy.high_risk_confirmation.title": "高风险确认",
+    "policy.high_risk_confirmation.spoken": "要操作{target}吗？请确认。",
+    "policy.search_summary.title": "搜索摘要",
+    "policy.search_summary.spoken": "先说结论，来源和长列表放到屏幕。",
+    "policy.error_repair.title": "错误修复",
+    "policy.error_repair.spoken": "说明下一步，而不是只说没听懂。",
+    "policy.deep_task.title": "深度任务",
+    "policy.deep_task.spoken": "我会继续分析，完成后发到 Home Assistant 通知里。",
+    "sample.fast-light.name": "普通灯光控制",
+    "sample.mid-search.name": "最新信息查询",
+    "sample.risk-confirmation.name": "高风险动作确认",
+    "earcon.clarification.purpose": "执行前需要补一个缺失信息。",
+    "earcon.confirmation.purpose": "高风险动作需要用户显式确认。",
+    "earcon.deep_task.purpose": "长推理已交给后台任务继续处理。",
+    "earcon.failure.purpose": "请求失败，或助手无法安全继续。",
+    "earcon.listening_end.purpose": "语音采集结束，助手正在处理。",
+    "earcon.listening_start.purpose": "麦克风已打开，用户可以开始说话。",
+    "earcon.search.purpose": "正在为当前外部信息使用联网搜索。",
+    "earcon.success.purpose": "低风险指令已完成。",
+    "earcon.wake.purpose": "唤醒词已确认，助手进入语音流程。",
+  },
+};
+
+const DEFAULT_DRAFTS = {
+  en: {
+    user: "Turn on the living room light",
+    response: "**Done.** Living room light is on.",
+    expected: JSON.stringify(DEFAULT_EXPECTED, null, 2),
+  },
+  "zh-Hans": {
+    user: "打开客厅灯",
+    response: "**已打开** 客厅灯。",
+    expected: JSON.stringify(DEFAULT_EXPECTED, null, 2),
   },
 };
 
@@ -25,15 +181,18 @@ class VoiceHarnessPanel extends HTMLElement {
     this._error = "";
     this._busy = false;
     this._result = null;
-    this._draft = {
-      user: "打开客厅灯",
-      response: "**已打开** 客厅灯。",
-      expected: JSON.stringify(DEFAULT_EXPECTED, null, 2),
-    };
+    this._draftLocale = this._locale();
+    this._draftTouched = false;
+    this._draft = this._defaultDraft(this._draftLocale);
   }
 
   set hass(value) {
     this._hass = value;
+    const locale = this._locale();
+    if (!this._draftTouched && this._draftLocale !== locale) {
+      this._draftLocale = locale;
+      this._draft = this._defaultDraft(locale);
+    }
     if (this.isConnected && !this._data && !this._busy) {
       this._load();
     }
@@ -125,16 +284,19 @@ class VoiceHarnessPanel extends HTMLElement {
     if (sampleId) {
       const sample = this._data?.sample_scenarios?.find((item) => item.id === sampleId);
       if (sample) {
+        const user = this._sampleUser(sample);
+        const response = this._sampleResponse(sample);
+        const expected = this._sampleExpected(sample);
         this._draft = {
-          user: sample.user,
-          response: sample.response,
-          expected: JSON.stringify(sample.expected || {}, null, 2),
+          user,
+          response,
+          expected: JSON.stringify(expected, null, 2),
         };
         this._activeTab = "scenarios";
         this._evaluate({
-          user: sample.user,
-          response: sample.response,
-          expected: sample.expected || {},
+          user,
+          response,
+          expected,
         });
       }
     }
@@ -145,6 +307,7 @@ class VoiceHarnessPanel extends HTMLElement {
     if (!field) {
       return;
     }
+    this._draftTouched = true;
     this._draft = { ...this._draft, [field]: event.target.value };
   }
 
@@ -158,7 +321,7 @@ class VoiceHarnessPanel extends HTMLElement {
     try {
       expected = JSON.parse(this._draft.expected || "{}");
     } catch (err) {
-      this._error = "期望 JSON 格式不正确。";
+      this._error = this._t("error.invalid_expected_json");
       this._render();
       return;
     }
@@ -188,19 +351,19 @@ class VoiceHarnessPanel extends HTMLElement {
       <main class="shell">
         <header class="topbar">
           <div>
-            <h1>语音测试台</h1>
+            <h1>${escapeHtml(this._t("app.title"))}</h1>
             <div class="subline">${escapeHtml(this._statusLine(entries))}</div>
           </div>
-          <button class="iconButton" data-action="refresh" title="刷新">
+          <button class="iconButton" data-action="refresh" title="${escapeHtml(this._t("common.refresh"))}">
             <ha-icon icon="mdi:refresh"></ha-icon>
           </button>
         </header>
         ${this._error ? `<div class="banner error">${escapeHtml(this._error)}</div>` : ""}
-        <nav class="tabs" aria-label="语音测试台视图">
-          ${TABS.map(([id, label, icon]) => `
+        <nav class="tabs" aria-label="${escapeHtml(this._t("aria.views"))}">
+          ${TABS.map(([id, labelKey, icon]) => `
             <button class="tab ${this._activeTab === id ? "active" : ""}" data-tab="${id}">
               <ha-icon icon="${icon}"></ha-icon>
-              <span>${label}</span>
+              <span>${escapeHtml(this._t(labelKey))}</span>
             </button>
           `).join("")}
         </nav>
@@ -213,12 +376,12 @@ class VoiceHarnessPanel extends HTMLElement {
 
   _statusLine(entries) {
     if (!this._data) {
-      return this._busy ? "正在读取集成状态" : "等待 Home Assistant";
+      return this._busy ? this._t("status.loading") : this._t("status.waiting");
     }
     if (!entries.length) {
-      return "尚未加载 LLM Gateway 配置项";
+      return this._t("status.no_entries");
     }
-    return `已加载 ${entries.length} 个配置项`;
+    return this._t("status.entries", { count: entries.length });
   }
 
   _renderActive(entries) {
@@ -258,7 +421,7 @@ class VoiceHarnessPanel extends HTMLElement {
 
   _renderRuns(entries) {
     if (!entries.length) {
-      return `<div class="empty">没有已配置的 LLM Gateway 条目。</div>`;
+      return `<div class="empty">${escapeHtml(this._t("runs.empty"))}</div>`;
     }
     return `
       <div class="entryGrid">
@@ -267,7 +430,7 @@ class VoiceHarnessPanel extends HTMLElement {
             <div class="sectionHead">
               <div>
                 <h2>${escapeHtml(entry.title)}</h2>
-                <div class="meta">${escapeHtml(entry.base_url || "未配置 Base URL")}</div>
+                <div class="meta">${escapeHtml(entry.base_url || this._t("entry.base_url_missing"))}</div>
               </div>
               <span class="chip ok">${escapeHtml(entry.state || "unknown")}</span>
             </div>
@@ -288,8 +451,8 @@ class VoiceHarnessPanel extends HTMLElement {
           <article class="surface">
             <div class="sectionHead">
               <div>
-                <h2>${escapeHtml(policy.title)}</h2>
-                <div class="meta">${escapeHtml(policy.spoken)}</div>
+                <h2>${escapeHtml(this._policyTitle(policy))}</h2>
+                <div class="meta">${escapeHtml(this._policySpoken(policy))}</div>
               </div>
               <span class="chip ${policy.risk === "high" ? "bad" : "muted"}">${escapeHtml(policy.risk)}</span>
             </div>
@@ -297,7 +460,7 @@ class VoiceHarnessPanel extends HTMLElement {
               ${(policy.rules || []).map((rule) => `<span>${escapeHtml(rule)}</span>`).join("")}
             </div>
           </article>
-        `).join("") || `<div class="empty">没有提示策略。</div>`}
+        `).join("") || `<div class="empty">${escapeHtml(this._t("policies.empty"))}</div>`}
       </div>
       ${entries.length ? `<div class="surface modelSurface">${entries.map((entry) => this._modelRows(entry.options)).join("")}</div>` : ""}
     `;
@@ -308,20 +471,20 @@ class VoiceHarnessPanel extends HTMLElement {
       <div class="workbench">
         <form class="surface form" data-form="scenario">
           <label>
-            <span>用户输入</span>
+            <span>${escapeHtml(this._t("scenario.user"))}</span>
             <textarea data-field="user" rows="3">${escapeHtml(this._draft.user)}</textarea>
           </label>
           <label>
-            <span>助手回复</span>
+            <span>${escapeHtml(this._t("scenario.response"))}</span>
             <textarea data-field="response" rows="4">${escapeHtml(this._draft.response)}</textarea>
           </label>
           <label>
-            <span>期望 JSON</span>
+            <span>${escapeHtml(this._t("scenario.expected"))}</span>
             <textarea class="codeInput" data-field="expected" rows="9">${escapeHtml(this._draft.expected)}</textarea>
           </label>
           <button class="primary" type="submit">
             <ha-icon icon="mdi:play"></ha-icon>
-            <span>运行场景</span>
+            <span>${escapeHtml(this._t("scenario.run"))}</span>
           </button>
         </form>
         ${this._renderResult()}
@@ -336,8 +499,8 @@ class VoiceHarnessPanel extends HTMLElement {
         <article class="surface">
           <div class="sectionHead">
             <div>
-              <h2>搜索门控</h2>
-              <div class="meta">${providers.length ? providers.join(", ") : "未暴露搜索 provider key"}</div>
+              <h2>${escapeHtml(this._t("search.gating"))}</h2>
+              <div class="meta">${providers.length ? providers.join(", ") : escapeHtml(this._t("search.no_providers"))}</div>
             </div>
           </div>
           <form class="compactForm" data-form="scenario">
@@ -345,7 +508,7 @@ class VoiceHarnessPanel extends HTMLElement {
             <textarea data-field="response" rows="3">${escapeHtml(this._draft.response)}</textarea>
             <button class="primary" type="submit">
               <ha-icon icon="mdi:magnify"></ha-icon>
-              <span>评估门控</span>
+              <span>${escapeHtml(this._t("search.evaluate"))}</span>
             </button>
           </form>
         </article>
@@ -367,21 +530,21 @@ class VoiceHarnessPanel extends HTMLElement {
                 <h2>${escapeHtml(entry.title)}</h2>
                 <div class="meta">${escapeHtml(session.conversation_id)}</div>
               </div>
-              <span class="chip muted">${(session.turns || []).length} 轮</span>
+              <span class="chip muted">${escapeHtml(this._t("memory.turns", { count: (session.turns || []).length }))}</span>
             </div>
             ${session.summary ? `<p class="summary">${escapeHtml(session.summary)}</p>` : ""}
             <div class="turns">
               ${(session.turns || []).map((turn) => `
                 <div class="turn">
-                  <strong>用户</strong>
+                  <strong>${escapeHtml(this._t("memory.user"))}</strong>
                   <p>${escapeHtml(turn.user)}</p>
-                  <strong>助手</strong>
+                  <strong>${escapeHtml(this._t("memory.assistant"))}</strong>
                   <p>${escapeHtml(turn.assistant)}</p>
                 </div>
               `).join("")}
             </div>
           </article>
-        `).join("") || `<div class="empty">没有活跃记忆会话。</div>`}
+        `).join("") || `<div class="empty">${escapeHtml(this._t("memory.empty"))}</div>`}
       </div>
     `;
   }
@@ -392,8 +555,12 @@ class VoiceHarnessPanel extends HTMLElement {
     return `
       <div class="surface earconHeader">
         <div>
-          <h2>${escapeHtml(pack.pack || "没有提示音包")}</h2>
-          <div class="meta">${pack.sample_rate || 0} Hz · 目标 ${pack.target_lufs || "?"} LUFS · 峰值上限 ${pack.true_peak_dbfs || "?"} dBFS</div>
+          <h2>${escapeHtml(pack.pack || this._t("earcon.no_pack"))}</h2>
+          <div class="meta">${escapeHtml(this._t("earcon.meta", {
+            sampleRate: pack.sample_rate || 0,
+            targetLufs: pack.target_lufs || "?",
+            peakDbfs: pack.true_peak_dbfs || "?",
+          }))}</div>
         </div>
       </div>
       <div class="earconGrid">
@@ -402,19 +569,19 @@ class VoiceHarnessPanel extends HTMLElement {
             <div class="sectionHead">
               <div>
                 <h2>${escapeHtml(name)}</h2>
-                <div class="meta">${escapeHtml(file.purpose || "")}</div>
+                <div class="meta">${escapeHtml(this._earconPurpose(name, file))}</div>
               </div>
-              <button class="iconButton" data-earcon="${escapeHtml(name)}" title="播放 ${escapeHtml(name)}">
+              <button class="iconButton" data-earcon="${escapeHtml(name)}" title="${escapeHtml(this._t("earcon.play", { name }))}">
                 <ha-icon icon="mdi:play"></ha-icon>
               </button>
             </div>
             <div class="meterRow">
               <span>${escapeHtml(file.duration_ms)} ms</span>
               <span>${escapeHtml(file.lufs)} LUFS</span>
-              <span>${escapeHtml(file.peak_dbfs)} dBFS 峰值</span>
+              <span>${escapeHtml(this._t("earcon.peak", { peak: file.peak_dbfs }))}</span>
             </div>
           </article>
-        `).join("") || `<div class="empty">没有已渲染的提示音。</div>`}
+        `).join("") || `<div class="empty">${escapeHtml(this._t("earcon.empty"))}</div>`}
       </div>
     `;
   }
@@ -426,12 +593,12 @@ class VoiceHarnessPanel extends HTMLElement {
         ${samples.map((sample) => `
           <article class="surface sample">
             <div>
-              <h2>${escapeHtml(sample.name)}</h2>
-              <p>${escapeHtml(sample.user)}</p>
+              <h2>${escapeHtml(this._sampleName(sample))}</h2>
+              <p>${escapeHtml(this._sampleUser(sample))}</p>
             </div>
             <button class="secondary" data-sample="${escapeHtml(sample.id)}">
               <ha-icon icon="mdi:play-outline"></ha-icon>
-              <span>运行</span>
+              <span>${escapeHtml(this._t("regression.run"))}</span>
             </button>
           </article>
         `).join("")}
@@ -444,7 +611,7 @@ class VoiceHarnessPanel extends HTMLElement {
       <div class="route ${escapeHtml(route.kind)}">
         <span class="routeKind">${escapeHtml(route.kind)}</span>
         <strong>${escapeHtml(route.model)}</strong>
-        <span>${route.max_tokens} tokens · ${route.timeout_s}s 超时</span>
+        <span>${route.max_tokens} tokens · ${escapeHtml(this._t("route.timeout", { seconds: route.timeout_s }))}</span>
       </div>
     `;
   }
@@ -467,17 +634,19 @@ class VoiceHarnessPanel extends HTMLElement {
 
   _renderResult() {
     if (!this._result) {
-      return `<article class="surface result emptyState">还没有运行结果。</article>`;
+      return `<article class="surface result emptyState">${escapeHtml(this._t("result.empty"))}</article>`;
     }
     const result = this._result;
+    const passed = result.passed ? this._t("result.passed") : this._t("result.failed");
+    const search = result.search.allowed ? this._t("search.allowed") : this._t("search.blocked");
     return `
       <article class="surface result">
         <div class="sectionHead">
           <div>
-            <h2>${result.passed ? "通过" : "失败"}</h2>
-            <div class="meta">路由：${escapeHtml(result.route.kind)} · 搜索：${result.search.allowed ? "允许" : "阻止"}</div>
+            <h2>${escapeHtml(passed)}</h2>
+            <div class="meta">${escapeHtml(this._t("result.meta", { route: result.route.kind, search }))}</div>
           </div>
-          <span class="chip ${result.passed ? "ok" : "bad"}">${result.passed ? "通过" : "失败"}</span>
+          <span class="chip ${result.passed ? "ok" : "bad"}">${escapeHtml(passed)}</span>
         </div>
         <div class="spoken">${escapeHtml(result.spoken || "")}</div>
         ${(result.violations || []).length ? `
@@ -488,6 +657,73 @@ class VoiceHarnessPanel extends HTMLElement {
         <pre>${escapeHtml(JSON.stringify(result, null, 2))}</pre>
       </article>
     `;
+  }
+
+  _locale() {
+    const language = this.hass?.locale?.language || this.hass?.language || navigator.language || "en";
+    return String(language).toLowerCase().startsWith("zh") ? "zh-Hans" : "en";
+  }
+
+  _t(key, params = {}) {
+    const table = I18N[this._locale()] || I18N.en;
+    const fallback = I18N.en[key] || key;
+    return String(table[key] || fallback).replace(/\{(\w+)\}/g, (_match, name) =>
+      params[name] ?? ""
+    );
+  }
+
+  _defaultDraft(locale) {
+    return { ...(DEFAULT_DRAFTS[locale] || DEFAULT_DRAFTS.en) };
+  }
+
+  _localize(value, fallback = "") {
+    if (!value || typeof value !== "object") {
+      return value || fallback;
+    }
+    const locale = this._locale();
+    return value[locale] || value.en || value["zh-Hans"] || fallback;
+  }
+
+  _policyTitle(policy) {
+    const key = `policy.${policy.id}.title`;
+    return this._localize(policy.title_i18n, this._lookup(key, policy.title));
+  }
+
+  _policySpoken(policy) {
+    const key = `policy.${policy.id}.spoken`;
+    return this._localize(policy.spoken_i18n, this._lookup(key, policy.spoken));
+  }
+
+  _sampleName(sample) {
+    const key = `sample.${sample.id}.name`;
+    return this._localize(sample.name_i18n, this._lookup(key, sample.name));
+  }
+
+  _sampleUser(sample) {
+    return this._localize(sample.user_i18n, sample.user);
+  }
+
+  _sampleResponse(sample) {
+    return this._localize(sample.response_i18n, sample.response);
+  }
+
+  _sampleExpected(sample) {
+    const value = sample.expected_i18n;
+    if (!value || typeof value !== "object") {
+      return sample.expected || {};
+    }
+    const locale = this._locale();
+    return value[locale] || value.en || value["zh-Hans"] || sample.expected || {};
+  }
+
+  _earconPurpose(name, file) {
+    const key = `earcon.${name}.purpose`;
+    return this._localize(file.purpose_i18n, this._lookup(key, file.purpose || ""));
+  }
+
+  _lookup(key, fallback = "") {
+    const table = I18N[this._locale()] || I18N.en;
+    return table[key] || I18N.en[key] || fallback || "";
   }
 }
 

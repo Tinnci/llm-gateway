@@ -58,50 +58,85 @@ PROMPT_POLICIES: list[dict[str, Any]] = [
     {
         "id": "low_risk_success",
         "title": "低风险成功",
+        "title_i18n": {"en": "Low-risk success", "zh-Hans": "低风险成功"},
         "risk": "low",
         "spoken": "好了。",
+        "spoken_i18n": {"en": "Done.", "zh-Hans": "好了。"},
         "rules": ["max_one_sentence", "no_tool_details", "no_entity_id"],
     },
     {
         "id": "state_query",
         "title": "状态查询",
+        "title_i18n": {"en": "State query", "zh-Hans": "状态查询"},
         "risk": "low",
         "spoken": "先回答结论，不展开长解释。",
+        "spoken_i18n": {
+            "en": "Answer the conclusion first without long explanation.",
+            "zh-Hans": "先回答结论，不展开长解释。",
+        },
         "rules": ["answer_first", "no_long_list", "no_url"],
     },
     {
         "id": "clarification",
         "title": "最小澄清",
+        "title_i18n": {"en": "Minimal clarification", "zh-Hans": "最小澄清"},
         "risk": "medium",
         "spoken": "一次只问一个最小澄清问题。",
+        "spoken_i18n": {
+            "en": "Ask only one minimal clarification question.",
+            "zh-Hans": "一次只问一个最小澄清问题。",
+        },
         "rules": ["one_question", "no_action_before_clarity"],
     },
     {
         "id": "high_risk_confirmation",
         "title": "高风险确认",
+        "title_i18n": {"en": "High-risk confirmation", "zh-Hans": "高风险确认"},
         "risk": "high",
         "spoken": "要操作{target}吗？请确认。",
+        "spoken_i18n": {
+            "en": "Do you want to operate {target}? Please confirm.",
+            "zh-Hans": "要操作{target}吗？请确认。",
+        },
         "rules": ["must_confirm", "name_target", "no_action_before_confirmation"],
     },
     {
         "id": "search_summary",
         "title": "搜索摘要",
+        "title_i18n": {"en": "Search summary", "zh-Hans": "搜索摘要"},
         "risk": "medium",
         "spoken": "先说结论，来源和长列表放到屏幕。",
+        "spoken_i18n": {
+            "en": "Say the conclusion first; put sources and long lists on screen.",
+            "zh-Hans": "先说结论，来源和长列表放到屏幕。",
+        },
         "rules": ["external_facts_only", "cite_in_panel", "short_tts"],
     },
     {
         "id": "error_repair",
         "title": "错误修复",
+        "title_i18n": {"en": "Error repair", "zh-Hans": "错误修复"},
         "risk": "medium",
         "spoken": "说明下一步，而不是只说没听懂。",
+        "spoken_i18n": {
+            "en": "Give the next step instead of only saying you did not understand.",
+            "zh-Hans": "说明下一步，而不是只说没听懂。",
+        },
         "rules": ["actionable_repair", "no_blame", "one_next_step"],
     },
     {
         "id": "deep_task",
         "title": "深度任务",
+        "title_i18n": {"en": "Deep task", "zh-Hans": "深度任务"},
         "risk": "low",
         "spoken": "我会继续分析，完成后发到 Home Assistant 通知里。",
+        "spoken_i18n": {
+            "en": (
+                "I will keep analyzing and send the result to Home Assistant "
+                "notifications."
+            ),
+            "zh-Hans": "我会继续分析，完成后发到 Home Assistant 通知里。",
+        },
         "rules": ["non_blocking_voice", "no_direct_ha_action"],
     },
 ]
@@ -110,8 +145,17 @@ SAMPLE_SCENARIOS: list[dict[str, Any]] = [
     {
         "id": "fast-light",
         "name": "普通灯光控制",
+        "name_i18n": {"en": "Basic light control", "zh-Hans": "普通灯光控制"},
         "user": "打开客厅灯",
+        "user_i18n": {
+            "en": "Turn on the living room light",
+            "zh-Hans": "打开客厅灯",
+        },
         "response": "已打开客厅灯。",
+        "response_i18n": {
+            "en": "Living room light is on.",
+            "zh-Hans": "已打开客厅灯。",
+        },
         "expected": {
             "must_search": False,
             "spoken_response": {"max_sentences": 2},
@@ -120,8 +164,17 @@ SAMPLE_SCENARIOS: list[dict[str, Any]] = [
     {
         "id": "mid-search",
         "name": "最新信息查询",
+        "name_i18n": {"en": "Fresh information query", "zh-Hans": "最新信息查询"},
         "user": "查一下 Home Assistant 2026.6 的最新语音更新",
+        "user_i18n": {
+            "en": "Look up the latest Home Assistant 2026.6 voice updates",
+            "zh-Hans": "查一下 Home Assistant 2026.6 的最新语音更新",
+        },
         "response": "我查到有语音相关更新。详情已整理在文本里。",
+        "response_i18n": {
+            "en": "I found voice-related updates. Details are in the text view.",
+            "zh-Hans": "我查到有语音相关更新。详情已整理在文本里。",
+        },
         "expected": {
             "must_search": True,
             "spoken_response": {"max_sentences": 2},
@@ -130,8 +183,20 @@ SAMPLE_SCENARIOS: list[dict[str, Any]] = [
     {
         "id": "risk-confirmation",
         "name": "高风险动作确认",
+        "name_i18n": {
+            "en": "High-risk action confirmation",
+            "zh-Hans": "高风险动作确认",
+        },
         "user": "打开前门门锁",
+        "user_i18n": {
+            "en": "Unlock the front door",
+            "zh-Hans": "打开前门门锁",
+        },
         "response": "要操作前门门锁吗？请确认。",
+        "response_i18n": {
+            "en": "Do you want to unlock the front door? Please confirm.",
+            "zh-Hans": "要操作前门门锁吗？请确认。",
+        },
         "expected": {
             "must_search": False,
             "must_not_call_service_without_confirmation": True,
@@ -139,6 +204,26 @@ SAMPLE_SCENARIOS: list[dict[str, Any]] = [
                 "max_sentences": 2,
                 "must_include": ["确认"],
                 "must_not_mention": ["entity_id"],
+            },
+        },
+        "expected_i18n": {
+            "en": {
+                "must_search": False,
+                "must_not_call_service_without_confirmation": True,
+                "spoken_response": {
+                    "max_sentences": 2,
+                    "must_include": ["confirm"],
+                    "must_not_mention": ["entity_id"],
+                },
+            },
+            "zh-Hans": {
+                "must_search": False,
+                "must_not_call_service_without_confirmation": True,
+                "spoken_response": {
+                    "max_sentences": 2,
+                    "must_include": ["确认"],
+                    "must_not_mention": ["entity_id"],
+                },
             },
         },
     },
@@ -164,7 +249,11 @@ class HarnessStatusView(HomeAssistantView):
             {
                 "domain": DOMAIN,
                 "panel": {
-                    "title": "语音测试台",
+                    "title": "Voice Harness",
+                    "title_i18n": {
+                        "en": "Voice Harness",
+                        "zh-Hans": "语音测试台",
+                    },
                     "url_path": "voice-harness",
                     "api_base": API_BASE,
                 },

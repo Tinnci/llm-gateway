@@ -18,6 +18,7 @@ URL_BASE = f"/api/{DOMAIN}/static"
 PANEL_URL = "voice-harness"
 PANEL_COMPONENT = "voice-harness-panel"
 PANEL_MODULE = f"{URL_BASE}/voice-harness-panel.js"
+PANEL_TITLE = "Voice Harness"
 DATA_PANEL_SETUP = f"{DOMAIN}_voice_harness_panel_setup"
 
 
@@ -34,7 +35,7 @@ async def async_setup_panel(hass: HomeAssistant) -> None:
     frontend.async_register_built_in_panel(
         hass,
         component_name="custom",
-        sidebar_title="语音测试台",
+        sidebar_title=PANEL_TITLE,
         sidebar_icon="mdi:microphone-message",
         frontend_url_path=PANEL_URL,
         config={
