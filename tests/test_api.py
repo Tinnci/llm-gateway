@@ -9,6 +9,7 @@ from custom_components.llm_gateway.api import (
     LLMGatewayAuthError,
     LLMGatewayClient,
     LLMGatewayError,
+    LLMGatewayHTTPError,
 )
 
 BASE = "https://gw.test/v1"
@@ -39,8 +40,10 @@ async def test_auth_error(hass, aioclient_mock):
 async def test_http_error(hass, aioclient_mock):
     aioclient_mock.get(f"{BASE}/models", status=500, text="boom")
     client = LLMGatewayClient(async_get_clientsession(hass), BASE, "k")
-    with pytest.raises(LLMGatewayError):
+    with pytest.raises(LLMGatewayHTTPError) as err:
         await client.async_list_models()
+    assert err.value.status == 500
+    assert err.value.body == "boom"
 
 
 async def test_chat_completion_returns_message(hass, aioclient_mock):

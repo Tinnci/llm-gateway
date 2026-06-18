@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from homeassistant.components import persistent_notification
 from homeassistant.util import ulid
 
 from .api import LLMGatewayClient, LLMGatewayError
 from .const import DOMAIN, LOGGER
+from .providers import async_chat_completion_with_fallback
 
 if TYPE_CHECKING:
     import aiohttp
+    from collections.abc import Mapping
     from homeassistant.core import HomeAssistant
 
     from .memory import VoiceMemory
@@ -31,6 +33,8 @@ class DeepTaskRecord:
     status: str = "queued"
     result: str | None = None
     error: str | None = None
+    provider: dict[str, Any] | None = None
+    provider_attempts: list[dict[str, Any]] = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
 
 
@@ -48,9 +52,17 @@ class LLMGatewayRuntimeData:
 class DeepTaskManager:
     """Run deep-model tasks outside the voice critical path."""
 
-    def __init__(self, hass: HomeAssistant, client: LLMGatewayClient) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        client: LLMGatewayClient,
+        session: aiohttp.ClientSession,
+        options_getter: Callable[[], Mapping[str, Any]],
+    ) -> None:
         self._hass = hass
         self._client = client
+        self._session = session
+        self._options_getter = options_getter
         self.records: dict[str, DeepTaskRecord] = {}
 
     def submit(
@@ -83,6 +95,8 @@ class DeepTaskManager:
                 "status": record.status,
                 "result": record.result,
                 "error": record.error,
+                "provider": record.provider,
+                "provider_attempts": record.provider_attempts,
                 "created_at": record.created_at,
             }
             for record in sorted(
@@ -101,16 +115,18 @@ class DeepTaskManager:
         record = self.records[task_id]
         record.status = "running"
         try:
-            message = await self._client.async_chat_completion(
-                model=route.model,
+            result = await async_chat_completion_with_fallback(
+                session=self._session,
+                primary_client=self._client,
+                route=route,
+                options=dict(self._options_getter()),
                 messages=messages,
                 tools=None,
-                extra_body=route.extra_body,
-                timeout_s=route.timeout_s,
-                max_tokens=route.max_tokens,
+                tool_choice=None,
                 temperature=temperature,
                 top_p=top_p,
             )
+            message = result.message
         except LLMGatewayError as err:
             record.status = "error"
             record.error = str(err)
@@ -124,6 +140,9 @@ class DeepTaskManager:
             return
 
         record.status = "complete"
+        record.provider = result.provider
+        record.provider_attempts = result.attempts
+        record.model = str(result.provider.get("model") or record.model)
         record.result = str(message.get("content") or "").strip()
         persistent_notification.async_create(
             self._hass,

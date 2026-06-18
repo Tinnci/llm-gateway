@@ -1,8 +1,8 @@
 # Voice and LLM Gateway pipeline architecture
 
 This document describes the current maintained design for the Home Assistant
-voice stack around LLM Gateway. It separates the deployed runtime from planned
-next layers so operational decisions stay clear.
+voice stack around LLM Gateway. It separates the deployed runtime from
+satellite/ASR/display boundaries so operational decisions stay clear.
 
 ## Current deployed path
 
@@ -30,14 +30,15 @@ LLM Gateway uses three route classes:
   requests. Deep turns return a short spoken acknowledgement and run as a
   background task.
 
-The current NVIDIA NIM-oriented defaults are:
+The bundled editable model examples are:
 
 - Fast: `nvidia/nemotron-3-nano-30b-a3b`
 - Mid: `nvidia/nemotron-3-nano-30b-a3b`
 - Deep: `nvidia/nemotron-3-super-120b-a12b`
 
-Legacy `chat_model`, `max_tokens`, `chat_timeout`, and `extra_body` remain
-fallbacks for the Fast route.
+These are examples, not a provider requirement. Legacy `chat_model`,
+`max_tokens`, `chat_timeout`, and `extra_body` remain fallbacks for the Fast
+route.
 
 ## Latency feedback
 
@@ -74,47 +75,50 @@ Search provider fallback is already implemented as a priority list:
 Tavily -> Serper -> Firecrawl -> Brave. It fails over when a provider errors or
 times out.
 
-Model provider fallback is not implemented yet. The current Gateway has one
-OpenAI-compatible `base_url/api_key` client and three model tiers. The next
-provider layer should add provider profiles rather than overloading model route
-selection:
+Model provider fallback is implemented as ordered failover. The primary
+OpenAI-compatible `base_url/api_key` client remains the first candidate; optional
+provider profiles add fallback candidates without overloading route selection:
 
-```yaml
-providers:
-  - name: nvidia
-    base_url: https://integrate.api.nvidia.com/v1
-    api_key_ref: primary
-    fast_model: nvidia/nemotron-3-nano-30b-a3b
-    mid_model: nvidia/nemotron-3-nano-30b-a3b
-    deep_model: nvidia/nemotron-3-super-120b-a12b
-    soft_timeout_s:
-      fast: 2.5
-      mid: 6
-      deep: 20
-  - name: openrouter
-    base_url: https://openrouter.ai/api/v1
-    api_key_ref: openrouter
-    fast_model: provider/model
-    mid_model: provider/model
-    deep_model: provider/model
+```json
+{
+  "providers": [
+    {
+      "name": "fallback-cloud",
+      "base_url": "https://example.invalid/v1",
+      "api_key": "replace-me",
+      "models": {
+        "fast": "provider/fast-model",
+        "mid": "provider/mid-model",
+        "deep": "provider/deep-model"
+      },
+      "soft_timeout_s": {
+        "fast": 3,
+        "mid": 8,
+        "deep": 30
+      }
+    }
+  ]
+}
 ```
 
-Selection should be "ordered failover with health scoring", not round-robin load
-balancing:
+Selection is ordered failover, not round-robin load balancing:
 
-- prefer the first healthy provider for each route kind,
-- use a soft timeout to cancel a slow primary and try the next provider,
-- fail over on network errors, 429, and 5xx responses,
+- prefer the primary provider and then configured fallbacks for each route kind,
+- use configured request timeouts per provider and route kind,
+- fail over on network errors, authentication errors, 429, and 5xx responses,
 - do not fail over on prompt/schema/tool-policy errors,
-- keep a short in-memory circuit breaker per provider and route kind,
-- record selected provider, fallback reason, elapsed time, and final status in
-  diagnostic traces,
+- record selected provider, fallback reason, elapsed time, attempts, and final
+  status in diagnostic traces,
 - play `provider_fallback.wav` once when a voice-visible failover happens.
 
 Fast route fallback must be conservative: if a simple HA control request cannot
 complete quickly, prefer deterministic HA intent/tool repair over asking a
 remote deep model. Deep route fallback can be slower because it is already a
 background task.
+
+A short in-memory circuit breaker per provider and route kind remains an
+operational optimization to add only if live traces show repeated provider
+flapping.
 
 ## Spoken output
 
@@ -190,7 +194,10 @@ It uses the modern static path API and does not require `panel_custom` YAML.
 
 Current views:
 
-- `运行记录`: loaded entries, route examples, search provider visibility.
+- `运行记录`: loaded entries, route examples, model/search provider visibility,
+  provider fallback attempts, latency, tools, and optional raw payload metadata.
+- `配置`: safe editable options for routing, model ids, budgets, timeouts, and
+  bounded trace retention.
 - `提示策略`: spoken prompt policies and risk levels.
 - `场景测试`: ad hoc scenario evaluation.
 - `搜索实验室`: search gate evaluation.
@@ -202,6 +209,7 @@ Current APIs:
 
 - `GET /api/llm_gateway/harness/status`
 - `POST /api/llm_gateway/harness/evaluate`
+- `POST /api/llm_gateway/harness/options`
 
 The status API reads the earcon manifest through Home Assistant's executor to
 avoid blocking the event loop.
@@ -225,10 +233,10 @@ Current deployed earcon pack:
 - provider_fallback
 - deep_task
 
-The current integration only serves these WAV assets to the panel and Home
-Assistant frontend. Local OPUS spoken fallback clips, such as "网络连接失败" or
-"Home Assistant 暂时无响应", should live at the satellite playback layer so they
-can still play when HA, TTS, or the network path is unavailable.
+The integration serves these WAV assets to the panel and Home Assistant
+frontend. Local OPUS spoken fallback clips, such as "网络连接失败" or
+"Home Assistant 暂时无响应", live at the satellite playback layer so they can
+still play when HA, TTS, or the network path is unavailable.
 
 `processing_loop.wav` is intentionally short. It should be looped or scheduled
 locally by the satellite at a reduced output gain, then stopped before final
@@ -239,7 +247,7 @@ TTS. Do not ask the LLM to produce this status cue.
 LLM Gateway should not manage hardware volume, microphone gain, or ALS policy.
 Those belong to the satellite/display layer.
 
-Recommended next satellite work:
+Satellite work owned outside this integration:
 
 - wrap `snd-command` with a playback script that records start/end/failure,
 - set output volume based on day/night/user preference,
@@ -281,7 +289,7 @@ Implemented:
 - a pure Python scenario harness that checks search gating, spoken style,
   forbidden phrases, confirmation requirements, and unsafe service-call markers.
 
-Planned:
+Owned by adjacent layers or live-test harnesses:
 
 - real Assist run trace capture,
 - search evidence/citation auditing,

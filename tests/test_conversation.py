@@ -11,6 +11,8 @@ from homeassistant.helpers import llm
 
 from custom_components.llm_gateway.api import LLMGatewayConnectionError
 from custom_components.llm_gateway.const import (
+    CONF_DIAGNOSTIC_TRACES,
+    CONF_PROVIDER_PROFILES,
     DEEP_TASK_ACK_SPEECH,
     DEFAULT_BASE_URL,
     GATEWAY_ERROR_SPEECH,
@@ -24,6 +26,8 @@ from custom_components.llm_gateway.conversation import (
 
 MODELS_URL = f"{DEFAULT_BASE_URL}/models"
 CHAT_URL = f"{DEFAULT_BASE_URL}/chat/completions"
+FALLBACK_BASE_URL = "https://fallback.test/v1"
+FALLBACK_CHAT_URL = f"{FALLBACK_BASE_URL}/chat/completions"
 
 
 def test_content_to_messages_roundtrip():
@@ -297,3 +301,50 @@ async def test_converse_gateway_timeout_returns_spoken_error(
         )
 
     assert result.response.speech["plain"]["speech"] == GATEWAY_ERROR_SPEECH
+
+
+async def test_converse_falls_back_to_secondary_provider_and_traces_attempts(
+    hass, aioclient_mock, mock_config_entry
+):
+    mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        options={
+            **mock_config_entry.options,
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_PROVIDER_PROFILES: (
+                '{"providers":[{"name":"fallback","base_url":"'
+                + FALLBACK_BASE_URL
+                + '","api_key":"fallback-key","models":{"fast":"fallback-fast"}}]}'
+            ),
+        },
+    )
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    aioclient_mock.post(CHAT_URL, status=500, text="primary down")
+    aioclient_mock.post(
+        FALLBACK_CHAT_URL,
+        json={
+            "choices": [
+                {"message": {"role": "assistant", "content": "已切到备用 provider。"}}
+            ]
+        },
+    )
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    ent_reg = er.async_get(hass)
+    entities = er.async_entries_for_config_entry(ent_reg, mock_config_entry.entry_id)
+    agent_id = entities[0].entity_id
+
+    result = await conversation.async_converse(
+        hass, "你好", None, Context(), agent_id=agent_id
+    )
+
+    assert result.response.speech["plain"]["speech"] == "已切到备用 provider。"
+    traces = mock_config_entry.runtime_data.trace_store.snapshot()["records"]
+    attempts = traces[0]["route"]["provider_attempts"]
+    assert traces[0]["route"]["provider"]["name"] == "fallback"
+    assert [attempt["provider"] for attempt in attempts] == ["primary", "fallback"]
+    assert attempts[0]["retryable"] is True

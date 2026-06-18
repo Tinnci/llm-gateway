@@ -10,6 +10,6 @@ Commercial use requires a separate license from the project maintainer.
 ## Third-party components
 
 Runtime and development dependencies remain under their own licenses. This
-repository's license does not change the license terms of Home Assistant,
-NVIDIA NIM, search providers, Microsoft Edge TTS, `mistune`, or any other
+repository's license does not change the license terms of Home Assistant, model
+providers, search providers, Microsoft Edge TTS, `mistune`, or any other
 third-party service or package used with the integration.

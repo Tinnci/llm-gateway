@@ -7,7 +7,10 @@
  * @typedef {{ kind: RouteKind, model: string, max_tokens: number, timeout_s: number, async_deep_task: boolean }} RouteStatus
  * @typedef {{ routing_mode: RouteKind, models: TierTextMap, max_tokens: TierNumberMap, timeouts: TierNumberMap }} HarnessOptions
  * @typedef {{ enabled: boolean, include_raw_messages: boolean, max_runs: number, retention_hours: number }} TraceOptions
- * @typedef {{ entry_id: string, title: string, state: string, base_url?: string, options: HarnessOptions, routes: RouteStatus[], trace: TraceOptions, traces?: unknown, memory?: unknown, search?: { providers?: string[] } }} HarnessEntry
+ * @typedef {{ provider?: string, model?: string, status?: string, latency_ms?: number, error?: string, retryable?: boolean, iteration?: number }} ProviderAttempt
+ * @typedef {{ name?: string, base_url?: string, models?: Partial<TierTextMap>, has_api_key?: boolean, soft_timeouts?: Partial<TierNumberMap>, max_tokens?: Partial<TierNumberMap> }} ProviderProfile
+ * @typedef {{ primary?: ProviderProfile, fallbacks?: ProviderProfile[], fallback_enabled?: boolean, config_error?: string }} ProviderStatus
+ * @typedef {{ entry_id: string, title: string, state: string, base_url?: string, options: HarnessOptions, routes: RouteStatus[], trace: TraceOptions, traces?: { records?: Array<Record<string, any>>, storage?: Record<string, any> }, memory?: any, search?: { providers?: string[] }, model_providers?: ProviderStatus }} HarnessEntry
  * @typedef {{ routing_modes: RouteKind[], max_tokens: { min: number, max: number }, timeouts: { min: number, max: number }, trace_max_runs: { min: number, max: number }, trace_retention_hours: { min: number, max: number } }} EditableSchema
  * @typedef {{ id: string, risk?: string, title?: string, title_i18n?: Record<string, string>, spoken?: string, spoken_i18n?: Record<string, string>, rules?: string[] }} PromptPolicy
  * @typedef {{ id: string, name?: string, name_i18n?: Record<string, string>, user?: string, user_i18n?: Record<string, string>, response?: string, response_i18n?: Record<string, string>, expected?: Record<string, unknown>, expected_i18n?: Record<string, Record<string, unknown>> }} SampleScenario
@@ -77,6 +80,8 @@ const I18N = {
     "runs.user": "User",
     "runs.assistant": "Assistant",
     "runs.tools": "{count} tool events",
+    "runs.provider": "Provider",
+    "runs.provider_attempts": "Provider attempts",
     "runs.raw_payload": "Raw compressed payload",
     "runs.no_raw": "Raw payload was not stored for this run.",
     "runs.storage": "{records} records · {bytes} compressed bytes",
@@ -106,6 +111,11 @@ const I18N = {
     "search.gating": "Search gating",
     "search.no_providers": "No search provider key exposed",
     "search.evaluate": "Evaluate gating",
+    "providers.title": "Model providers",
+    "providers.primary": "Primary",
+    "providers.fallbacks": "{count} fallback providers",
+    "providers.none": "No fallback provider profiles",
+    "providers.config_error": "Provider config error: {message}",
     "memory.turns": "{count} turns",
     "memory.user": "User",
     "memory.assistant": "Assistant",
@@ -221,6 +231,8 @@ const I18N = {
     "runs.user": "用户",
     "runs.assistant": "助手",
     "runs.tools": "{count} 个工具事件",
+    "runs.provider": "模型 provider",
+    "runs.provider_attempts": "Provider 尝试",
     "runs.raw_payload": "压缩原始 payload",
     "runs.no_raw": "本次运行未保存原始 payload。",
     "runs.storage": "{records} 条记录 · {bytes} 压缩字节",
@@ -250,6 +262,11 @@ const I18N = {
     "search.gating": "搜索门控",
     "search.no_providers": "未暴露搜索 provider key",
     "search.evaluate": "评估门控",
+    "providers.title": "模型 provider",
+    "providers.primary": "主 provider",
+    "providers.fallbacks": "{count} 个备用 provider",
+    "providers.none": "未配置备用 provider profiles",
+    "providers.config_error": "Provider 配置错误：{message}",
     "memory.turns": "{count} 轮",
     "memory.user": "用户",
     "memory.assistant": "助手",
@@ -683,6 +700,7 @@ class VoiceHarnessPanel extends HTMLElement {
             <div class="routeGrid">
               ${(entry.routes || []).map((route) => this._routeCard(route)).join("")}
             </div>
+            ${this._providerPanel(entry)}
             ${this._renderTracePanel(entry)}
           </article>
         `).join("")}
@@ -814,6 +832,9 @@ class VoiceHarnessPanel extends HTMLElement {
 
   _traceCard(record) {
     const rawMeta = record.raw_payload_meta || {};
+    const route = record.route || {};
+    const provider = route.provider || {};
+    const attempts = Array.isArray(route.provider_attempts) ? route.provider_attempts : [];
     return `
       <details class="traceCard">
         <summary>
@@ -831,16 +852,55 @@ class VoiceHarnessPanel extends HTMLElement {
             <p>${escapeHtml(record.assistant_text || "")}</p>
           </div>
           <div class="meterRow">
-            <span>${escapeHtml(this._routeLabel(record.route?.kind))}</span>
-            <span>${escapeHtml(record.route?.model || "")}</span>
+            <span>${escapeHtml(this._routeLabel(route.kind))}</span>
+            <span>${escapeHtml(route.model || "")}</span>
+            ${provider.name ? `<span>${escapeHtml(this._t("runs.provider"))}: ${escapeHtml(provider.name)}${provider.fallback_used ? " ↳" : ""}</span>` : ""}
             <span>${Number(record.latency_ms || 0)} ms</span>
             <span>${escapeHtml(this._t("runs.tools", { count: (record.tools || []).length }))}</span>
             ${rawMeta.compressed_bytes ? `<span>${rawMeta.compressed_bytes}/${rawMeta.uncompressed_bytes} B</span>` : ""}
           </div>
+          ${attempts.length ? `
+            <h3>${escapeHtml(this._t("runs.provider_attempts"))}</h3>
+            <div class="attemptList">
+              ${attempts.map((attempt) => `
+                <div class="attempt ${attempt.status === "complete" ? "ok" : "bad"}">
+                  <strong>${escapeHtml(attempt.provider || "")}</strong>
+                  <span>${escapeHtml(attempt.model || "")}</span>
+                  <span>${escapeHtml(attempt.status || "")} · ${Number(attempt.latency_ms || 0)} ms</span>
+                  ${attempt.error ? `<span>${escapeHtml(attempt.error)}</span>` : ""}
+                </div>
+              `).join("")}
+            </div>
+          ` : ""}
           <h3>${escapeHtml(this._t("runs.raw_payload"))}</h3>
           ${record.raw_payload ? `<pre>${escapeHtml(JSON.stringify(record.raw_payload, null, 2))}</pre>` : `<div class="empty mini">${escapeHtml(this._t("runs.no_raw"))}</div>`}
         </div>
       </details>
+    `;
+  }
+
+  _providerPanel(entry) {
+    const providers = entry.model_providers || {};
+    const primary = providers.primary || {};
+    const fallbacks = Array.isArray(providers.fallbacks) ? providers.fallbacks : [];
+    if (providers.config_error) {
+      return `<div class="providerPanel error">${escapeHtml(this._t("providers.config_error", { message: providers.config_error }))}</div>`;
+    }
+    return `
+      <div class="providerPanel">
+        <div>
+          <strong>${escapeHtml(this._t("providers.title"))}</strong>
+          <span>${escapeHtml(this._t("providers.primary"))}: ${escapeHtml(primary.base_url || entry.base_url || "")}</span>
+        </div>
+        <div class="ruleList">
+          ${fallbacks.map((provider) => `
+            <span title="${escapeHtml(provider.base_url || "")}">
+              ${escapeHtml(provider.name || "")}
+            </span>
+          `).join("") || `<span>${escapeHtml(this._t("providers.none"))}</span>`}
+        </div>
+        <span class="meta">${escapeHtml(this._t("providers.fallbacks", { count: fallbacks.length }))}</span>
+      </div>
     `;
   }
 
@@ -1538,6 +1598,35 @@ const styles = `
     gap: 12px;
   }
 
+  .providerPanel {
+    margin-top: 12px;
+    border: 1px solid var(--divider-color);
+    border-radius: 8px;
+    padding: 12px;
+    display: grid;
+    gap: 10px;
+    background: var(--primary-background-color);
+  }
+
+  .providerPanel.error {
+    color: var(--error-color);
+    background: color-mix(in srgb, var(--error-color) 8%, var(--primary-background-color));
+  }
+
+  .providerPanel > div:first-child {
+    display: grid;
+    gap: 4px;
+  }
+
+  .providerPanel strong {
+    font-size: 13px;
+  }
+
+  .providerPanel span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
   .traceHeader {
     min-height: 38px;
     display: flex;
@@ -1602,6 +1691,39 @@ const styles = `
   .traceText p {
     line-height: 1.45;
     overflow-wrap: anywhere;
+  }
+
+  .attemptList {
+    display: grid;
+    gap: 8px;
+  }
+
+  .attempt {
+    min-height: 36px;
+    display: grid;
+    grid-template-columns: minmax(92px, 0.7fr) minmax(160px, 1.3fr) minmax(92px, 0.7fr) minmax(80px, 0.5fr);
+    align-items: center;
+    gap: 10px;
+    border: 1px solid var(--divider-color);
+    border-radius: 8px;
+    padding: 8px 10px;
+    background: var(--card-background-color);
+  }
+
+  .attempt.ok {
+    border-color: color-mix(in srgb, var(--success-color) 38%, var(--divider-color));
+  }
+
+  .attempt.bad {
+    border-color: color-mix(in srgb, var(--error-color) 38%, var(--divider-color));
+  }
+
+  .attempt strong,
+  .attempt span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 12px;
   }
 
   .route {
@@ -1839,6 +1961,11 @@ const styles = `
     .settingsTriples.two {
       grid-template-columns: 1fr;
     }
+
+    .attempt {
+      grid-template-columns: 1fr;
+      align-items: start;
+    }
   }
 
   @media (max-width: 560px) {
@@ -1875,4 +2002,12 @@ const styles = `
   }
 `;
 
-customElements.define("voice-harness-panel", VoiceHarnessPanel);
+try {
+  if (!customElements.get("voice-harness-panel")) {
+    customElements.define("voice-harness-panel", VoiceHarnessPanel);
+  }
+} catch (err) {
+  if (!String(err?.message || err).includes("has already been used")) {
+    throw err;
+  }
+}

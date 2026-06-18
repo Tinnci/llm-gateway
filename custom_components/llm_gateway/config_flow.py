@@ -52,6 +52,7 @@ from .const import (
     CONF_MID_EXTRA_BODY,
     CONF_MID_MAX_TOKENS,
     CONF_MID_MODEL,
+    CONF_PROVIDER_PROFILES,
     CONF_ROUTING_MODE,
     CONF_SEARCH_ENABLED,
     CONF_SERPER_API_KEY,
@@ -88,6 +89,7 @@ from .const import (
     ROUTING_MODE_AUTO,
     ROUTING_MODES,
 )
+from .providers import normalize_provider_profiles_json
 
 if TYPE_CHECKING:
     from .config_entry import LLMGatewayConfigEntry
@@ -157,6 +159,7 @@ class LLMGatewayOptionsFlow(OptionsFlow):
                 CONF_DEEP_EXTRA_BODY,
             ):
                 _normalize_json_option(user_input, errors, field)
+            _normalize_provider_profiles_option(user_input, errors)
             for field in (
                 CONF_TAVILY_API_KEY,
                 CONF_SERPER_API_KEY,
@@ -287,6 +290,9 @@ class LLMGatewayOptionsFlow(OptionsFlow):
                 vol.Optional(CONF_DEEP_EXTRA_BODY): TextSelector(
                     TextSelectorConfig(multiline=True)
                 ),
+                vol.Optional(CONF_PROVIDER_PROFILES): TextSelector(
+                    TextSelectorConfig(multiline=True)
+                ),
                 vol.Optional(
                     CONF_CHAT_TIMEOUT, default=RECOMMENDED_CHAT_TIMEOUT
                 ): NumberSelector(
@@ -387,6 +393,20 @@ def _normalize_json_option(
         errors[field] = "invalid_json"
     else:
         user_input[field] = raw
+
+
+def _normalize_provider_profiles_option(
+    user_input: dict[str, Any], errors: dict[str, str]
+) -> None:
+    raw = (user_input.get(CONF_PROVIDER_PROFILES) or "").strip()
+    if not raw:
+        user_input.pop(CONF_PROVIDER_PROFILES, None)
+        return
+
+    try:
+        user_input[CONF_PROVIDER_PROFILES] = normalize_provider_profiles_json(raw)
+    except ValueError:
+        errors[CONF_PROVIDER_PROFILES] = "invalid_provider_profiles"
 
 
 def _normalize_optional_string(user_input: dict[str, Any], field: str) -> None:

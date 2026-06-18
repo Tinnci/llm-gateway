@@ -28,6 +28,7 @@ from .const import (
     TOOL_LOOP_ERROR_SPEECH,
 )
 from .policy import validate_tool_call
+from .providers import async_chat_completion_with_fallback
 from .router import legacy_model_from_options, parse_extra_body, select_model_route
 from .search import (
     async_execute_search_tool,
@@ -242,6 +243,19 @@ class LLMGatewayConversationEntity(
                 route.model,
                 len(messages),
             )
+            provider_runs: list[dict[str, Any]] = [
+                {
+                    "iteration": 0,
+                    "provider": {
+                        "name": "background",
+                        "model": route.model,
+                        "fallback_used": False,
+                        "fallback_reason": "",
+                    },
+                    "attempts": [],
+                    "task_id": task_id,
+                }
+            ]
             async for _tool_result in chat_log.async_add_assistant_content(
                 conversation.AssistantContent(
                     agent_id=self.entity_id,
@@ -250,13 +264,15 @@ class LLMGatewayConversationEntity(
             ):
                 pass
         else:
-            await self._async_run_chat_log(chat_log, route, user_input.text)
+            provider_runs = await self._async_run_chat_log(
+                chat_log, route, user_input.text
+            )
 
         return await self._async_finalize_turn(
             user_input,
             chat_log,
             started,
-            _route_trace(route),
+            _route_trace(route, provider_runs),
         )
 
     async def _async_finalize_turn(
@@ -324,11 +340,12 @@ class LLMGatewayConversationEntity(
         chat_log: conversation.ChatLog,
         route: ModelRoute,
         user_text: str,
-    ) -> None:
+    ) -> list[dict[str, Any]]:
         """Drive the model, executing tool calls until it returns a final answer."""
         runtime = self.entry.runtime_data
         client: LLMGatewayClient = runtime.client
         options = self.entry.options
+        provider_runs: list[dict[str, Any]] = []
 
         tools: list[dict[str, Any]] | None = None
         if chat_log.llm_api:
@@ -353,16 +370,24 @@ class LLMGatewayConversationEntity(
                 len(tools or []),
             )
             try:
-                message = await client.async_chat_completion(
-                    model=route.model,
+                fallback_result = await async_chat_completion_with_fallback(
+                    session=runtime.session,
+                    primary_client=client,
+                    route=route,
+                    options=options,
                     messages=messages,
                     tools=tools,
                     tool_choice="required" if force_tool_call else None,
-                    extra_body=route.extra_body,
-                    timeout_s=route.timeout_s,
-                    max_tokens=route.max_tokens,
                     temperature=options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE),
                     top_p=options.get(CONF_TOP_P, RECOMMENDED_TOP_P),
+                )
+                message = fallback_result.message
+                provider_runs.append(
+                    {
+                        "iteration": iteration,
+                        "provider": fallback_result.provider,
+                        "attempts": fallback_result.attempts,
+                    }
                 )
             except LLMGatewayError as err:
                 LOGGER.error("Error talking to the gateway: %s", err)
@@ -374,7 +399,7 @@ class LLMGatewayConversationEntity(
                     error_content
                 ):
                     pass
-                return
+                return provider_runs
 
             content = conversation.AssistantContent(
                 agent_id=self.entity_id,
@@ -396,7 +421,7 @@ class LLMGatewayConversationEntity(
                         )
                     ):
                         pass
-                    return
+                    return provider_runs
             async for tool_result in chat_log.async_add_assistant_content(content):
                 result = tool_result.tool_result
                 if _is_action_tool(tool_result.tool_name):
@@ -427,7 +452,7 @@ class LLMGatewayConversationEntity(
                 )
 
             if not chat_log.unresponded_tool_results:
-                return
+                return provider_runs
 
         LOGGER.error("Tool-call loop exceeded %d iterations", MAX_TOOL_ITERATIONS)
         error_content = conversation.AssistantContent(
@@ -436,6 +461,7 @@ class LLMGatewayConversationEntity(
         )
         async for _tool_result in chat_log.async_add_assistant_content(error_content):
             pass
+        return provider_runs
 
     def _policy_block(
         self, tool_calls: list[llm.ToolInput], user_text: str
@@ -454,14 +480,29 @@ class LLMGatewayConversationEntity(
         return None
 
 
-def _route_trace(route: ModelRoute) -> dict[str, Any]:
+def _route_trace(
+    route: ModelRoute, provider_runs: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
     """Return route metadata safe for diagnostic traces."""
+    provider_runs = provider_runs or []
+    last_provider = provider_runs[-1]["provider"] if provider_runs else None
     return {
         "kind": route.kind,
         "model": route.model,
         "max_tokens": route.max_tokens,
         "timeout_s": route.timeout_s,
         "async_deep_task": route.async_deep_task,
+        "provider": last_provider,
+        "provider_runs": provider_runs,
+        "provider_attempts": [
+            {
+                **attempt,
+                "iteration": run.get("iteration"),
+            }
+            for run in provider_runs
+            for attempt in run.get("attempts", [])
+            if isinstance(attempt, dict)
+        ],
     }
 
 

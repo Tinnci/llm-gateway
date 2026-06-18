@@ -12,7 +12,6 @@ DEFAULT_NAME = "LLM Gateway"
 # Connection (stored in entry.data).
 CONF_BASE_URL = "base_url"
 # CONF_API_KEY comes from homeassistant.const.
-# Default points at NVIDIA NIM, an OpenAI-compatible endpoint with a free tier.
 DEFAULT_BASE_URL = "https://integrate.api.nvidia.com/v1"
 
 # Generation settings (stored in entry.options).
@@ -44,6 +43,7 @@ CONF_DIAGNOSTIC_TRACES = "diagnostic_traces"
 CONF_TRACE_INCLUDE_RAW_MESSAGES = "trace_include_raw_messages"
 CONF_TRACE_MAX_RUNS = "trace_max_runs"
 CONF_TRACE_RETENTION_HOURS = "trace_retention_hours"
+CONF_PROVIDER_PROFILES = "provider_profiles"
 # CONF_PROMPT and CONF_LLM_HASS_API come from homeassistant.const.
 
 ROUTING_MODE_AUTO = "auto"

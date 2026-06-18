@@ -19,6 +19,7 @@ from custom_components.llm_gateway.const import (
     CONF_FAST_MODEL,
     CONF_MAX_TOKENS,
     CONF_MID_MODEL,
+    CONF_PROVIDER_PROFILES,
     CONF_ROUTING_MODE,
     CONF_SEARCH_ENABLED,
     CONF_TEMPERATURE,
@@ -99,6 +100,18 @@ async def test_options_flow(hass, aioclient_mock, mock_config_entry):
             CONF_TOP_P: 0.9,
             CONF_CHAT_TIMEOUT: 180,
             CONF_DEEP_CHAT_TIMEOUT: 180,
+            CONF_PROVIDER_PROFILES: """
+            {
+              "providers": [
+                {
+                  "name": "fallback",
+                  "base_url": "https://fallback.test/v1",
+                  "api_key": "fallback-key",
+                  "models": {"fast": "fallback-fast"}
+                }
+              ]
+            }
+            """,
             CONF_SEARCH_ENABLED: True,
             CONF_DIAGNOSTIC_TRACES: True,
             CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
@@ -112,6 +125,7 @@ async def test_options_flow(hass, aioclient_mock, mock_config_entry):
     assert result2["data"][CONF_DEEP_MAX_TOKENS] == 16384
     assert result2["data"][CONF_EXTRA_BODY] == '{"reasoning_budget": 16384}'
     assert result2["data"][CONF_CHAT_TIMEOUT] == 180
+    assert result2["data"][CONF_PROVIDER_PROFILES].startswith('{"providers":')
     assert result2["data"][CONF_DIAGNOSTIC_TRACES]
     assert result2["data"][CONF_TRACE_INCLUDE_RAW_MESSAGES]
     assert result2["data"][CONF_TRACE_MAX_RUNS] == 20
@@ -143,3 +157,30 @@ async def test_options_flow_rejects_invalid_extra_body(
 
     assert result2["type"] == FlowResultType.FORM
     assert result2["errors"] == {CONF_EXTRA_BODY: "invalid_json"}
+
+
+async def test_options_flow_rejects_invalid_provider_profiles(
+    hass, aioclient_mock, mock_config_entry
+):
+    aioclient_mock.get(MODELS_URL, json={"data": [{"id": "m1"}]})
+    mock_config_entry.add_to_hass(hass)
+    with patch("custom_components.llm_gateway.async_setup_entry", return_value=True):
+        assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+
+    result = await hass.config_entries.options.async_init(mock_config_entry.entry_id)
+    result2 = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_FAST_MODEL: "m1",
+            CONF_MID_MODEL: "m1",
+            CONF_DEEP_MODEL: "m1",
+            CONF_PROVIDER_PROFILES: '{"providers":[{"name":"bad"}]}',
+            CONF_MAX_TOKENS: 1024,
+            CONF_TEMPERATURE: 0.3,
+            CONF_TOP_P: 0.95,
+            CONF_CHAT_TIMEOUT: 60,
+        },
+    )
+
+    assert result2["type"] == FlowResultType.FORM
+    assert result2["errors"] == {CONF_PROVIDER_PROFILES: "invalid_provider_profiles"}

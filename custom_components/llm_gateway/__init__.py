@@ -55,7 +55,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: LLMGatewayConfigEntry) -
         client=client,
         session=session,
         memory=memory,
-        deep_tasks=DeepTaskManager(hass, client),
+        deep_tasks=DeepTaskManager(hass, client, session, lambda: entry.options),
         trace_store=trace_store,
     )
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

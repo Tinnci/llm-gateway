@@ -11,6 +11,7 @@ from custom_components.llm_gateway.const import (
     CONF_FAST_CHAT_TIMEOUT,
     CONF_FAST_MAX_TOKENS,
     CONF_FAST_MODEL,
+    CONF_PROVIDER_PROFILES,
     CONF_TRACE_MAX_RUNS,
     ROUTING_MODE_MID,
 )
@@ -138,6 +139,36 @@ async def test_harness_options_api_updates_safe_fields(
     assert mock_config_entry.options[CONF_FAST_CHAT_TIMEOUT] == 12
     assert mock_config_entry.options[CONF_DIAGNOSTIC_TRACES]
     assert mock_config_entry.options[CONF_TRACE_MAX_RUNS] == 40
+
+
+async def test_harness_status_api_redacts_provider_profile_secrets(
+    hass, hass_client, mock_config_entry
+):
+    """Provider fallback profiles are visible without API keys."""
+    assert await async_setup_component(hass, "http", {})
+    mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        options={
+            **mock_config_entry.options,
+            CONF_PROVIDER_PROFILES: (
+                '{"providers":[{"name":"fallback","base_url":"https://fallback.test/v1",'
+                '"api_key":"secret","models":{"fast":"fallback-fast"}}]}'
+            ),
+        },
+    )
+    await async_setup_panel(hass)
+    client = await hass_client()
+
+    response = await client.get("/api/llm_gateway/harness/status")
+
+    assert response.status == 200
+    data = await response.json()
+    providers = data["entries"][0]["model_providers"]
+    assert providers["fallback_enabled"]
+    assert providers["fallbacks"][0]["name"] == "fallback"
+    assert providers["fallbacks"][0]["has_api_key"] is True
+    assert "api_key" not in providers["fallbacks"][0]
 
 
 async def test_harness_options_api_rejects_invalid_values(

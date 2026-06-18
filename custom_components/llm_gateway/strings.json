@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "LLM Gateway",
-        "description": "Connect to an OpenAI-compatible chat endpoint. The default targets NVIDIA NIM, which offers a free tier.",
+        "description": "Connect to an OpenAI-compatible chat endpoint. Use any provider that exposes /v1/models and /v1/chat/completions.",
         "data": {
           "base_url": "Base URL",
           "api_key": "API key"
@@ -43,6 +43,7 @@
           "fast_extra_body": "Fast extra request body JSON",
           "mid_extra_body": "Mid extra request body JSON",
           "deep_extra_body": "Deep extra request body JSON",
+          "provider_profiles": "Fallback provider profiles JSON",
           "chat_timeout": "Legacy chat request timeout",
           "fast_chat_timeout": "Fast chat request timeout",
           "mid_chat_timeout": "Mid chat request timeout",
@@ -74,6 +75,7 @@
           "fast_extra_body": "Additional OpenAI-compatible JSON merged into fast chat/completions requests.",
           "mid_extra_body": "Additional OpenAI-compatible JSON merged into mid chat/completions requests.",
           "deep_extra_body": "Additional OpenAI-compatible JSON merged into deep chat/completions requests, such as reasoning_budget or chat_template_kwargs.",
+          "provider_profiles": "Optional ordered fallback providers. JSON format: {\"providers\":[{\"name\":\"fallback\",\"base_url\":\"https://example.invalid/v1\",\"api_key\":\"...\",\"models\":{\"fast\":\"provider/model\"}}]}. API keys are stored in Home Assistant options and never shown in traces.",
           "chat_timeout": "Backward-compatible timeout used when no fast tier timeout is set.",
           "fast_chat_timeout": "Maximum seconds to wait for fast non-streaming chat/completions requests.",
           "mid_chat_timeout": "Maximum seconds to wait for mid non-streaming chat/completions requests.",
@@ -91,7 +93,8 @@
       }
     },
     "error": {
-      "invalid_json": "Extra request body must be valid JSON."
+      "invalid_json": "Extra request body must be valid JSON.",
+      "invalid_provider_profiles": "Provider profiles must be valid JSON with provider name, base_url, api_key and optional tier model overrides."
     }
   }
 }

@@ -83,6 +83,8 @@ class TraceStore:
                 "model": str(turn.route.get("model") or ""),
                 "max_tokens": turn.route.get("max_tokens"),
                 "timeout_s": turn.route.get("timeout_s"),
+                "provider": turn.route.get("provider"),
+                "provider_attempts": turn.route.get("provider_attempts") or [],
             },
             "latency_ms": turn.latency_ms,
             "status": turn.status,

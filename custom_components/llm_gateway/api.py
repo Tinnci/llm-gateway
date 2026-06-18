@@ -1,4 +1,4 @@
-"""Thin async client for an OpenAI-compatible chat endpoint (e.g. NVIDIA NIM)."""
+"""Thin async client for an OpenAI-compatible chat endpoint."""
 
 from __future__ import annotations
 
@@ -23,6 +23,16 @@ class LLMGatewayAuthError(LLMGatewayError):
 
 class LLMGatewayConnectionError(LLMGatewayError):
     """Could not reach the endpoint."""
+
+
+class LLMGatewayHTTPError(LLMGatewayError):
+    """Endpoint returned an HTTP error status."""
+
+    def __init__(self, status: int, body: str) -> None:
+        """Initialize the HTTP error."""
+        self.status = status
+        self.body = body
+        super().__init__(f"Endpoint returned {status}: {body[:300]}")
 
 
 class LLMGatewayClient:
@@ -88,9 +98,7 @@ class LLMGatewayClient:
                         f"Authentication failed ({resp.status}); check the API key"
                     )
                 if resp.status >= HTTPStatus.BAD_REQUEST:
-                    raise LLMGatewayError(
-                        f"Endpoint returned {resp.status}: {body[:300]}"
-                    )
+                    raise LLMGatewayHTTPError(resp.status, body)
                 return _parse_json(body)
         except TimeoutError as err:
             LOGGER.warning(

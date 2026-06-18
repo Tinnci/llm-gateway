@@ -23,6 +23,7 @@ from .const import (
     CONF_MID_CHAT_TIMEOUT,
     CONF_MID_MAX_TOKENS,
     CONF_MID_MODEL,
+    CONF_PROVIDER_PROFILES,
     CONF_ROUTING_MODE,
     CONF_TRACE_INCLUDE_RAW_MESSAGES,
     CONF_TRACE_MAX_RUNS,
@@ -48,6 +49,7 @@ from .const import (
 )
 from .harness import evaluate_scenario
 from .policy import should_allow_search
+from .providers import normalize_provider_profiles_json, provider_profiles_from_options
 from .router import select_model_route
 from .search import search_providers_from_options
 from .voice_text import markdown_to_spoken_text
@@ -458,6 +460,7 @@ def _entry_status(entry: ConfigEntry) -> dict[str, Any]:
                 provider.name for provider in search_providers_from_options(options)
             ],
         },
+        "model_providers": _model_provider_status(entry),
         "memory": (
             runtime.memory.snapshot() if runtime else {"facts": [], "sessions": []}
         ),
@@ -503,6 +506,9 @@ def _options_status(options: dict[str, Any]) -> dict[str, Any]:
                 options.get(CONF_DEEP_CHAT_TIMEOUT) or RECOMMENDED_DEEP_CHAT_TIMEOUT
             ),
         },
+        "provider_profiles_configured": bool(
+            str(options.get(CONF_PROVIDER_PROFILES) or "").strip()
+        ),
     }
 
 
@@ -616,6 +622,16 @@ def _validate_editable_options(payload: dict[str, Any]) -> dict[str, Any]:
             }
         )
 
+    provider_profiles = payload.get("provider_profiles")
+    if provider_profiles is not None:
+        if not isinstance(provider_profiles, str):
+            raise ValueError("provider_profiles must be JSON text")
+        text = provider_profiles.strip()
+        if text:
+            updates[CONF_PROVIDER_PROFILES] = normalize_provider_profiles_json(text)
+        else:
+            updates[CONF_PROVIDER_PROFILES] = ""
+
     return updates
 
 
@@ -660,6 +676,32 @@ def _route_status(route: ModelRoute) -> dict[str, Any]:
         "max_tokens": route.max_tokens,
         "timeout_s": route.timeout_s,
         "async_deep_task": route.async_deep_task,
+    }
+
+
+def _model_provider_status(entry: ConfigEntry) -> dict[str, Any]:
+    options = entry.options
+    primary = {
+        "name": "primary",
+        "base_url": entry.data.get("base_url"),
+        "models": _options_status(options)["models"],
+        "has_api_key": True,
+    }
+    try:
+        fallbacks = [
+            profile.safe_dict() for profile in provider_profiles_from_options(options)
+        ]
+    except ValueError as err:
+        return {
+            "primary": primary,
+            "fallbacks": [],
+            "fallback_enabled": False,
+            "config_error": str(err),
+        }
+    return {
+        "primary": primary,
+        "fallbacks": fallbacks,
+        "fallback_enabled": bool(fallbacks),
     }
 
 

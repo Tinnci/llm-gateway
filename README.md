@@ -1,10 +1,9 @@
 # LLM Gateway for Home Assistant
 
 LLM Gateway is a voice-first Home Assistant conversation agent for
-OpenAI-compatible chat endpoints. It is tuned for NVIDIA NIM by default, but the
-integration works with any compatible gateway that exposes `/v1/models` and
-`/v1/chat/completions`, including LiteLLM, vLLM, OpenRouter, Ollama's OpenAI
-shim, and similar providers.
+OpenAI-compatible chat endpoints. It works with any compatible gateway that
+exposes `/v1/models` and `/v1/chat/completions`, including LiteLLM, vLLM,
+OpenRouter, Ollama's OpenAI shim, and similar providers.
 
 The current implementation is no longer a single-model chat proxy. It is a
 routed assistant runtime with short spoken answers, Home Assistant tool policy,
@@ -19,6 +18,10 @@ Voice Harness panel, and a small earcon toolchain.
 - **Fast / Mid / Deep routing**: normal voice turns use Fast, search and device
   diagnostics use Mid, and long reasoning uses Deep as a Home Assistant
   background task.
+- **Ordered model provider fallback**: optional provider profiles can override
+  tier models, timeouts, token budgets, and extra request bodies. Retryable
+  network/auth/429/5xx failures fail over to the next provider and are recorded
+  in diagnostic traces without exposing API keys.
 - **Home Assistant tool control**: Assist LLM API tools can be enabled from the
   options flow. High-risk actions are blocked until the user explicitly confirms.
 - **Search gating**: `search_web` is only exposed when search is enabled, a
@@ -40,13 +43,15 @@ Voice Harness panel, and a small earcon toolchain.
   static path. The `tools/ha-earcon` uv project renders and lints deterministic
   prompt sounds.
 
-## What is intentionally not done yet
+## Current boundaries
 
-- Full Assist pipeline event capture is not complete yet. LLM Gateway records
-  the post-STT text/LLM/tool/final-speech turn, but not wake word timing, raw
-  audio, VAD chunks, or OPUS clips from the satellite.
-- Local OPUS spoken fallback clips for network/TTS/port failures are not wired
-  into the satellite playback chain yet.
+- LLM Gateway records the post-STT text/LLM/tool/final-speech turn. Wake word
+  timing, raw audio, VAD chunks, and OPUS clips are satellite/ASR-layer signals;
+  those should be ingested from the satellite rather than reconstructed inside
+  the conversation agent.
+- Local OPUS spoken fallback clips for network/TTS/port failures belong in the
+  satellite playback chain. The Gateway ships the earcon pack and provider
+  fallback trace fields; the playback wrapper lives with the satellite service.
 - Durable alias memory and vector RAG are intentionally not defaults. Chinese
   embedding quality still needs validation before this becomes a first-class
   route.
@@ -82,21 +87,49 @@ Then restart Home Assistant.
    - extra request JSON per tier,
    - Home Assistant control exposure,
    - optional search provider keys,
+   - optional ordered fallback provider profiles,
    - optional diagnostic trace recording for the Voice Harness panel.
 
 Set LLM Gateway as the Conversation agent in the Assist pipeline that serves
 your voice satellite.
 
-## Recommended NVIDIA NIM defaults
+## Example model profile
 
-The current default profile is:
+The bundled example profile uses these model ids:
 
 - Fast: `nvidia/nemotron-3-nano-30b-a3b`
 - Mid: `nvidia/nemotron-3-nano-30b-a3b`
 - Deep: `nvidia/nemotron-3-super-120b-a12b`
 
+They are editable examples, not a provider requirement. Any OpenAI-compatible
+provider can be used if it exposes the required endpoints.
+
 The legacy `chat_model`, `max_tokens`, `chat_timeout`, and `extra_body` options
 still work as Fast-route fallbacks so older entries continue to load.
+
+Optional fallback providers are configured as JSON in the options flow:
+
+```json
+{
+  "providers": [
+    {
+      "name": "fallback-cloud",
+      "base_url": "https://example.invalid/v1",
+      "api_key": "replace-me",
+      "models": {
+        "fast": "provider/fast-model",
+        "mid": "provider/mid-model",
+        "deep": "provider/deep-model"
+      },
+      "soft_timeout_s": {
+        "fast": 3,
+        "mid": 8,
+        "deep": 30
+      }
+    }
+  ]
+}
+```
 
 ## Voice Harness
 
@@ -115,7 +148,8 @@ Current panel views:
 
 - `Runs / 运行记录`: config entries, model routes, provider state, recent
   diagnostic text traces, latency, tool event counts, and optional compressed
-  raw payloads.
+  raw payloads. Provider attempts and fallback reasons are visible when a run
+  crosses provider boundaries.
 - `Settings / 配置`: editable safe options for routing mode, Fast/Mid/Deep
   model ids, token budgets, request timeouts, and bounded diagnostic trace
   retention.
@@ -185,22 +219,23 @@ uv run ha-earcon lint ../../custom_components/llm_gateway/frontend/earcons/ha_vo
 ```
 
 The pack currently uses WAV for deterministic short cues. OPUS fallback spoken
-clips are a separate satellite-level task and are not part of this integration
-yet.
+clips are generated and played at the satellite layer so they still work when
+HA, TTS, or the network path is unavailable.
 
 The pack includes two latency-oriented cues:
 
 - `processing_loop.wav`: a short loopable cue for slow LLM/search waits. The
   satellite should play it at reduced gain after a soft latency threshold and
   stop it before final TTS starts.
-- `provider_fallback.wav`: a one-shot cue for future model-provider fallback
-  when the primary provider is too slow or fails.
+- `provider_fallback.wav`: a one-shot cue for model-provider fallback when the
+  primary provider is too slow or fails.
 
-Provider fallback should be implemented as ordered failover with per-provider
-health scoring, not as blind round-robin load balancing. Search provider
-fallback already follows a priority list. Model provider fallback is a planned
-next layer that needs provider profiles, soft timeouts, circuit breakers, and
-diagnostic trace fields for provider and fallback reason.
+Provider fallback is implemented as ordered failover, not blind round-robin load
+balancing. Search provider fallback already follows a priority list. Model
+fallback uses optional provider profiles and records provider, attempts,
+latency, fallback reason, and final status in diagnostic traces. A short-lived
+circuit breaker can still be added later if live traces show repeated provider
+flapping.
 
 ## Development
 
