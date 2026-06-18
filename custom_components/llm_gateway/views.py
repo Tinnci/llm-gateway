@@ -169,7 +169,7 @@ class HarnessStatusView(HomeAssistantView):
                     "api_base": API_BASE,
                 },
                 "entries": [_entry_status(entry) for entry in _entries(hass)],
-                "earcons": _earcon_pack_status(),
+                "earcons": await hass.async_add_executor_job(_earcon_pack_status),
                 "prompt_policies": PROMPT_POLICIES,
                 "sample_scenarios": SAMPLE_SCENARIOS,
             }
