@@ -45,6 +45,11 @@ _SEARCH_ALLOW_KEYWORDS = (
     "兼容",
     "价格",
     "电价",
+    "出处",
+    "出自哪里",
+    "来源",
+    "典故",
+    "原文",
 )
 _SEARCH_FORBID_KEYWORDS = (
     "打开",

@@ -30,7 +30,8 @@ SEARCH_TOOL_SPEC: dict[str, Any] = {
         "name": SEARCH_TOOL_NAME,
         "description": (
             "Search the web for current external facts, device manuals, firmware, "
-            "compatibility, error codes, weather, news, traffic, or prices. "
+            "compatibility, error codes, weather, news, traffic, prices, or "
+            "source/origin verification for quotations and named works. "
             "Never use this for direct Home Assistant control."
         ),
         "parameters": {

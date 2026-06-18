@@ -18,7 +18,17 @@ def test_markdown_to_spoken_text_strips_formatting():
 def test_markdown_to_spoken_text_omits_code_fences():
     spoken = markdown_to_spoken_text("请看：\n```python\nprint('x')\n```\n下一步。")
     assert "```" not in spoken
-    assert "代码内容已省略" in spoken
+    assert "print" not in spoken
+    assert "代码已放到文本记录中" in spoken
+
+
+def test_markdown_to_spoken_text_reads_short_unlabelled_quote_blocks():
+    spoken = markdown_to_spoken_text(
+        "这句话出自《诗经·周南·关雎》，原文是：\n\n"
+        "```\n关关雎鸠，在河之洲。\n```\n"
+    )
+    assert "代码" not in spoken
+    assert "关关雎鸠，在河之洲" in spoken
 
 
 def test_markdown_to_spoken_text_limits_sentences():

@@ -49,6 +49,15 @@ if TYPE_CHECKING:
     from .router import ModelRoute
     from .runtime import LLMGatewayRuntimeData
 
+VOICE_RESPONSE_CONTRACT = """Voice response contract:
+- Final assistant content is spoken aloud, so use plain text rather than Markdown.
+- Do not wrap quotations, poems, entity names, or short facts in code fences.
+- Use code fences only when the user explicitly asks for code.
+- For source/origin questions about quotations or named works, verify with
+  search_web when it is available.
+- Keep the spoken answer concise; put long details in the Home Assistant panel.
+"""
+
 
 async def async_setup_entry(
     hass: HomeAssistant,  # noqa: ARG001 - required by the platform signature
@@ -215,6 +224,10 @@ class LLMGatewayConversationEntity(
                 latency_ms=int((time.monotonic() - started) * 1000),
             )
             return err.as_conversation_result()
+        chat_log.content.insert(
+            1,
+            conversation.SystemContent(content=VOICE_RESPONSE_CONTRACT),
+        )
         runtime.voice_runs.mark(run_id, "llm_data")
 
         local_control_speech = await async_handle_voice_runtime_command(
@@ -320,9 +333,9 @@ class LLMGatewayConversationEntity(
         options = self.entry.options
         runtime = self.entry.runtime_data
         result = conversation.async_get_result_from_chat_log(user_input, chat_log)
-        spoken = result.response.speech.get("plain", {}).get("speech", "")
-        if spoken:
-            result.response.async_set_speech(markdown_to_spoken_text(spoken))
+        raw_spoken = result.response.speech.get("plain", {}).get("speech", "")
+        if raw_spoken:
+            result.response.async_set_speech(markdown_to_spoken_text(raw_spoken))
             runtime.voice_runs.mark(run_id, "tts_cleaned")
         assistant_text = result.response.speech.get("plain", {}).get("speech", "")
         await runtime.memory.async_record_turn(
@@ -360,8 +373,9 @@ class LLMGatewayConversationEntity(
                     "timeline": timeline,
                     "messages": _content_to_messages(chat_log.content),
                     "speech": {
+                        "raw": raw_spoken,
                         "final": assistant_text,
-                        "tts_cleaned": bool(spoken),
+                        "tts_cleaned": bool(raw_spoken),
                     },
                 },
             ),

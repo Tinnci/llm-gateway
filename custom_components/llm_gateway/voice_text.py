@@ -8,12 +8,20 @@ from typing import Any
 import mistune
 
 _MARKDOWN = mistune.create_markdown(renderer="ast", plugins=["table"])
-_MAX_INLINE_CODE_CHARS = 40
+_MAX_SPOKEN_BLOCK_CHARS = 120
+_MAX_SPOKEN_BLOCK_NEWLINES = 2
 _WHITESPACE_RE = re.compile(r"[ \t\r\f\v]+")
 _BLANK_LINES_RE = re.compile(r"\n{3,}")
 _URL_RE = re.compile(r"https?://\S+")
 _MARKDOWN_CONTROL_RE = re.compile(r"[*_`#>|~\[\]{}]")
 _SENTENCE_END_RE = re.compile(r"(?<=[。！？!?])")
+_FENCED_CODE_RE = re.compile(r"```([^\n`]*)\n?(.*?)```", flags=re.DOTALL)
+_CODE_HINT_RE = re.compile(
+    r"(^|\s)(async\s+def|def|class|function|const|let|var|import|from|return|"
+    r"print\s*\(|curl\s+|docker\s+|git\s+|uv\s+|SELECT\s+|INSERT\s+|UPDATE\s+)",
+    flags=re.IGNORECASE,
+)
+_CODE_SYMBOL_RE = re.compile(r"(\{|\}|=>|==|!=|<=|>=|;|</|/>|\w+\([^)]*\))")
 
 
 def markdown_to_spoken_text(
@@ -84,9 +92,37 @@ def _join_rendered_children(token: dict[str, Any]) -> str:
 
 def _render_code_block(token: dict[str, Any]) -> str:
     raw = str(token.get("raw", "")).strip()
-    if raw and len(raw) <= _MAX_INLINE_CODE_CHARS:
-        return f"代码内容已省略。{raw}"
-    return "代码内容已省略。"
+    info = str(token.get("attrs", {}).get("info") or "").strip()
+    return _render_fenced_block_text(raw, info=info)
+
+
+def _render_fenced_block_text(raw: str, *, info: str = "") -> str:
+    raw = _collapse_block_text(raw)
+    if not raw:
+        return ""
+    if _should_spoken_render_fenced_block(raw, info=info):
+        return raw
+    return "代码已放到文本记录中。"
+
+
+def _should_spoken_render_fenced_block(raw: str, *, info: str = "") -> bool:
+    if info:
+        return False
+    if len(raw) > _MAX_SPOKEN_BLOCK_CHARS:
+        return False
+    if "\n" in raw and raw.count("\n") > _MAX_SPOKEN_BLOCK_NEWLINES:
+        return False
+    return not _looks_like_code(raw)
+
+
+def _looks_like_code(text: str) -> bool:
+    return bool(_CODE_HINT_RE.search(text) or _CODE_SYMBOL_RE.search(text))
+
+
+def _collapse_block_text(text: str) -> str:
+    text = text.strip()
+    text = re.sub(r" *\n *", " ", text)
+    return _WHITESPACE_RE.sub(" ", text).strip()
 
 
 def _normalize_text(text: str) -> str:
@@ -118,7 +154,11 @@ def _limit_sentences(text: str, *, max_sentences: int) -> str:
 
 
 def _fallback_strip(text: str) -> str:
-    text = re.sub(r"```.*?```", "代码内容已省略。", text, flags=re.DOTALL)
+    text = _FENCED_CODE_RE.sub(_fallback_code_replacement, text)
     text = re.sub(r"`([^`]+)`", r"\1", text)
     text = re.sub(r"!\[([^\]]*)\]\([^)]+\)", r"\1", text)
     return re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+
+
+def _fallback_code_replacement(match: re.Match[str]) -> str:
+    return _render_fenced_block_text(match.group(2), info=match.group(1).strip())

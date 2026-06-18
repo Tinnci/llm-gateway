@@ -13,11 +13,13 @@ from custom_components.llm_gateway.api import LLMGatewayConnectionError
 from custom_components.llm_gateway.const import (
     CONF_DIAGNOSTIC_TRACES,
     CONF_PROVIDER_PROFILES,
+    CONF_TRACE_INCLUDE_RAW_MESSAGES,
     DEEP_TASK_ACK_SPEECH,
     DEFAULT_BASE_URL,
     GATEWAY_ERROR_SPEECH,
 )
 from custom_components.llm_gateway.conversation import (
+    VOICE_RESPONSE_CONTRACT,
     _content_to_messages,
     _extra_body_from_options,
     _is_action_tool,
@@ -119,6 +121,11 @@ async def test_converse_plain(hass, aioclient_mock, mock_config_entry):
         hass, "你好", None, Context(), agent_id=agent_id
     )
     assert result.response.speech["plain"]["speech"] == "你好，有什么可以帮您？"
+    request_json = aioclient_mock.mock_calls[-1][2]
+    assert any(
+        message["role"] == "system" and message["content"] == VOICE_RESPONSE_CONTRACT
+        for message in request_json["messages"]
+    )
 
 
 async def test_converse_voice_pause_command_calls_local_service(
@@ -312,6 +319,7 @@ async def test_converse_falls_back_to_secondary_provider_and_traces_attempts(
         options={
             **mock_config_entry.options,
             CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
             CONF_PROVIDER_PROFILES: (
                 '{"providers":[{"name":"fallback","base_url":"'
                 + FALLBACK_BASE_URL
@@ -348,3 +356,8 @@ async def test_converse_falls_back_to_secondary_provider_and_traces_attempts(
     assert traces[0]["route"]["provider"]["name"] == "fallback"
     assert [attempt["provider"] for attempt in attempts] == ["primary", "fallback"]
     assert attempts[0]["retryable"] is True
+    assert traces[0]["raw_payload"]["speech"] == {
+        "raw": "已切到备用 provider。",
+        "final": "已切到备用 provider。",
+        "tts_cleaned": True,
+    }

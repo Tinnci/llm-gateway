@@ -10,6 +10,7 @@ from custom_components.llm_gateway.policy import should_allow_search, validate_t
 def test_search_policy_gating():
     assert should_allow_search("查一下今天空气质量")
     assert should_allow_search("这个设备错误码是什么意思")
+    assert should_allow_search("关关雎鸠，在河之洲，这句话是出自哪里？")
     assert not should_allow_search("打开卧室灯")
     assert not should_allow_search("把它调暗一点")
 
