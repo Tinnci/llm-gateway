@@ -1,8 +1,6 @@
 name: Release
 
 on:
-  release:
-    types: [published]
   push:
     tags:
       - "v*"
@@ -15,18 +13,32 @@ jobs:
   release-zip:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: ZIP Component Dir
+      - name: Validate tag and manifest version
+        shell: bash
         run: |
-          cd ${{ github.workspace }}/custom_components/llm_gateway
-          zip -r llm_gateway.zip ./
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(python3 -c 'import json; print(json.load(open("custom_components/llm_gateway/manifest.json", encoding="utf-8"))["version"])')"
+          if [[ "$tag" != "$version" ]]; then
+            echo "Tag v$tag does not match manifest version $version" >&2
+            exit 1
+          fi
 
-      - name: Upload zip to release
-        uses: svenstaro/upload-release-action@v2
+      - name: Build HACS component zip
+        run: |
+          cd custom_components/llm_gateway
+          zip -r "${GITHUB_WORKSPACE}/llm_gateway.zip" . \
+            -x "**/__pycache__/" \
+            -x "**/__pycache__/*" \
+            -x "**/*.pyc" \
+            -x "**/.DS_Store"
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
         with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: ${{ github.workspace }}/custom_components/llm_gateway/llm_gateway.zip
-          asset_name: llm_gateway.zip
-          tag: ${{ github.ref }}
-          overwrite: true
+          files: llm_gateway.zip
+          generate_release_notes: true
+          fail_on_unmatched_files: true

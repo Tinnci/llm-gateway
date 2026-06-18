@@ -42,6 +42,8 @@ from .const import (
 
 RouteKind = Literal["fast", "mid", "deep"]
 _DEEP_LENGTH_THRESHOLD = 120
+_VERIFIER_MAX_TOKENS = 512
+_VERIFIER_TIMEOUT_S = 45
 
 _DEEP_KEYWORDS = (
     "深度",
@@ -104,6 +106,19 @@ def select_model_route(text: str, options: dict[str, Any]) -> ModelRoute:
         kind = classify_route(text)
 
     return _route_from_options(kind, options)
+
+
+def select_verifier_route(options: dict[str, Any]) -> ModelRoute:
+    """Choose a capable bounded route for synchronous verifier sub-agents."""
+    route = _route_from_options("deep", options)
+    return ModelRoute(
+        kind="deep",
+        model=route.model,
+        max_tokens=min(route.max_tokens, _VERIFIER_MAX_TOKENS),
+        timeout_s=min(route.timeout_s, _VERIFIER_TIMEOUT_S),
+        extra_body=route.extra_body,
+        async_deep_task=False,
+    )
 
 
 def classify_route(text: str) -> RouteKind:

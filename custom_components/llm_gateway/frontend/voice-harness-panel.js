@@ -195,6 +195,8 @@ const I18N = {
     "grounding.status.no_evidence": "No evidence",
     "grounding.status.ok": "Grounded",
     "grounding.status.repaired": "Repaired",
+    "grounding.status.unsupported": "Unsupported",
+    "grounding.status.verifier_error": "Verifier error",
     "rule.max_one_sentence": "One sentence",
     "rule.no_tool_details": "No tool details",
     "rule.no_entity_id": "No entity ids",
@@ -389,6 +391,8 @@ const I18N = {
     "grounding.status.no_evidence": "缺少证据",
     "grounding.status.ok": "已校验",
     "grounding.status.repaired": "已修正",
+    "grounding.status.unsupported": "未被证据支持",
+    "grounding.status.verifier_error": "校验器错误",
     "rule.max_one_sentence": "一句话内",
     "rule.no_tool_details": "不说工具细节",
     "rule.no_entity_id": "不说 entity_id",
@@ -1223,13 +1227,14 @@ class VoiceHarnessPanel extends HTMLElement {
     if (!status || status === "not_required") {
       return "";
     }
+    const tone = this._groundingTone(status);
     const candidates = Array.isArray(grounding.candidates) ? grounding.candidates : [];
     const repairs = Array.isArray(grounding.repairs) ? grounding.repairs : [];
     return `
-      <div class="groundingBox ${status === "repaired" ? "warning" : status === "no_evidence" || status === "no_answer" ? "bad" : "ok"}">
+      <div class="groundingBox ${tone}">
         <div class="groundingHead">
           <h3>${escapeHtml(this._t("runs.grounding"))}</h3>
-          <span class="chip ${status === "repaired" ? "warning" : status === "no_evidence" || status === "no_answer" ? "bad" : "ok"}">${escapeHtml(this._groundingStatusLabel(status))}</span>
+          <span class="chip ${tone}">${escapeHtml(this._groundingStatusLabel(status))}</span>
         </div>
         ${candidates.length ? `
           <div class="ruleList compact">
@@ -1625,6 +1630,17 @@ class VoiceHarnessPanel extends HTMLElement {
   _groundingStatusLabel(value) {
     const status = String(value || "not_required");
     return this._lookup(`grounding.status.${status}`, status);
+  }
+
+  _groundingTone(value) {
+    const status = String(value || "");
+    if (status === "repaired") {
+      return "warning";
+    }
+    if (["no_answer", "no_evidence", "unsupported", "verifier_error"].includes(status)) {
+      return "bad";
+    }
+    return "ok";
   }
 
   _lookup(key, fallback = "") {

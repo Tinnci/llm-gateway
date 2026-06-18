@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Literal
 
 from homeassistant.components import conversation
@@ -27,10 +28,20 @@ from .const import (
     RECOMMENDED_TOP_P,
     TOOL_LOOP_ERROR_SPEECH,
 )
-from .grounding import GroundingResult, verify_and_repair_source_answer
+from .grounding import (
+    GroundingResult,
+    build_grounding_verifier_messages,
+    initial_grounding_result,
+    parse_grounding_verifier_response,
+)
 from .policy import should_require_search, validate_tool_call
 from .providers import async_chat_completion_with_fallback
-from .router import legacy_model_from_options, parse_extra_body, select_model_route
+from .router import (
+    legacy_model_from_options,
+    parse_extra_body,
+    select_model_route,
+    select_verifier_route,
+)
 from .search import (
     SEARCH_TOOL_NAME,
     async_execute_search_tool,
@@ -363,7 +374,9 @@ class LLMGatewayConversationEntity(
         runtime = self.entry.runtime_data
         result = conversation.async_get_result_from_chat_log(user_input, chat_log)
         raw_spoken = result.response.speech.get("plain", {}).get("speech", "")
-        grounding = _grounding_for_turn(
+        grounding = await _async_grounding_for_turn(
+            runtime,
+            options,
             user_input.text,
             raw_spoken,
             chat_log.content,
@@ -374,7 +387,8 @@ class LLMGatewayConversationEntity(
                 run_id,
                 "grounding_verifier",
                 status="error"
-                if grounding.status in {"no_answer", "no_evidence"}
+                if grounding.status
+                in {"no_answer", "no_evidence", "unsupported", "verifier_error"}
                 else "ok",
                 attrs=grounding.as_dict(),
             )
@@ -675,16 +689,69 @@ def _trace_status(assistant_text: str) -> str:
     return "complete"
 
 
-def _grounding_for_turn(
+async def _async_grounding_for_turn(
+    runtime: LLMGatewayRuntimeData,
+    options: dict[str, Any],
     user_text: str,
     assistant_text: str,
     content: list[conversation.Content],
 ) -> GroundingResult:
-    """Run lightweight source grounding against local search tool results."""
-    return verify_and_repair_source_answer(
-        user_text,
-        assistant_text,
-        _search_results_from_content(content),
+    """Run source grounding through a bounded verifier sub-agent."""
+    search_results = _search_results_from_content(content)
+    initial = initial_grounding_result(user_text, assistant_text, search_results)
+    if initial.status != "ok":
+        return initial
+
+    route = select_verifier_route(options)
+    started = time.monotonic()
+    try:
+        fallback_result = await async_chat_completion_with_fallback(
+            session=runtime.session,
+            primary_client=runtime.client,
+            route=route,
+            options=options,
+            messages=build_grounding_verifier_messages(
+                user_text=user_text,
+                assistant_text=assistant_text,
+                search_results=search_results,
+            ),
+            tools=None,
+            tool_choice=None,
+            temperature=0,
+            top_p=0.1,
+            selector=runtime.provider_selector,
+            processing_cues=False,
+        )
+    except LLMGatewayError as err:
+        return GroundingResult(
+            status="verifier_error",
+            text=assistant_text,
+            candidates=initial.candidates,
+            reason=type(err).__name__,
+            verifier={
+                "mode": "model",
+                "route": route.kind,
+                "model": route.model,
+                "error": type(err).__name__,
+                "latency_ms": int((time.monotonic() - started) * 1000),
+            },
+        )
+
+    grounding = parse_grounding_verifier_response(
+        str(fallback_result.message.get("content") or ""),
+        fallback_text=assistant_text,
+        candidates=initial.candidates,
+    )
+    return replace(
+        grounding,
+        verifier={
+            **grounding.verifier,
+            "route": route.kind,
+            "model": route.model,
+            "provider": fallback_result.provider,
+            "attempts": fallback_result.attempts,
+            "latency_ms": int((time.monotonic() - started) * 1000),
+        },
     )
 
 

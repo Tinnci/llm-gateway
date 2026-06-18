@@ -118,9 +118,7 @@ def test_provider_selector_success_clears_penalty() -> None:
     assert selector.snapshot() == []
 
 
-async def test_chat_completion_falls_back_on_retryable_http_error(
-    hass, aioclient_mock
-):
+async def test_chat_completion_falls_back_on_retryable_http_error(hass, aioclient_mock):
     aioclient_mock.post(PRIMARY + "/chat/completions", status=500, text="boom")
     aioclient_mock.post(
         FALLBACK + "/chat/completions",

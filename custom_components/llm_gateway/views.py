@@ -462,9 +462,7 @@ def _entry_status(entry: ConfigEntry) -> dict[str, Any]:
             ],
         },
         "model_providers": _model_provider_status(entry),
-        "provider_health": (
-            runtime.provider_selector.snapshot() if runtime else []
-        ),
+        "provider_health": (runtime.provider_selector.snapshot() if runtime else []),
         "memory": (
             runtime.memory.snapshot() if runtime else {"facts": [], "sessions": []}
         ),
@@ -733,9 +731,7 @@ def _required_text(value: object, field: str) -> str:
     return text
 
 
-def _bounded_int(
-    value: object, field: str, *, minimum: int, maximum: int
-) -> int:
+def _bounded_int(value: object, field: str, *, minimum: int, maximum: int) -> int:
     try:
         parsed = int(value)
     except (TypeError, ValueError) as err:
@@ -751,8 +747,7 @@ def _trace_status(options: dict[str, Any]) -> dict[str, Any]:
         "include_raw_messages": bool(options.get(CONF_TRACE_INCLUDE_RAW_MESSAGES)),
         "max_runs": int(options.get(CONF_TRACE_MAX_RUNS) or RECOMMENDED_TRACE_MAX_RUNS),
         "retention_hours": int(
-            options.get(CONF_TRACE_RETENTION_HOURS)
-            or RECOMMENDED_TRACE_RETENTION_HOURS
+            options.get(CONF_TRACE_RETENTION_HOURS) or RECOMMENDED_TRACE_RETENTION_HOURS
         ),
         "encoding": "json+zlib+base64",
     }

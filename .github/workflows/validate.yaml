@@ -23,10 +23,18 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+      - name: 🛠️ Set up Bun
+        uses: oven-sh/setup-bun@v2
       - name: 🧹 Ruff check
         run: uvx ruff check custom_components tests tools/ha-earcon/src tools/ha-earcon/tests
       - name: 🎨 Ruff format check
         run: uvx ruff format --check custom_components tests tools/ha-earcon/src tools/ha-earcon/tests
+      - name: 📦 Install frontend dependencies
+        run: bun install --frozen-lockfile
+      - name: 🔎 Frontend typecheck
+        run: bun run typecheck
+      - name: 🧱 Build Voice Harness panel
+        run: bun run build:panel
       - name: 🧪 Pytest
         run: uv run pytest -q
       - name: 🔊 Earcon tool tests

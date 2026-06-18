@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 URL_BASE = f"/api/{DOMAIN}/static"
 PANEL_URL = "voice-harness"
 PANEL_COMPONENT = "voice-harness-panel"
-PANEL_MODULE_VERSION = "0.3.1"
+PANEL_MODULE_VERSION = "0.3.7"
 PANEL_MODULE = f"{URL_BASE}/voice-harness-panel.js?v={PANEL_MODULE_VERSION}"
 PANEL_TITLE = "Voice Harness"
 DATA_PANEL_SETUP = f"{DOMAIN}_voice_harness_panel_setup"

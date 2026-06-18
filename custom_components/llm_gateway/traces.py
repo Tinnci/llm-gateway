@@ -140,9 +140,7 @@ class TraceStore:
 
 
 def _record_for_panel(record: dict[str, Any], *, include_raw: bool) -> dict[str, Any]:
-    panel_record = {
-        key: value for key, value in record.items() if key != "raw_payload"
-    }
+    panel_record = {key: value for key, value in record.items() if key != "raw_payload"}
     raw_payload = record.get("raw_payload")
     if isinstance(raw_payload, dict):
         panel_record["raw_payload_meta"] = {
@@ -239,6 +237,23 @@ def _grounding_summary(raw_payload: dict[str, Any]) -> dict[str, Any]:
             for repair in grounding.get("repairs") or []
             if isinstance(repair, dict)
         ][:8],
+        "confidence": grounding.get("confidence"),
+        "reason": _truncate(str(grounding.get("reason") or ""), 300),
+        "verifier": _verifier_summary(grounding.get("verifier")),
+    }
+
+
+def _verifier_summary(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    provider = value.get("provider") if isinstance(value.get("provider"), dict) else {}
+    return {
+        "mode": str(value.get("mode") or ""),
+        "route": str(value.get("route") or ""),
+        "model": _truncate(str(value.get("model") or ""), 160),
+        "provider": str(provider.get("name") or ""),
+        "latency_ms": value.get("latency_ms"),
+        "error": str(value.get("error") or ""),
     }
 
 

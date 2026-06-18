@@ -24,8 +24,7 @@ def test_markdown_to_spoken_text_omits_code_fences():
 
 def test_markdown_to_spoken_text_reads_short_unlabelled_quote_blocks():
     spoken = markdown_to_spoken_text(
-        "这句话出自《诗经·周南·关雎》，原文是：\n\n"
-        "```\n关关雎鸠，在河之洲。\n```\n"
+        "这句话出自《诗经·周南·关雎》，原文是：\n\n```\n关关雎鸠，在河之洲。\n```\n"
     )
     assert "代码" not in spoken
     assert "关关雎鸠，在河之洲" in spoken

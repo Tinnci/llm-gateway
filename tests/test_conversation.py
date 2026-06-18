@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from homeassistant.components import conversation
@@ -20,9 +21,9 @@ from custom_components.llm_gateway.const import (
 )
 from custom_components.llm_gateway.conversation import (
     VOICE_RESPONSE_CONTRACT,
+    _async_grounding_for_turn,
     _content_to_messages,
     _extra_body_from_options,
-    _grounding_for_turn,
     _is_action_tool,
     _parse_tool_calls,
     _tool_choice_for_turn,
@@ -110,12 +111,10 @@ def test_tool_choice_for_turn_forces_search_for_source_questions():
 
 
 def test_tool_choice_for_turn_preserves_action_retry():
-    assert (
-        _tool_choice_for_turn("打开灯", [], force_tool_call=True) == "required"
-    )
+    assert _tool_choice_for_turn("打开灯", [], force_tool_call=True) == "required"
 
 
-def test_grounding_for_turn_uses_search_evidence():
+async def test_async_grounding_for_turn_uses_verifier_sub_agent():
     content = [
         conversation.ToolResultContent(
             agent_id="a",
@@ -132,22 +131,87 @@ def test_grounding_for_turn_uses_search_evidence():
             },
         )
     ]
-
-    grounding = _grounding_for_turn(
-        "关关雎鸠，在河之洲，这句话是出自哪里？",
-        "这句诗出自《诗经·关关》。",
-        content,
+    runtime = SimpleNamespace(
+        session=object(),
+        client=object(),
+        provider_selector=None,
     )
 
+    async def verify(**kwargs: object):
+        assert kwargs["route"].kind == "deep"
+        assert kwargs["route"].async_deep_task is False
+        assert kwargs["tools"] is None
+        assert kwargs["processing_cues"] is False
+        assert kwargs["temperature"] == 0
+        return SimpleNamespace(
+            message={
+                "content": (
+                    '{"status":"corrected","answer":"这句诗出自《诗经·周南·关雎》。",'
+                    '"confidence":0.94,"reason":"证据标题为周南·关雎"}'
+                )
+            },
+            provider={"name": "primary", "model": "deep"},
+            attempts=[],
+        )
+
+    with patch(
+        "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
+        side_effect=verify,
+    ):
+        grounding = await _async_grounding_for_turn(
+            runtime,
+            {},
+            "关关雎鸠，在河之洲，这句话是出自哪里？",
+            "这句诗出自《诗经·关关》。",
+            content,
+        )
+
     assert grounding.status == "repaired"
-    assert grounding.text == "这句诗出自《诗经·关雎》。"
-    assert grounding.repairs == [{"from": "诗经·关关", "to": "诗经·关雎"}]
+    assert grounding.text == "这句诗出自《诗经·周南·关雎》。"
+    assert grounding.confidence == 0.94
+    assert grounding.verifier["route"] == "deep"
 
 
-def test_grounding_for_turn_ignores_non_source_turns():
-    grounding = _grounding_for_turn("打开灯", "这句诗出自《诗经·关关》。", [])
+async def test_async_grounding_for_turn_ignores_non_source_turns():
+    grounding = await _async_grounding_for_turn(
+        SimpleNamespace(),
+        {},
+        "打开灯",
+        "这句诗出自《诗经·关关》。",
+        [],
+    )
     assert grounding.status == "not_required"
     assert grounding.text == "这句诗出自《诗经·关关》。"
+
+
+async def test_async_grounding_for_turn_reports_verifier_error():
+    content = [
+        conversation.ToolResultContent(
+            agent_id="a",
+            tool_call_id="search-1",
+            tool_name="search_web",
+            tool_result={
+                "source_candidates": ["已凉", "诗经", "禽经", "关雎"],
+                "results": [],
+            },
+        )
+    ]
+    runtime = SimpleNamespace(session=object(), client=object(), provider_selector=None)
+
+    with patch(
+        "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
+        side_effect=LLMGatewayConnectionError("timeout"),
+    ):
+        grounding = await _async_grounding_for_turn(
+            runtime,
+            {},
+            "关关雎鸠，在河之洲，这句话是出自哪里？",
+            "这句诗出自《诗经·周南·关关》。",
+            content,
+        )
+
+    assert grounding.status == "verifier_error"
+    assert grounding.text == "这句诗出自《诗经·周南·关关》。"
 
 
 def test_extra_body_from_options():

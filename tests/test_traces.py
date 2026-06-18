@@ -68,9 +68,7 @@ async def test_trace_store_records_bounded_summary_without_raw(hass):
     assert record["route"]["kind"] == "fast"
     assert record["timeline"][0]["stage"] == "received"
     assert record["grounding"]["status"] == "repaired"
-    assert record["grounding"]["repairs"] == [
-        {"from": "诗经·关关", "to": "诗经·关雎"}
-    ]
+    assert record["grounding"]["repairs"] == [{"from": "诗经·关关", "to": "诗经·关雎"}]
     assert "raw_payload" not in record
     assert snapshot["storage"]["records"] == 1
     assert snapshot["storage"]["compressed_bytes"] == 0
