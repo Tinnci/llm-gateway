@@ -34,7 +34,7 @@ async def async_setup_panel(hass: HomeAssistant) -> None:
     frontend.async_register_built_in_panel(
         hass,
         component_name="custom",
-        sidebar_title="Voice Harness",
+        sidebar_title="语音测试台",
         sidebar_icon="mdi:microphone-message",
         frontend_url_path=PANEL_URL,
         config={

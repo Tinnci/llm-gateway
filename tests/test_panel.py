@@ -19,7 +19,7 @@ async def test_panel_registers_sidebar_entry(hass):
     await async_setup_panel(hass)
 
     panel = hass.data[frontend.DATA_PANELS][PANEL_URL]
-    assert panel.sidebar_title == "Voice Harness"
+    assert panel.sidebar_title == "语音测试台"
     assert panel.sidebar_icon == "mdi:microphone-message"
     assert panel.require_admin
     assert panel.config["_panel_custom"]["name"] == "voice-harness-panel"

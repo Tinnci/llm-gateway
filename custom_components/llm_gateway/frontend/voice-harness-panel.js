@@ -1,11 +1,11 @@
 const TABS = [
-  ["runs", "Runs", "mdi:play-circle-outline"],
-  ["policies", "Prompt Policies", "mdi:shield-check-outline"],
-  ["scenarios", "Scenarios", "mdi:clipboard-text-search-outline"],
-  ["search", "Search Lab", "mdi:web"],
-  ["memory", "Memory Lab", "mdi:database-eye-outline"],
-  ["earcons", "Earcons", "mdi:music-note-outline"],
-  ["regression", "Regression", "mdi:chart-timeline-variant"],
+  ["runs", "运行记录", "mdi:play-circle-outline"],
+  ["policies", "提示策略", "mdi:shield-check-outline"],
+  ["scenarios", "场景测试", "mdi:clipboard-text-search-outline"],
+  ["search", "搜索实验室", "mdi:web"],
+  ["memory", "记忆实验室", "mdi:database-eye-outline"],
+  ["earcons", "提示音", "mdi:music-note-outline"],
+  ["regression", "回归测试", "mdi:chart-timeline-variant"],
 ];
 
 const DEFAULT_EXPECTED = {
@@ -158,7 +158,7 @@ class VoiceHarnessPanel extends HTMLElement {
     try {
       expected = JSON.parse(this._draft.expected || "{}");
     } catch (err) {
-      this._error = "Expected JSON is invalid.";
+      this._error = "期望 JSON 格式不正确。";
       this._render();
       return;
     }
@@ -188,15 +188,15 @@ class VoiceHarnessPanel extends HTMLElement {
       <main class="shell">
         <header class="topbar">
           <div>
-            <h1>Voice Harness</h1>
+            <h1>语音测试台</h1>
             <div class="subline">${escapeHtml(this._statusLine(entries))}</div>
           </div>
-          <button class="iconButton" data-action="refresh" title="Refresh">
+          <button class="iconButton" data-action="refresh" title="刷新">
             <ha-icon icon="mdi:refresh"></ha-icon>
           </button>
         </header>
         ${this._error ? `<div class="banner error">${escapeHtml(this._error)}</div>` : ""}
-        <nav class="tabs" aria-label="Voice Harness views">
+        <nav class="tabs" aria-label="语音测试台视图">
           ${TABS.map(([id, label, icon]) => `
             <button class="tab ${this._activeTab === id ? "active" : ""}" data-tab="${id}">
               <ha-icon icon="${icon}"></ha-icon>
@@ -213,12 +213,12 @@ class VoiceHarnessPanel extends HTMLElement {
 
   _statusLine(entries) {
     if (!this._data) {
-      return this._busy ? "Loading integration state" : "Waiting for Home Assistant";
+      return this._busy ? "正在读取集成状态" : "等待 Home Assistant";
     }
     if (!entries.length) {
-      return "No LLM Gateway config entry loaded";
+      return "尚未加载 LLM Gateway 配置项";
     }
-    return `${entries.length} config entry loaded`;
+    return `已加载 ${entries.length} 个配置项`;
   }
 
   _renderActive(entries) {
@@ -258,7 +258,7 @@ class VoiceHarnessPanel extends HTMLElement {
 
   _renderRuns(entries) {
     if (!entries.length) {
-      return `<div class="empty">No configured LLM Gateway entry.</div>`;
+      return `<div class="empty">没有已配置的 LLM Gateway 条目。</div>`;
     }
     return `
       <div class="entryGrid">
@@ -267,7 +267,7 @@ class VoiceHarnessPanel extends HTMLElement {
             <div class="sectionHead">
               <div>
                 <h2>${escapeHtml(entry.title)}</h2>
-                <div class="meta">${escapeHtml(entry.base_url || "No base URL")}</div>
+                <div class="meta">${escapeHtml(entry.base_url || "未配置 Base URL")}</div>
               </div>
               <span class="chip ok">${escapeHtml(entry.state || "unknown")}</span>
             </div>
@@ -297,7 +297,7 @@ class VoiceHarnessPanel extends HTMLElement {
               ${(policy.rules || []).map((rule) => `<span>${escapeHtml(rule)}</span>`).join("")}
             </div>
           </article>
-        `).join("") || `<div class="empty">No prompt policies.</div>`}
+        `).join("") || `<div class="empty">没有提示策略。</div>`}
       </div>
       ${entries.length ? `<div class="surface modelSurface">${entries.map((entry) => this._modelRows(entry.options)).join("")}</div>` : ""}
     `;
@@ -308,20 +308,20 @@ class VoiceHarnessPanel extends HTMLElement {
       <div class="workbench">
         <form class="surface form" data-form="scenario">
           <label>
-            <span>User</span>
+            <span>用户输入</span>
             <textarea data-field="user" rows="3">${escapeHtml(this._draft.user)}</textarea>
           </label>
           <label>
-            <span>Assistant Response</span>
+            <span>助手回复</span>
             <textarea data-field="response" rows="4">${escapeHtml(this._draft.response)}</textarea>
           </label>
           <label>
-            <span>Expected JSON</span>
+            <span>期望 JSON</span>
             <textarea class="codeInput" data-field="expected" rows="9">${escapeHtml(this._draft.expected)}</textarea>
           </label>
           <button class="primary" type="submit">
             <ha-icon icon="mdi:play"></ha-icon>
-            <span>Run Scenario</span>
+            <span>运行场景</span>
           </button>
         </form>
         ${this._renderResult()}
@@ -336,8 +336,8 @@ class VoiceHarnessPanel extends HTMLElement {
         <article class="surface">
           <div class="sectionHead">
             <div>
-              <h2>Search Gate</h2>
-              <div class="meta">${providers.length ? providers.join(", ") : "No provider keys exposed"}</div>
+              <h2>搜索门控</h2>
+              <div class="meta">${providers.length ? providers.join(", ") : "未暴露搜索 provider key"}</div>
             </div>
           </div>
           <form class="compactForm" data-form="scenario">
@@ -345,7 +345,7 @@ class VoiceHarnessPanel extends HTMLElement {
             <textarea data-field="response" rows="3">${escapeHtml(this._draft.response)}</textarea>
             <button class="primary" type="submit">
               <ha-icon icon="mdi:magnify"></ha-icon>
-              <span>Evaluate Gate</span>
+              <span>评估门控</span>
             </button>
           </form>
         </article>
@@ -367,21 +367,21 @@ class VoiceHarnessPanel extends HTMLElement {
                 <h2>${escapeHtml(entry.title)}</h2>
                 <div class="meta">${escapeHtml(session.conversation_id)}</div>
               </div>
-              <span class="chip muted">${(session.turns || []).length} turns</span>
+              <span class="chip muted">${(session.turns || []).length} 轮</span>
             </div>
             ${session.summary ? `<p class="summary">${escapeHtml(session.summary)}</p>` : ""}
             <div class="turns">
               ${(session.turns || []).map((turn) => `
                 <div class="turn">
-                  <strong>User</strong>
+                  <strong>用户</strong>
                   <p>${escapeHtml(turn.user)}</p>
-                  <strong>Assistant</strong>
+                  <strong>助手</strong>
                   <p>${escapeHtml(turn.assistant)}</p>
                 </div>
               `).join("")}
             </div>
           </article>
-        `).join("") || `<div class="empty">No active memory sessions.</div>`}
+        `).join("") || `<div class="empty">没有活跃记忆会话。</div>`}
       </div>
     `;
   }
@@ -392,8 +392,8 @@ class VoiceHarnessPanel extends HTMLElement {
     return `
       <div class="surface earconHeader">
         <div>
-          <h2>${escapeHtml(pack.pack || "No earcon pack")}</h2>
-          <div class="meta">${pack.sample_rate || 0} Hz · ${pack.target_lufs || "?"} LUFS target · ${pack.true_peak_dbfs || "?"} dBFS ceiling</div>
+          <h2>${escapeHtml(pack.pack || "没有提示音包")}</h2>
+          <div class="meta">${pack.sample_rate || 0} Hz · 目标 ${pack.target_lufs || "?"} LUFS · 峰值上限 ${pack.true_peak_dbfs || "?"} dBFS</div>
         </div>
       </div>
       <div class="earconGrid">
@@ -404,17 +404,17 @@ class VoiceHarnessPanel extends HTMLElement {
                 <h2>${escapeHtml(name)}</h2>
                 <div class="meta">${escapeHtml(file.purpose || "")}</div>
               </div>
-              <button class="iconButton" data-earcon="${escapeHtml(name)}" title="Play ${escapeHtml(name)}">
+              <button class="iconButton" data-earcon="${escapeHtml(name)}" title="播放 ${escapeHtml(name)}">
                 <ha-icon icon="mdi:play"></ha-icon>
               </button>
             </div>
             <div class="meterRow">
               <span>${escapeHtml(file.duration_ms)} ms</span>
               <span>${escapeHtml(file.lufs)} LUFS</span>
-              <span>${escapeHtml(file.peak_dbfs)} dBFS peak</span>
+              <span>${escapeHtml(file.peak_dbfs)} dBFS 峰值</span>
             </div>
           </article>
-        `).join("") || `<div class="empty">No rendered earcons.</div>`}
+        `).join("") || `<div class="empty">没有已渲染的提示音。</div>`}
       </div>
     `;
   }
@@ -431,7 +431,7 @@ class VoiceHarnessPanel extends HTMLElement {
             </div>
             <button class="secondary" data-sample="${escapeHtml(sample.id)}">
               <ha-icon icon="mdi:play-outline"></ha-icon>
-              <span>Run</span>
+              <span>运行</span>
             </button>
           </article>
         `).join("")}
@@ -444,7 +444,7 @@ class VoiceHarnessPanel extends HTMLElement {
       <div class="route ${escapeHtml(route.kind)}">
         <span class="routeKind">${escapeHtml(route.kind)}</span>
         <strong>${escapeHtml(route.model)}</strong>
-        <span>${route.max_tokens} tokens · ${route.timeout_s}s</span>
+        <span>${route.max_tokens} tokens · ${route.timeout_s}s 超时</span>
       </div>
     `;
   }
@@ -467,17 +467,17 @@ class VoiceHarnessPanel extends HTMLElement {
 
   _renderResult() {
     if (!this._result) {
-      return `<article class="surface result emptyState">No run result yet.</article>`;
+      return `<article class="surface result emptyState">还没有运行结果。</article>`;
     }
     const result = this._result;
     return `
       <article class="surface result">
         <div class="sectionHead">
           <div>
-            <h2>${result.passed ? "Passed" : "Failed"}</h2>
-            <div class="meta">Route: ${escapeHtml(result.route.kind)} · Search: ${result.search.allowed ? "allowed" : "blocked"}</div>
+            <h2>${result.passed ? "通过" : "失败"}</h2>
+            <div class="meta">路由：${escapeHtml(result.route.kind)} · 搜索：${result.search.allowed ? "允许" : "阻止"}</div>
           </div>
-          <span class="chip ${result.passed ? "ok" : "bad"}">${result.passed ? "PASS" : "FAIL"}</span>
+          <span class="chip ${result.passed ? "ok" : "bad"}">${result.passed ? "通过" : "失败"}</span>
         </div>
         <div class="spoken">${escapeHtml(result.spoken || "")}</div>
         ${(result.violations || []).length ? `
