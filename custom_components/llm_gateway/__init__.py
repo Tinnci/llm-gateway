@@ -10,6 +10,8 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import LLMGatewayAuthError, LLMGatewayClient, LLMGatewayError
 from .const import CONF_BASE_URL, DEFAULT_BASE_URL
+from .memory import VoiceMemory
+from .runtime import DeepTaskManager, LLMGatewayRuntimeData
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -21,8 +23,9 @@ PLATFORMS = [Platform.CONVERSATION]
 
 async def async_setup_entry(hass: HomeAssistant, entry: LLMGatewayConfigEntry) -> bool:
     """Set up LLM Gateway from a config entry."""
+    session = async_get_clientsession(hass)
     client = LLMGatewayClient(
-        async_get_clientsession(hass),
+        session,
         entry.data.get(CONF_BASE_URL, DEFAULT_BASE_URL),
         entry.data[CONF_API_KEY],
     )
@@ -35,7 +38,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: LLMGatewayConfigEntry) -
     except LLMGatewayError as err:
         raise ConfigEntryNotReady(str(err)) from err
 
-    entry.runtime_data = client
+    memory = VoiceMemory(hass, entry.entry_id)
+    await memory.async_load()
+    entry.runtime_data = LLMGatewayRuntimeData(
+        client=client,
+        session=session,
+        memory=memory,
+        deep_tasks=DeepTaskManager(hass, client),
+    )
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     return True

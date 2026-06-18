@@ -12,8 +12,14 @@ gateway (vLLM, LiteLLM, Ollama's OpenAI shim, OpenRouter, Azure OpenAI-compatibl
   are still allowed).
 - **Home Assistant control** — opt in to the Assist LLM API and the model can call
   tools to control your devices (function calling).
-- **Tunable** — model, system prompt, max tokens, temperature and top-p are all
-  exposed in the options flow.
+- **Voice-first routing** — configure Fast, Mid and Deep models. Fast handles normal
+  voice turns, Mid handles search/diagnostics, and Deep runs as a background task.
+- **TTS-safe Markdown** — Markdown formatting is stripped from spoken responses so TTS
+  does not read literal `**` or code fences.
+- **Policy and search gates** — high-risk Home Assistant actions require explicit
+  confirmation, and `search_web` is only exposed for search-appropriate requests.
+- **Tunable** — model tiers, prompt, max tokens, temperature, top-p, request timeouts
+  and extra request JSON are exposed in the options flow.
 - **Lightweight** — talks to the endpoint over `aiohttp`; no heavy SDK dependency.
 
 ## Installation
@@ -34,8 +40,9 @@ directory and restart.
 1. *Settings → Devices & Services → Add Integration → LLM Gateway*.
 2. Enter the **Base URL** (default `https://integrate.api.nvidia.com/v1`) and your
    **API key**. The key is validated against `/v1/models` before the entry is created.
-3. Open the integration's **Configure** dialog to choose a **Model** from the live list,
-   optionally enable **Control Home Assistant**, and tune the generation settings.
+3. Open the integration's **Configure** dialog to choose **Fast**, **Mid** and **Deep**
+   models from the live list, optionally enable **Control Home Assistant**, configure
+   search keys, and tune the generation settings.
 
 To use it as your voice/chat assistant, set it as the **Conversation agent** of an
 Assist pipeline (*Settings → Voice assistants*).
@@ -43,8 +50,12 @@ Assist pipeline (*Settings → Voice assistants*).
 ## NVIDIA NIM
 
 Create a free API key at <https://build.nvidia.com>. The default model is
-`qwen/qwen3-next-80b-a3b-instruct` — a fast MoE model with strong multilingual
-(incl. Chinese) and tool-calling behaviour, which suits voice assistants well.
+`nvidia/llama-3.1-nemotron-nano-8b-v1` for Fast voice turns. The recommended Mid model
+is `nvidia/nemotron-3-nano-30b-a3b`, and the recommended Deep model is
+`nvidia/nemotron-3-super-120b-a12b`.
+
+Deep turns are submitted as Home Assistant background tasks and surfaced through
+persistent notifications. They do not directly control Home Assistant devices.
 
 ## License
 

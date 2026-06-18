@@ -27,21 +27,63 @@
       "init": {
         "title": "LLM Gateway 设置",
         "data": {
-          "chat_model": "模型",
+          "routing_mode": "路由模式",
+          "fast_model": "Fast 模型",
+          "mid_model": "Mid 模型",
+          "deep_model": "Deep 模型",
           "llm_hass_api": "控制 Home Assistant",
           "prompt": "系统提示词",
-          "max_tokens": "回复的最大 token 数",
+          "max_tokens": "兼容旧版最大 token 数",
+          "fast_max_tokens": "Fast 最大 token 数",
+          "mid_max_tokens": "Mid 最大 token 数",
+          "deep_max_tokens": "Deep 最大 token 数",
           "temperature": "Temperature",
-          "top_p": "Top P"
+          "top_p": "Top P",
+          "extra_body": "兼容旧版额外请求体 JSON",
+          "fast_extra_body": "Fast 额外请求体 JSON",
+          "mid_extra_body": "Mid 额外请求体 JSON",
+          "deep_extra_body": "Deep 额外请求体 JSON",
+          "chat_timeout": "兼容旧版请求超时",
+          "fast_chat_timeout": "Fast 请求超时",
+          "mid_chat_timeout": "Mid 请求超时",
+          "deep_chat_timeout": "Deep 请求超时",
+          "search_enabled": "启用联网搜索工具",
+          "tavily_api_key": "Tavily API 密钥",
+          "serper_api_key": "Serper API 密钥",
+          "firecrawl_api_key": "Firecrawl API 密钥",
+          "brave_api_key": "Brave Search API 密钥"
         },
         "data_description": {
-          "chat_model": "从端点提供的模型中选择，或手动输入自定义模型 id。",
+          "routing_mode": "auto 会按语音场景自动选择模型；也可强制某一档用于调试。",
+          "fast_model": "低延迟模型，用于普通语音回复、澄清和家居控制修复。",
+          "mid_model": "均衡模型，用于搜索回答和设备诊断。",
+          "deep_model": "强推理模型，用于长推理；Deep 轮次作为后台任务运行，不直接控制 Home Assistant。",
           "llm_hass_api": "选择一个或多个 API 以允许模型控制家居设备；留空则仅用于纯对话。",
           "prompt": "告诉模型如何表现的系统指令。",
+          "max_tokens": "兼容旧配置；未设置 Fast token 时使用。",
+          "fast_max_tokens": "Fast 语音轮次最多生成的 token 数。",
+          "mid_max_tokens": "Mid 搜索或诊断轮次最多生成的 token 数。",
+          "deep_max_tokens": "Deep 后台任务最多生成的 token 数。",
           "temperature": "值越高输出越随机，越低越聚焦。",
-          "top_p": "核采样阈值。"
+          "top_p": "核采样阈值。",
+          "extra_body": "兼容旧配置；未设置 Fast extra body 时合并到 Fast 请求。这里暂不支持流式输出。",
+          "fast_extra_body": "合并到 Fast chat/completions 请求的额外 OpenAI 兼容 JSON。",
+          "mid_extra_body": "合并到 Mid chat/completions 请求的额外 OpenAI 兼容 JSON。",
+          "deep_extra_body": "合并到 Deep chat/completions 请求的额外 OpenAI 兼容 JSON，例如 reasoning_budget 或 chat_template_kwargs。",
+          "chat_timeout": "兼容旧配置；未设置 Fast 超时时使用。",
+          "fast_chat_timeout": "Fast 非流式 chat/completions 请求最多等待秒数。",
+          "mid_chat_timeout": "Mid 非流式 chat/completions 请求最多等待秒数。",
+          "deep_chat_timeout": "Deep 后台 chat/completions 请求最多等待秒数。",
+          "search_enabled": "仅在配置搜索密钥且用户请求允许搜索时暴露 search_web 工具。",
+          "tavily_api_key": "默认 agent 搜索 provider。",
+          "serper_api_key": "低成本 Google SERP fallback。",
+          "firecrawl_api_key": "网页 fetch/extract fallback。",
+          "brave_api_key": "独立索引 fallback provider。"
         }
       }
+    },
+    "error": {
+      "invalid_json": "额外请求体必须是有效 JSON。"
     }
   }
 }

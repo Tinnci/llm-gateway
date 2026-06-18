@@ -1,0 +1,114 @@
+"""Runtime data for the LLM Gateway config entry."""
+
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
+
+from homeassistant.components import persistent_notification
+from homeassistant.util import ulid
+
+from .api import LLMGatewayClient, LLMGatewayError
+from .const import DOMAIN, LOGGER
+
+if TYPE_CHECKING:
+    import aiohttp
+    from homeassistant.core import HomeAssistant
+
+    from .memory import VoiceMemory
+    from .router import ModelRoute
+
+
+@dataclass(slots=True)
+class DeepTaskRecord:
+    """A queued/running/completed deep-model task."""
+
+    id: str
+    request: str
+    model: str
+    status: str = "queued"
+    result: str | None = None
+    error: str | None = None
+    created_at: float = field(default_factory=time.time)
+
+
+@dataclass(slots=True)
+class LLMGatewayRuntimeData:
+    """Runtime objects shared by Gateway platforms."""
+
+    client: LLMGatewayClient
+    session: aiohttp.ClientSession
+    memory: VoiceMemory
+    deep_tasks: DeepTaskManager
+
+
+class DeepTaskManager:
+    """Run deep-model tasks outside the voice critical path."""
+
+    def __init__(self, hass: HomeAssistant, client: LLMGatewayClient) -> None:
+        self._hass = hass
+        self._client = client
+        self.records: dict[str, DeepTaskRecord] = {}
+
+    def submit(
+        self,
+        *,
+        route: ModelRoute,
+        messages: list[dict[str, Any]],
+        user_text: str,
+        temperature: float,
+        top_p: float,
+    ) -> str:
+        """Submit a deep-model task and return its id."""
+        task_id = ulid.ulid_now()
+        self.records[task_id] = DeepTaskRecord(
+            id=task_id, request=user_text, model=route.model
+        )
+        self._hass.async_create_task(
+            self._async_run(task_id, route, messages, temperature, top_p),
+            name=f"{DOMAIN}_deep_task_{task_id}",
+        )
+        return task_id
+
+    async def _async_run(
+        self,
+        task_id: str,
+        route: ModelRoute,
+        messages: list[dict[str, Any]],
+        temperature: float,
+        top_p: float,
+    ) -> None:
+        record = self.records[task_id]
+        record.status = "running"
+        try:
+            message = await self._client.async_chat_completion(
+                model=route.model,
+                messages=messages,
+                tools=None,
+                extra_body=route.extra_body,
+                timeout_s=route.timeout_s,
+                max_tokens=route.max_tokens,
+                temperature=temperature,
+                top_p=top_p,
+            )
+        except LLMGatewayError as err:
+            record.status = "error"
+            record.error = str(err)
+            LOGGER.warning("Deep task failed task_id=%s error=%s", task_id, err)
+            persistent_notification.async_create(
+                self._hass,
+                f"深度分析任务失败：{err}",
+                title="LLM Gateway 深度任务",
+                notification_id=f"{DOMAIN}_{task_id}",
+            )
+            return
+
+        record.status = "complete"
+        record.result = str(message.get("content") or "").strip()
+        persistent_notification.async_create(
+            self._hass,
+            record.result or "深度分析完成，但模型没有返回正文。",
+            title="LLM Gateway 深度任务完成",
+            notification_id=f"{DOMAIN}_{task_id}",
+        )

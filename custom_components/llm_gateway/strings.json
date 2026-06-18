@@ -27,21 +27,63 @@
       "init": {
         "title": "LLM Gateway settings",
         "data": {
-          "chat_model": "Model",
+          "routing_mode": "Routing mode",
+          "fast_model": "Fast model",
+          "mid_model": "Mid model",
+          "deep_model": "Deep model",
           "llm_hass_api": "Control Home Assistant",
           "prompt": "Instructions",
-          "max_tokens": "Maximum tokens to return in response",
+          "max_tokens": "Legacy maximum tokens",
+          "fast_max_tokens": "Fast maximum tokens",
+          "mid_max_tokens": "Mid maximum tokens",
+          "deep_max_tokens": "Deep maximum tokens",
           "temperature": "Temperature",
-          "top_p": "Top P"
+          "top_p": "Top P",
+          "extra_body": "Legacy extra request body JSON",
+          "fast_extra_body": "Fast extra request body JSON",
+          "mid_extra_body": "Mid extra request body JSON",
+          "deep_extra_body": "Deep extra request body JSON",
+          "chat_timeout": "Legacy chat request timeout",
+          "fast_chat_timeout": "Fast chat request timeout",
+          "mid_chat_timeout": "Mid chat request timeout",
+          "deep_chat_timeout": "Deep chat request timeout",
+          "search_enabled": "Enable web search tools",
+          "tavily_api_key": "Tavily API key",
+          "serper_api_key": "Serper API key",
+          "firecrawl_api_key": "Firecrawl API key",
+          "brave_api_key": "Brave Search API key"
         },
         "data_description": {
-          "chat_model": "Pick from the models the endpoint advertises, or type a custom model id.",
+          "routing_mode": "Use auto for voice-first routing, or force one model tier for debugging.",
+          "fast_model": "Low-latency model used for normal voice replies, clarification and home control repair.",
+          "mid_model": "Balanced model used for search-backed answers and device diagnostics.",
+          "deep_model": "High-capability model used for long reasoning. Deep turns run as background tasks and do not directly control Home Assistant.",
           "llm_hass_api": "Select one or more APIs to let the model control your home. Leave empty for chat only.",
           "prompt": "System instructions that tell the model how to behave.",
+          "max_tokens": "Backward-compatible value used when no fast tier value is set.",
+          "fast_max_tokens": "Maximum tokens for fast voice turns.",
+          "mid_max_tokens": "Maximum tokens for mid search or diagnostic turns.",
+          "deep_max_tokens": "Maximum tokens for deep background tasks.",
           "temperature": "Higher values make output more random; lower values make it more focused.",
-          "top_p": "Nucleus sampling threshold."
+          "top_p": "Nucleus sampling threshold.",
+          "extra_body": "Backward-compatible JSON merged into fast requests when no fast extra body is set. Streaming is not supported here.",
+          "fast_extra_body": "Additional OpenAI-compatible JSON merged into fast chat/completions requests.",
+          "mid_extra_body": "Additional OpenAI-compatible JSON merged into mid chat/completions requests.",
+          "deep_extra_body": "Additional OpenAI-compatible JSON merged into deep chat/completions requests, such as reasoning_budget or chat_template_kwargs.",
+          "chat_timeout": "Backward-compatible timeout used when no fast tier timeout is set.",
+          "fast_chat_timeout": "Maximum seconds to wait for fast non-streaming chat/completions requests.",
+          "mid_chat_timeout": "Maximum seconds to wait for mid non-streaming chat/completions requests.",
+          "deep_chat_timeout": "Maximum seconds to wait for deep background chat/completions requests.",
+          "search_enabled": "Expose search_web only when a search key is configured and the user request is allowed to search.",
+          "tavily_api_key": "Primary agent search provider.",
+          "serper_api_key": "Low-cost Google SERP fallback.",
+          "firecrawl_api_key": "Fetch/extract fallback for web content.",
+          "brave_api_key": "Independent-index fallback provider."
         }
       }
+    },
+    "error": {
+      "invalid_json": "Extra request body must be valid JSON."
     }
   }
 }

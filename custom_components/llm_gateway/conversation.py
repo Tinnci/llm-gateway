@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from homeassistant.components import conversation
 from homeassistant.const import CONF_LLM_HASS_API, CONF_PROMPT, MATCH_ALL
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import llm
 from homeassistant.helpers.json import json_dumps
@@ -16,18 +15,25 @@ from voluptuous_openapi import convert
 
 from .api import LLMGatewayClient, LLMGatewayError
 from .const import (
-    CONF_CHAT_MODEL,
-    CONF_MAX_TOKENS,
     CONF_TEMPERATURE,
     CONF_TOP_P,
+    DEEP_TASK_ACK_SPEECH,
     DOMAIN,
+    GATEWAY_ERROR_SPEECH,
     LOGGER,
     MAX_TOOL_ITERATIONS,
-    RECOMMENDED_CHAT_MODEL,
-    RECOMMENDED_MAX_TOKENS,
     RECOMMENDED_TEMPERATURE,
     RECOMMENDED_TOP_P,
+    TOOL_LOOP_ERROR_SPEECH,
 )
+from .policy import validate_tool_call
+from .router import legacy_model_from_options, parse_extra_body, select_model_route
+from .search import (
+    async_execute_search_tool,
+    available_search_tools,
+    mark_external_tool_calls,
+)
+from .voice_text import markdown_to_spoken_text
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -36,6 +42,8 @@ if TYPE_CHECKING:
     from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
     from .config_entry import LLMGatewayConfigEntry
+    from .router import ModelRoute
+    from .runtime import LLMGatewayRuntimeData
 
 
 async def async_setup_entry(
@@ -118,7 +126,17 @@ def _parse_tool_calls(raw: list[dict[str, Any]] | None) -> list[llm.ToolInput]:
                 tool_args=args,
             )
         )
-    return calls
+    return mark_external_tool_calls(calls)
+
+
+def _is_action_tool(tool_name: str) -> bool:
+    """Return whether a built-in Assist tool changes Home Assistant state."""
+    return tool_name.startswith("Hass")
+
+
+def _extra_body_from_options(options: dict[str, Any]) -> dict[str, Any] | None:
+    """Parse optional OpenAI-compatible extra body JSON from options."""
+    return parse_extra_body(options.get("extra_body"))
 
 
 class LLMGatewayConversationEntity(
@@ -137,7 +155,7 @@ class LLMGatewayConversationEntity(
             identifiers={(DOMAIN, entry.entry_id)},
             name=entry.title,
             manufacturer="LLM Gateway",
-            model=entry.options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL),
+            model=legacy_model_from_options(entry.options),
             entry_type=dr.DeviceEntryType.SERVICE,
         )
         if entry.options.get(CONF_LLM_HASS_API):
@@ -177,14 +195,69 @@ class LLMGatewayConversationEntity(
         except conversation.ConverseError as err:
             return err.as_conversation_result()
 
-        await self._async_run_chat_log(chat_log)
-        return conversation.async_get_result_from_chat_log(user_input, chat_log)
+        runtime = self.entry.runtime_data
+        route = select_model_route(user_input.text, options)
+        self._inject_memory_context(chat_log, runtime, user_input.conversation_id)
 
-    async def _async_run_chat_log(self, chat_log: conversation.ChatLog) -> None:
+        if route.async_deep_task:
+            messages = _content_to_messages(chat_log.content)
+            task_id = runtime.deep_tasks.submit(
+                route=route,
+                messages=messages,
+                user_text=user_input.text,
+                temperature=options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE),
+                top_p=options.get(CONF_TOP_P, RECOMMENDED_TOP_P),
+            )
+            LOGGER.info(
+                "Submitted deep task task_id=%s model=%s messages=%d",
+                task_id,
+                route.model,
+                len(messages),
+            )
+            async for _tool_result in chat_log.async_add_assistant_content(
+                conversation.AssistantContent(
+                    agent_id=self.entity_id,
+                    content=DEEP_TASK_ACK_SPEECH,
+                )
+            ):
+                pass
+        else:
+            await self._async_run_chat_log(chat_log, route, user_input.text)
+
+        result = conversation.async_get_result_from_chat_log(user_input, chat_log)
+        spoken = result.response.speech.get("plain", {}).get("speech", "")
+        if spoken:
+            result.response.async_set_speech(markdown_to_spoken_text(spoken))
+        await runtime.memory.async_record_turn(
+            user_input.conversation_id,
+            user_input.text,
+            result.response.speech.get("plain", {}).get("speech", ""),
+        )
+        return result
+
+    def _inject_memory_context(
+        self,
+        chat_log: conversation.ChatLog,
+        runtime: LLMGatewayRuntimeData,
+        conversation_id: str | None,
+    ) -> None:
+        """Append compact local memory into the model context."""
+        memory_context = runtime.memory.build_context(conversation_id)
+        if memory_context:
+            chat_log.content.insert(
+                1, conversation.SystemContent(content=memory_context)
+            )
+
+    async def _async_run_chat_log(  # noqa: PLR0912
+        self,
+        chat_log: conversation.ChatLog,
+        route: ModelRoute,
+        user_text: str,
+    ) -> None:
         """Drive the model, executing tool calls until it returns a final answer."""
-        client: LLMGatewayClient = self.entry.runtime_data
+        runtime = self.entry.runtime_data
+        client: LLMGatewayClient = runtime.client
         options = self.entry.options
-        model = options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
 
         tools: list[dict[str, Any]] | None = None
         if chat_log.llm_api:
@@ -192,32 +265,119 @@ class LLMGatewayConversationEntity(
                 _format_tool(tool, chat_log.llm_api.custom_serializer)
                 for tool in chat_log.llm_api.tools
             ]
+        search_tools = available_search_tools(options)
+        if search_tools:
+            tools = [*(tools or []), *search_tools]
 
-        for _iteration in range(MAX_TOOL_ITERATIONS):
+        force_tool_call = False
+        for iteration in range(1, MAX_TOOL_ITERATIONS + 1):
             messages = _content_to_messages(chat_log.content)
+            LOGGER.info(
+                "Conversation model turn iteration=%d route=%s model=%s "
+                "messages=%d tools=%d",
+                iteration,
+                route.kind,
+                route.model,
+                len(messages),
+                len(tools or []),
+            )
             try:
                 message = await client.async_chat_completion(
-                    model=model,
+                    model=route.model,
                     messages=messages,
                     tools=tools,
-                    max_tokens=options.get(CONF_MAX_TOKENS, RECOMMENDED_MAX_TOKENS),
+                    tool_choice="required" if force_tool_call else None,
+                    extra_body=route.extra_body,
+                    timeout_s=route.timeout_s,
+                    max_tokens=route.max_tokens,
                     temperature=options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE),
                     top_p=options.get(CONF_TOP_P, RECOMMENDED_TOP_P),
                 )
             except LLMGatewayError as err:
                 LOGGER.error("Error talking to the gateway: %s", err)
-                raise HomeAssistantError(
-                    f"Error talking to LLM Gateway: {err}"
-                ) from err
+                error_content = conversation.AssistantContent(
+                    agent_id=self.entity_id,
+                    content=GATEWAY_ERROR_SPEECH,
+                )
+                async for _tool_result in chat_log.async_add_assistant_content(
+                    error_content
+                ):
+                    pass
+                return
 
             content = conversation.AssistantContent(
                 agent_id=self.entity_id,
                 content=message.get("content") or None,
                 tool_calls=_parse_tool_calls(message.get("tool_calls")) or None,
             )
-            async for _tool_result in chat_log.async_add_assistant_content(content):
-                # Tool results are appended to the chat log as they resolve.
-                pass
+            if content.tool_calls:
+                LOGGER.info(
+                    "Assistant tool calls iteration=%d names=%s",
+                    iteration,
+                    ",".join(call.tool_name for call in content.tool_calls),
+                )
+                policy_block = self._policy_block(content.tool_calls, user_text)
+                if policy_block:
+                    async for _tool_result in chat_log.async_add_assistant_content(
+                        conversation.AssistantContent(
+                            agent_id=self.entity_id,
+                            content=policy_block,
+                        )
+                    ):
+                        pass
+                    return
+            async for tool_result in chat_log.async_add_assistant_content(content):
+                result = tool_result.tool_result
+                if _is_action_tool(tool_result.tool_name):
+                    force_tool_call = "error" in result
+                LOGGER.info(
+                    "Tool result iteration=%d name=%s success=%s error=%s",
+                    iteration,
+                    tool_result.tool_name,
+                    "error" not in result,
+                    result.get("error", "none"),
+                )
+
+            for tool_call in content.tool_calls or []:
+                if not tool_call.external:
+                    continue
+                result = await async_execute_search_tool(
+                    runtime.session,
+                    options,
+                    tool_call,
+                )
+                chat_log.async_add_assistant_content_without_tools(
+                    conversation.ToolResultContent(
+                        agent_id=self.entity_id,
+                        tool_call_id=tool_call.id,
+                        tool_name=tool_call.tool_name,
+                        tool_result=result,
+                    )
+                )
 
             if not chat_log.unresponded_tool_results:
                 return
+
+        LOGGER.error("Tool-call loop exceeded %d iterations", MAX_TOOL_ITERATIONS)
+        error_content = conversation.AssistantContent(
+            agent_id=self.entity_id,
+            content=TOOL_LOOP_ERROR_SPEECH,
+        )
+        async for _tool_result in chat_log.async_add_assistant_content(error_content):
+            pass
+
+    def _policy_block(
+        self, tool_calls: list[llm.ToolInput], user_text: str
+    ) -> str | None:
+        """Return a spoken block prompt if any tool call violates policy."""
+        for tool_call in tool_calls:
+            decision = validate_tool_call(tool_call, user_text)
+            if decision.allowed:
+                continue
+            LOGGER.info(
+                "Tool call blocked by policy name=%s reason=%s",
+                tool_call.tool_name,
+                decision.reason,
+            )
+            return decision.spoken_prompt or "这个操作需要先确认。"
+        return None

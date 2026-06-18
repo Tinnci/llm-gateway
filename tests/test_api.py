@@ -59,6 +59,54 @@ async def test_chat_completion_returns_message(hass, aioclient_mock):
     assert message["content"] == "hi"
 
 
+async def test_chat_completion_can_require_tool_call(hass, aioclient_mock):
+    aioclient_mock.post(
+        f"{BASE}/chat/completions",
+        json={"choices": [{"message": {"role": "assistant", "tool_calls": []}}]},
+    )
+    client = LLMGatewayClient(async_get_clientsession(hass), BASE, "k")
+    await client.async_chat_completion(
+        model="m",
+        messages=[{"role": "user", "content": "x"}],
+        tools=[{"type": "function", "function": {"name": "t"}}],
+        tool_choice="required",
+        max_tokens=8,
+        temperature=0.1,
+        top_p=0.9,
+    )
+
+    request_json = aioclient_mock.mock_calls[-1][2]
+    assert request_json["tool_choice"] == "required"
+
+
+async def test_chat_completion_merges_extra_body_without_streaming(
+    hass, aioclient_mock
+):
+    aioclient_mock.post(
+        f"{BASE}/chat/completions",
+        json={"choices": [{"message": {"role": "assistant", "content": "ok"}}]},
+    )
+    client = LLMGatewayClient(async_get_clientsession(hass), BASE, "k")
+    await client.async_chat_completion(
+        model="m",
+        messages=[{"role": "user", "content": "x"}],
+        extra_body={
+            "chat_template_kwargs": {"enable_thinking": True},
+            "reasoning_budget": 16384,
+            "stream": True,
+        },
+        max_tokens=16384,
+        temperature=1,
+        top_p=0.95,
+    )
+
+    request_json = aioclient_mock.mock_calls[-1][2]
+    assert request_json["max_tokens"] == 16384
+    assert request_json["reasoning_budget"] == 16384
+    assert request_json["chat_template_kwargs"] == {"enable_thinking": True}
+    assert "stream" not in request_json
+
+
 async def test_chat_completion_malformed(hass, aioclient_mock):
     aioclient_mock.post(f"{BASE}/chat/completions", json={"nope": True})
     client = LLMGatewayClient(async_get_clientsession(hass), BASE, "k")

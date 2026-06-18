@@ -4,6 +4,6 @@ from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntry
 
-from .api import LLMGatewayClient
+from .runtime import LLMGatewayRuntimeData
 
-type LLMGatewayConfigEntry = ConfigEntry[LLMGatewayClient]
+type LLMGatewayConfigEntry = ConfigEntry[LLMGatewayRuntimeData]
