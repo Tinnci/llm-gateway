@@ -5,6 +5,7 @@ from __future__ import annotations
 from homeassistant.helpers import llm
 
 from custom_components.llm_gateway.const import CONF_SEARCH_ENABLED, CONF_TAVILY_API_KEY
+from custom_components.llm_gateway.grounding import enrich_search_result_with_grounding
 from custom_components.llm_gateway.search import (
     SEARCH_TOOL_NAME,
     available_search_tools,
@@ -43,3 +44,21 @@ def test_search_provider_order():
         {CONF_SEARCH_ENABLED: True, CONF_TAVILY_API_KEY: "k"}
     )
     assert [provider.name for provider in providers] == ["tavily"]
+
+
+def test_search_result_extracts_source_candidates():
+    result = enrich_search_result_with_grounding(
+        {
+            "provider": "mock",
+            "query": "关关雎鸠 出处",
+            "results": [
+                {
+                    "title": "《诗经》之《关雎》原文赏析",
+                    "content": "关关雎鸠，在河之洲。",
+                }
+            ],
+        }
+    )
+
+    assert result["source_candidates"] == ["诗经", "关雎"]
+    assert "Do not rename titles" in result["grounding_instruction"]

@@ -27,6 +27,7 @@ from .const import (
     RECOMMENDED_TOP_P,
     TOOL_LOOP_ERROR_SPEECH,
 )
+from .grounding import GroundingResult, verify_and_repair_source_answer
 from .policy import should_require_search, validate_tool_call
 from .providers import async_chat_completion_with_fallback
 from .router import legacy_model_from_options, parse_extra_body, select_model_route
@@ -362,8 +363,23 @@ class LLMGatewayConversationEntity(
         runtime = self.entry.runtime_data
         result = conversation.async_get_result_from_chat_log(user_input, chat_log)
         raw_spoken = result.response.speech.get("plain", {}).get("speech", "")
-        if raw_spoken:
-            result.response.async_set_speech(markdown_to_spoken_text(raw_spoken))
+        grounding = _grounding_for_turn(
+            user_input.text,
+            raw_spoken,
+            chat_log.content,
+        )
+        grounded_spoken = grounding.text
+        if grounding.status != "not_required":
+            runtime.voice_runs.mark(
+                run_id,
+                "grounding_verifier",
+                status="error"
+                if grounding.status in {"no_answer", "no_evidence"}
+                else "ok",
+                attrs=grounding.as_dict(),
+            )
+        if grounded_spoken:
+            result.response.async_set_speech(markdown_to_spoken_text(grounded_spoken))
             runtime.voice_runs.mark(run_id, "tts_cleaned")
         assistant_text = result.response.speech.get("plain", {}).get("speech", "")
         await runtime.memory.async_record_turn(
@@ -402,9 +418,11 @@ class LLMGatewayConversationEntity(
                     "messages": _content_to_messages(chat_log.content),
                     "speech": {
                         "raw": raw_spoken,
+                        "grounded": grounded_spoken,
                         "final": assistant_text,
                         "tts_cleaned": bool(raw_spoken),
                     },
+                    "grounding": grounding.as_dict(),
                 },
             ),
         )
@@ -655,3 +673,29 @@ def _trace_status(assistant_text: str) -> str:
     if assistant_text == DEEP_TASK_ACK_SPEECH:
         return "queued"
     return "complete"
+
+
+def _grounding_for_turn(
+    user_text: str,
+    assistant_text: str,
+    content: list[conversation.Content],
+) -> GroundingResult:
+    """Run lightweight source grounding against local search tool results."""
+    return verify_and_repair_source_answer(
+        user_text,
+        assistant_text,
+        _search_results_from_content(content),
+    )
+
+
+def _search_results_from_content(
+    content: list[conversation.Content],
+) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    for item in content:
+        if item.role != "tool_result" or item.tool_name != SEARCH_TOOL_NAME:
+            continue
+        result = item.tool_result
+        if isinstance(result, dict):
+            results.append(result)
+    return results

@@ -89,6 +89,9 @@ const I18N = {
     "runs.tools": "{count} tool events",
     "runs.provider": "Provider",
     "runs.provider_attempts": "Provider attempts",
+    "runs.grounding": "Grounding verifier",
+    "runs.grounding_candidates": "Evidence candidates",
+    "runs.grounding_repairs": "Repairs",
     "runs.timeline": "Timeline",
     "runs.raw_payload": "Raw compressed payload",
     "runs.no_raw": "Raw payload was not stored for this run.",
@@ -187,6 +190,11 @@ const I18N = {
     "trace.status.queued": "Queued",
     "trace.status.error": "Error",
     "trace.status.unknown": "Unknown",
+    "grounding.status.not_required": "Not required",
+    "grounding.status.no_answer": "No answer",
+    "grounding.status.no_evidence": "No evidence",
+    "grounding.status.ok": "Grounded",
+    "grounding.status.repaired": "Repaired",
     "rule.max_one_sentence": "One sentence",
     "rule.no_tool_details": "No tool details",
     "rule.no_entity_id": "No entity ids",
@@ -275,6 +283,9 @@ const I18N = {
     "runs.tools": "{count} 个工具事件",
     "runs.provider": "模型 provider",
     "runs.provider_attempts": "Provider 尝试",
+    "runs.grounding": "证据校验",
+    "runs.grounding_candidates": "证据候选",
+    "runs.grounding_repairs": "修正",
     "runs.timeline": "时间线",
     "runs.raw_payload": "压缩原始 payload",
     "runs.no_raw": "本次运行未保存原始 payload。",
@@ -373,6 +384,11 @@ const I18N = {
     "trace.status.queued": "排队",
     "trace.status.error": "错误",
     "trace.status.unknown": "未知",
+    "grounding.status.not_required": "不需要",
+    "grounding.status.no_answer": "无答案",
+    "grounding.status.no_evidence": "缺少证据",
+    "grounding.status.ok": "已校验",
+    "grounding.status.repaired": "已修正",
     "rule.max_one_sentence": "一句话内",
     "rule.no_tool_details": "不说工具细节",
     "rule.no_entity_id": "不说 entity_id",
@@ -1168,6 +1184,7 @@ class VoiceHarnessPanel extends HTMLElement {
             <span>${escapeHtml(this._t("runs.tools", { count: (record.tools || []).length }))}</span>
             ${rawMeta.compressed_bytes ? `<span>${rawMeta.compressed_bytes}/${rawMeta.uncompressed_bytes} B</span>` : ""}
           </div>
+          ${this._groundingPanel(record)}
           ${attempts.length ? `
             <h3>${escapeHtml(this._t("runs.provider_attempts"))}</h3>
             <div class="attemptList">
@@ -1197,6 +1214,41 @@ class VoiceHarnessPanel extends HTMLElement {
           ${record.raw_payload ? `<pre>${escapeHtml(JSON.stringify(record.raw_payload, null, 2))}</pre>` : `<div class="empty mini">${escapeHtml(this._t("runs.no_raw"))}</div>`}
         </div>
       </details>
+    `;
+  }
+
+  _groundingPanel(record) {
+    const grounding = record.grounding || record.raw_payload?.grounding || {};
+    const status = String(grounding.status || "");
+    if (!status || status === "not_required") {
+      return "";
+    }
+    const candidates = Array.isArray(grounding.candidates) ? grounding.candidates : [];
+    const repairs = Array.isArray(grounding.repairs) ? grounding.repairs : [];
+    return `
+      <div class="groundingBox ${status === "repaired" ? "warning" : status === "no_evidence" || status === "no_answer" ? "bad" : "ok"}">
+        <div class="groundingHead">
+          <h3>${escapeHtml(this._t("runs.grounding"))}</h3>
+          <span class="chip ${status === "repaired" ? "warning" : status === "no_evidence" || status === "no_answer" ? "bad" : "ok"}">${escapeHtml(this._groundingStatusLabel(status))}</span>
+        </div>
+        ${candidates.length ? `
+          <div class="ruleList compact">
+            <strong>${escapeHtml(this._t("runs.grounding_candidates"))}</strong>
+            ${candidates.map((candidate) => `<span>${escapeHtml(candidate)}</span>`).join("")}
+          </div>
+        ` : ""}
+        ${repairs.length ? `
+          <div class="attemptList compact">
+            <strong>${escapeHtml(this._t("runs.grounding_repairs"))}</strong>
+            ${repairs.map((repair) => `
+              <div class="attempt ok compactAttempt">
+                <span>${escapeHtml(repair.from || "")}</span>
+                <span>${escapeHtml(repair.to || "")}</span>
+              </div>
+            `).join("")}
+          </div>
+        ` : ""}
+      </div>
     `;
   }
 
@@ -1568,6 +1620,11 @@ class VoiceHarnessPanel extends HTMLElement {
   _traceStatusLabel(value) {
     const status = String(value || "unknown");
     return this._lookup(`trace.status.${status}`, status);
+  }
+
+  _groundingStatusLabel(value) {
+    const status = String(value || "not_required");
+    return this._lookup(`grounding.status.${status}`, status);
   }
 
   _lookup(key, fallback = "") {
@@ -2084,6 +2141,48 @@ const styles = `
   .traceText p {
     line-height: 1.45;
     overflow-wrap: anywhere;
+  }
+
+  .groundingBox {
+    display: grid;
+    gap: 10px;
+    border: 1px solid var(--divider-color);
+    border-radius: 8px;
+    padding: 10px;
+    background: color-mix(in srgb, var(--card-background-color) 92%, var(--primary-color));
+  }
+
+  .groundingBox.ok {
+    border-color: color-mix(in srgb, var(--success-color) 38%, var(--divider-color));
+  }
+
+  .groundingBox.warning {
+    border-color: color-mix(in srgb, var(--warning-color) 44%, var(--divider-color));
+  }
+
+  .groundingBox.bad {
+    border-color: color-mix(in srgb, var(--error-color) 38%, var(--divider-color));
+  }
+
+  .groundingHead {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .groundingHead h3 {
+    margin: 0;
+  }
+
+  .ruleList.compact,
+  .attemptList.compact {
+    gap: 6px;
+  }
+
+  .attempt.compactAttempt {
+    min-height: 30px;
+    grid-template-columns: minmax(120px, 1fr) minmax(120px, 1fr);
   }
 
   .attemptList {

@@ -22,6 +22,7 @@ from custom_components.llm_gateway.conversation import (
     VOICE_RESPONSE_CONTRACT,
     _content_to_messages,
     _extra_body_from_options,
+    _grounding_for_turn,
     _is_action_tool,
     _parse_tool_calls,
     _tool_choice_for_turn,
@@ -112,6 +113,41 @@ def test_tool_choice_for_turn_preserves_action_retry():
     assert (
         _tool_choice_for_turn("打开灯", [], force_tool_call=True) == "required"
     )
+
+
+def test_grounding_for_turn_uses_search_evidence():
+    content = [
+        conversation.ToolResultContent(
+            agent_id="a",
+            tool_call_id="search-1",
+            tool_name="search_web",
+            tool_result={
+                "source_candidates": ["诗经", "关雎"],
+                "results": [
+                    {
+                        "title": "关雎原文翻译",
+                        "content": "之《诗经》之《关雎》原文赏析及翻译",
+                    }
+                ],
+            },
+        )
+    ]
+
+    grounding = _grounding_for_turn(
+        "关关雎鸠，在河之洲，这句话是出自哪里？",
+        "这句诗出自《诗经·关关》。",
+        content,
+    )
+
+    assert grounding.status == "repaired"
+    assert grounding.text == "这句诗出自《诗经·关雎》。"
+    assert grounding.repairs == [{"from": "诗经·关关", "to": "诗经·关雎"}]
+
+
+def test_grounding_for_turn_ignores_non_source_turns():
+    grounding = _grounding_for_turn("打开灯", "这句诗出自《诗经·关关》。", [])
+    assert grounding.status == "not_required"
+    assert grounding.text == "这句诗出自《诗经·关关》。"
 
 
 def test_extra_body_from_options():
@@ -383,6 +419,7 @@ async def test_converse_falls_back_to_secondary_provider_and_traces_attempts(
     assert attempts[0]["retryable"] is True
     assert traces[0]["raw_payload"]["speech"] == {
         "raw": "已切到备用 provider。",
+        "grounded": "已切到备用 provider。",
         "final": "已切到备用 provider。",
         "tts_cleaned": True,
     }

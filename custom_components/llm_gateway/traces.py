@@ -91,6 +91,7 @@ class TraceStore:
             "status": turn.status,
             "timeline": turn.timeline,
             "tools": _tool_summary(turn.raw_payload),
+            "grounding": _grounding_summary(turn.raw_payload),
             "raw_payload": None,
         }
         if options.get(CONF_TRACE_INCLUDE_RAW_MESSAGES):
@@ -217,6 +218,28 @@ def _tool_summary(raw_payload: dict[str, Any]) -> list[dict[str, Any]]:
                 }
             )
     return [tool for tool in tools if tool.get("name") or tool.get("tool_call_id")]
+
+
+def _grounding_summary(raw_payload: dict[str, Any]) -> dict[str, Any]:
+    grounding = raw_payload.get("grounding")
+    if not isinstance(grounding, dict):
+        return {}
+    return {
+        "status": str(grounding.get("status") or ""),
+        "candidates": [
+            _truncate(str(candidate), 80)
+            for candidate in grounding.get("candidates") or []
+            if candidate
+        ][:8],
+        "repairs": [
+            {
+                "from": _truncate(str(repair.get("from") or ""), 80),
+                "to": _truncate(str(repair.get("to") or ""), 80),
+            }
+            for repair in grounding.get("repairs") or []
+            if isinstance(repair, dict)
+        ][:8],
+    }
 
 
 def _bounded_int(value: object, *, default: int, minimum: int, maximum: int) -> int:

@@ -20,6 +20,7 @@ from .const import (
     CONF_TAVILY_API_KEY,
     LOGGER,
 )
+from .grounding import enrich_search_result_with_grounding
 
 SEARCH_TOOL_NAME = "search_web"
 _DEFAULT_MAX_RESULTS = 5
@@ -144,7 +145,7 @@ async def async_execute_search_tool(
             int((time.monotonic() - started) * 1000),
             len(result.get("results", [])),
         )
-        return result
+        return enrich_search_result_with_grounding(result)
 
     return {"error": "search_failed", "last_error": last_error or "unknown"}
 

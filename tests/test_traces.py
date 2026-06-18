@@ -49,7 +49,14 @@ async def test_trace_store_records_bounded_summary_without_raw(hass):
             latency_ms=88,
             status="ok",
             timeline=[{"stage": "received", "t_ms": 0, "status": "ok", "attrs": {}}],
-            raw_payload={"messages": [{"role": "user", "content": "查一下卧室温度"}]},
+            raw_payload={
+                "grounding": {
+                    "status": "repaired",
+                    "candidates": ["诗经", "关雎"],
+                    "repairs": [{"from": "诗经·关关", "to": "诗经·关雎"}],
+                },
+                "messages": [{"role": "user", "content": "查一下卧室温度"}],
+            },
         ),
     )
 
@@ -60,6 +67,10 @@ async def test_trace_store_records_bounded_summary_without_raw(hass):
     assert record["assistant_text"] == "卧室现在 24 度。"
     assert record["route"]["kind"] == "fast"
     assert record["timeline"][0]["stage"] == "received"
+    assert record["grounding"]["status"] == "repaired"
+    assert record["grounding"]["repairs"] == [
+        {"from": "诗经·关关", "to": "诗经·关雎"}
+    ]
     assert "raw_payload" not in record
     assert snapshot["storage"]["records"] == 1
     assert snapshot["storage"]["compressed_bytes"] == 0
