@@ -462,6 +462,9 @@ def _entry_status(entry: ConfigEntry) -> dict[str, Any]:
             ],
         },
         "model_providers": _model_provider_status(entry),
+        "provider_health": (
+            runtime.provider_selector.snapshot() if runtime else []
+        ),
         "memory": (
             runtime.memory.snapshot() if runtime else {"facts": [], "sessions": []}
         ),
@@ -471,6 +474,7 @@ def _entry_status(entry: ConfigEntry) -> dict[str, Any]:
             if runtime
             else {"records": [], "storage": {"encoding": "json+zlib+base64"}}
         ),
+        "voice_runs": runtime.voice_runs.snapshot() if runtime else [],
         "deep_tasks": runtime.deep_tasks.snapshot() if runtime else [],
     }
 
@@ -481,6 +485,15 @@ SATELLITE_STATE_ENTITIES = {
     "display_awake": "binary_sensor.kukui_display_awake",
     "pause_requested": "input_boolean.kukui_voice_pause_requested",
     "pause_minutes": "input_number.kukui_voice_pause_minutes",
+    "wake_threshold": "input_number.kukui_wake_threshold",
+    "wake_trigger_level": "input_number.kukui_wake_trigger_level",
+    "wake_refractory_seconds": "input_number.kukui_wake_refractory_seconds",
+    "mic_volume_multiplier": "input_number.kukui_mic_volume_multiplier",
+    "tts_volume_day": "input_number.kukui_tts_volume_day",
+    "tts_volume_night": "input_number.kukui_tts_volume_night",
+    "fallback_clip_volume": "input_number.kukui_fallback_clip_volume",
+    "voice_config": "sensor.kukui_voice_config",
+    "asr_metrics": "sensor.kukui_asr_metrics",
     "ambient_light": "sensor.kukui_ambient_light",
     "screen_brightness": "sensor.kukui_screen_brightness",
 }
@@ -497,7 +510,11 @@ def _satellite_status(hass: HomeAssistant) -> dict[str, Any]:
         "services": {
             "pause": hass.services.has_service("script", "kukui_voice_pause"),
             "resume": hass.services.has_service("script", "kukui_voice_resume"),
+            "apply_config": hass.services.has_service(
+                "script", "kukui_voice_apply_config"
+            ),
             "set_pause_minutes": hass.services.has_service("input_number", "set_value"),
+            "set_number": hass.services.has_service("input_number", "set_value"),
         },
     }
 
@@ -528,6 +545,19 @@ def _entity_state(hass: HomeAssistant, entity_id: str) -> dict[str, Any]:
                 "summary",
                 "friendly_name",
                 "unit_of_measurement",
+                "wake_threshold",
+                "trigger_level",
+                "refractory_seconds",
+                "mic_volume_multiplier",
+                "tts_volume_day",
+                "tts_volume_night",
+                "fallback_volume",
+                "metrics",
+                "total_latency_ms",
+                "first_result_latency_ms",
+                "final_result_latency_ms",
+                "audio_bytes",
+                "transcript_chars",
             }
         },
     }

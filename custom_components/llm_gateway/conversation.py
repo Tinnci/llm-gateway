@@ -190,6 +190,11 @@ class LLMGatewayConversationEntity(
         """Process one user turn."""
         started = time.monotonic()
         options = self.entry.options
+        runtime = self.entry.runtime_data
+        run_id = runtime.voice_runs.start(
+            conversation_id=user_input.conversation_id,
+            user_text=user_input.text,
+        )
         try:
             await chat_log.async_provide_llm_data(
                 user_input.as_llm_context(DOMAIN),
@@ -198,13 +203,25 @@ class LLMGatewayConversationEntity(
                 user_input.extra_system_prompt,
             )
         except conversation.ConverseError as err:
+            runtime.voice_runs.mark(
+                run_id,
+                "llm_data",
+                status="error",
+                attrs={"error": type(err).__name__},
+            )
+            runtime.voice_runs.finish(
+                run_id,
+                status="error",
+                latency_ms=int((time.monotonic() - started) * 1000),
+            )
             return err.as_conversation_result()
+        runtime.voice_runs.mark(run_id, "llm_data")
 
-        runtime = self.entry.runtime_data
         local_control_speech = await async_handle_voice_runtime_command(
             self.hass, user_input.text
         )
         if local_control_speech is not None:
+            runtime.voice_runs.mark(run_id, "local_control")
             async for _tool_result in chat_log.async_add_assistant_content(
                 conversation.AssistantContent(
                     agent_id=self.entity_id,
@@ -223,9 +240,19 @@ class LLMGatewayConversationEntity(
                     "timeout_s": 0,
                     "async_deep_task": False,
                 },
+                run_id,
             )
 
         route = select_model_route(user_input.text, options)
+        runtime.voice_runs.mark(
+            run_id,
+            "route_selected",
+            attrs={
+                "route": route.kind,
+                "model": route.model,
+                "timeout_s": route.timeout_s,
+            },
+        )
         self._inject_memory_context(chat_log, runtime, user_input.conversation_id)
 
         if route.async_deep_task:
@@ -242,6 +269,11 @@ class LLMGatewayConversationEntity(
                 task_id,
                 route.model,
                 len(messages),
+            )
+            runtime.voice_runs.mark(
+                run_id,
+                "deep_task_submitted",
+                attrs={"task_id": task_id, "model": route.model},
             )
             provider_runs: list[dict[str, Any]] = [
                 {
@@ -265,7 +297,7 @@ class LLMGatewayConversationEntity(
                 pass
         else:
             provider_runs = await self._async_run_chat_log(
-                chat_log, route, user_input.text
+                chat_log, route, user_input.text, run_id
             )
 
         return await self._async_finalize_turn(
@@ -273,6 +305,7 @@ class LLMGatewayConversationEntity(
             chat_log,
             started,
             _route_trace(route, provider_runs),
+            run_id,
         )
 
     async def _async_finalize_turn(
@@ -281,6 +314,7 @@ class LLMGatewayConversationEntity(
         chat_log: conversation.ChatLog,
         started: float,
         route_trace: dict[str, Any],
+        run_id: str,
     ) -> conversation.ConversationResult:
         """Build the HA result, clean TTS, and record diagnostics."""
         options = self.entry.options
@@ -289,11 +323,21 @@ class LLMGatewayConversationEntity(
         spoken = result.response.speech.get("plain", {}).get("speech", "")
         if spoken:
             result.response.async_set_speech(markdown_to_spoken_text(spoken))
+            runtime.voice_runs.mark(run_id, "tts_cleaned")
         assistant_text = result.response.speech.get("plain", {}).get("speech", "")
         await runtime.memory.async_record_turn(
             user_input.conversation_id,
             user_input.text,
             assistant_text,
+        )
+        latency_ms = int((time.monotonic() - started) * 1000)
+        status = _trace_status(assistant_text)
+        timeline = runtime.voice_runs.finish(
+            run_id,
+            status=status,
+            route=str(route_trace.get("kind") or ""),
+            provider=str((route_trace.get("provider") or {}).get("name") or ""),
+            latency_ms=latency_ms,
         )
         await runtime.trace_store.async_record_turn(
             options,
@@ -302,8 +346,9 @@ class LLMGatewayConversationEntity(
                 user_text=user_input.text,
                 assistant_text=assistant_text,
                 route=route_trace,
-                latency_ms=int((time.monotonic() - started) * 1000),
-                status=_trace_status(assistant_text),
+                latency_ms=latency_ms,
+                status=status,
+                timeline=timeline,
                 raw_payload={
                     "input": {
                         "text": user_input.text,
@@ -312,6 +357,7 @@ class LLMGatewayConversationEntity(
                         "device_id": getattr(user_input, "device_id", "") or "",
                     },
                     "route": route_trace,
+                    "timeline": timeline,
                     "messages": _content_to_messages(chat_log.content),
                     "speech": {
                         "final": assistant_text,
@@ -340,6 +386,7 @@ class LLMGatewayConversationEntity(
         chat_log: conversation.ChatLog,
         route: ModelRoute,
         user_text: str,
+        run_id: str,
     ) -> list[dict[str, Any]]:
         """Drive the model, executing tool calls until it returns a final answer."""
         runtime = self.entry.runtime_data
@@ -369,6 +416,15 @@ class LLMGatewayConversationEntity(
                 len(messages),
                 len(tools or []),
             )
+            runtime.voice_runs.mark(
+                run_id,
+                "llm_iteration_start",
+                attrs={
+                    "iteration": iteration,
+                    "route": route.kind,
+                    "model": route.model,
+                },
+            )
             try:
                 fallback_result = await async_chat_completion_with_fallback(
                     session=runtime.session,
@@ -380,8 +436,19 @@ class LLMGatewayConversationEntity(
                     tool_choice="required" if force_tool_call else None,
                     temperature=options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE),
                     top_p=options.get(CONF_TOP_P, RECOMMENDED_TOP_P),
+                    selector=runtime.provider_selector,
                 )
                 message = fallback_result.message
+                runtime.voice_runs.mark(
+                    run_id,
+                    "provider_complete",
+                    attrs={
+                        "iteration": iteration,
+                        "provider": fallback_result.provider.get("name"),
+                        "fallback_used": fallback_result.provider.get("fallback_used"),
+                        "attempts": len(fallback_result.attempts),
+                    },
+                )
                 provider_runs.append(
                     {
                         "iteration": iteration,
@@ -391,6 +458,12 @@ class LLMGatewayConversationEntity(
                 )
             except LLMGatewayError as err:
                 LOGGER.error("Error talking to the gateway: %s", err)
+                runtime.voice_runs.mark(
+                    run_id,
+                    "provider_error",
+                    status="error",
+                    attrs={"error": type(err).__name__},
+                )
                 error_content = conversation.AssistantContent(
                     agent_id=self.entity_id,
                     content=GATEWAY_ERROR_SPEECH,
@@ -412,8 +485,17 @@ class LLMGatewayConversationEntity(
                     iteration,
                     ",".join(call.tool_name for call in content.tool_calls),
                 )
+                runtime.voice_runs.mark(
+                    run_id,
+                    "tool_call",
+                    attrs={
+                        "iteration": iteration,
+                        "names": [call.tool_name for call in content.tool_calls],
+                    },
+                )
                 policy_block = self._policy_block(content.tool_calls, user_text)
                 if policy_block:
+                    runtime.voice_runs.mark(run_id, "tool_policy_block", status="error")
                     async for _tool_result in chat_log.async_add_assistant_content(
                         conversation.AssistantContent(
                             agent_id=self.entity_id,
@@ -433,6 +515,12 @@ class LLMGatewayConversationEntity(
                     "error" not in result,
                     result.get("error", "none"),
                 )
+                runtime.voice_runs.mark(
+                    run_id,
+                    "tool_result",
+                    status="error" if "error" in result else "ok",
+                    attrs={"name": tool_result.tool_name, "iteration": iteration},
+                )
 
             for tool_call in content.tool_calls or []:
                 if not tool_call.external:
@@ -441,6 +529,12 @@ class LLMGatewayConversationEntity(
                     runtime.session,
                     options,
                     tool_call,
+                )
+                runtime.voice_runs.mark(
+                    run_id,
+                    "search_result",
+                    status="error" if "error" in result else "ok",
+                    attrs={"name": tool_call.tool_name},
                 )
                 chat_log.async_add_assistant_content_without_tools(
                     conversation.ToolResultContent(

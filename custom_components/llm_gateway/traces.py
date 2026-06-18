@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import zlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -44,6 +44,7 @@ class TraceTurn:
     latency_ms: int
     status: str
     raw_payload: dict[str, Any]
+    timeline: list[dict[str, Any]] = field(default_factory=list)
 
 
 class TraceStore:
@@ -88,6 +89,7 @@ class TraceStore:
             },
             "latency_ms": turn.latency_ms,
             "status": turn.status,
+            "timeline": turn.timeline,
             "tools": _tool_summary(turn.raw_payload),
             "raw_payload": None,
         }

@@ -10,7 +10,8 @@
  * @typedef {{ provider?: string, model?: string, status?: string, latency_ms?: number, error?: string, retryable?: boolean, iteration?: number }} ProviderAttempt
  * @typedef {{ name?: string, base_url?: string, models?: Partial<TierTextMap>, has_api_key?: boolean, soft_timeouts?: Partial<TierNumberMap>, max_tokens?: Partial<TierNumberMap> }} ProviderProfile
  * @typedef {{ primary?: ProviderProfile, fallbacks?: ProviderProfile[], fallback_enabled?: boolean, config_error?: string }} ProviderStatus
- * @typedef {{ entry_id: string, title: string, state: string, base_url?: string, options: HarnessOptions, routes: RouteStatus[], trace: TraceOptions, traces?: { records?: Array<Record<string, any>>, storage?: Record<string, any> }, memory?: any, search?: { providers?: string[] }, model_providers?: ProviderStatus }} HarnessEntry
+ * @typedef {{ provider?: string, route?: string, failures?: number, cooldown_remaining_s?: number, last_error?: string }} ProviderHealth
+ * @typedef {{ entry_id: string, title: string, state: string, base_url?: string, options: HarnessOptions, routes: RouteStatus[], trace: TraceOptions, traces?: { records?: Array<Record<string, any>>, storage?: Record<string, any> }, voice_runs?: Array<Record<string, any>>, memory?: any, search?: { providers?: string[] }, model_providers?: ProviderStatus, provider_health?: ProviderHealth[] }} HarnessEntry
  * @typedef {{ routing_modes: RouteKind[], max_tokens: { min: number, max: number }, timeouts: { min: number, max: number }, trace_max_runs: { min: number, max: number }, trace_retention_hours: { min: number, max: number } }} EditableSchema
  * @typedef {{ id: string, risk?: string, title?: string, title_i18n?: Record<string, string>, spoken?: string, spoken_i18n?: Record<string, string>, rules?: string[] }} PromptPolicy
  * @typedef {{ id: string, name?: string, name_i18n?: Record<string, string>, user?: string, user_i18n?: Record<string, string>, response?: string, response_i18n?: Record<string, string>, expected?: Record<string, unknown>, expected_i18n?: Record<string, Record<string, unknown>> }} SampleScenario
@@ -78,6 +79,8 @@ const I18N = {
     "runs.trace_disabled": "Diagnostic traces are disabled",
     "runs.trace_empty": "No recorded runs yet.",
     "runs.trace_enabled": "Traces on",
+    "runs.live": "Recent live runs",
+    "runs.live_empty": "No live run snapshots yet.",
     "runs.raw_enabled": "raw compressed",
     "runs.raw_disabled": "summary only",
     "runs.retention": "{count} runs · {hours}h",
@@ -86,6 +89,7 @@ const I18N = {
     "runs.tools": "{count} tool events",
     "runs.provider": "Provider",
     "runs.provider_attempts": "Provider attempts",
+    "runs.timeline": "Timeline",
     "runs.raw_payload": "Raw compressed payload",
     "runs.no_raw": "Raw payload was not stored for this run.",
     "runs.storage": "{records} records · {bytes} compressed bytes",
@@ -108,11 +112,23 @@ const I18N = {
     "settings.retention_hours": "Diagnostic retention hours",
     "settings.saved": "Settings saved.",
     "satellite.title": "Satellite and voice controls",
-    "satellite.description": "These controls use HA entities and services that are already exposed. Wake thresholds and VAD tuning need a typed local apply API before they should be edited here.",
+    "satellite.description": "These controls use HA entities and the typed local apply API exposed by the display agent. Applying wake or mic changes restarts the local satellite path.",
     "satellite.pause": "Pause voice",
     "satellite.resume": "Resume voice",
     "satellite.save_minutes": "Save minutes",
+    "satellite.save_config": "Save config",
+    "satellite.apply_config": "Apply config",
     "satellite.minutes": "Pause minutes",
+    "satellite.config": "Wake and audio tuning",
+    "satellite.wake_threshold": "Wake threshold",
+    "satellite.wake_trigger_level": "Trigger level",
+    "satellite.wake_refractory_seconds": "Refractory seconds",
+    "satellite.mic_volume_multiplier": "Mic gain",
+    "satellite.tts_volume_day": "Day TTS volume",
+    "satellite.tts_volume_night": "Night TTS volume",
+    "satellite.fallback_clip_volume": "Local clip volume",
+    "satellite.voice_config": "Applied voice config",
+    "satellite.asr_metrics": "ASR metrics",
     "satellite.unavailable": "HA satellite entities are not available.",
     "satellite.voice_pipeline": "Voice pipeline",
     "satellite.voice_paused": "Voice paused",
@@ -136,6 +152,9 @@ const I18N = {
     "providers.fallbacks": "{count} fallback providers",
     "providers.none": "No fallback provider profiles",
     "providers.config_error": "Provider config error: {message}",
+    "providers.health": "Provider health",
+    "providers.health_empty": "No provider penalties active",
+    "providers.cooldown": "{seconds}s cooldown",
     "memory.turns": "{count} turns",
     "memory.user": "User",
     "memory.assistant": "Assistant",
@@ -246,6 +265,8 @@ const I18N = {
     "runs.trace_disabled": "诊断记录未开启",
     "runs.trace_empty": "还没有运行记录。",
     "runs.trace_enabled": "诊断记录已开启",
+    "runs.live": "最近实时运行",
+    "runs.live_empty": "还没有实时运行快照。",
     "runs.raw_enabled": "原始内容已压缩",
     "runs.raw_disabled": "仅摘要",
     "runs.retention": "{count} 条 · {hours} 小时",
@@ -254,6 +275,7 @@ const I18N = {
     "runs.tools": "{count} 个工具事件",
     "runs.provider": "模型 provider",
     "runs.provider_attempts": "Provider 尝试",
+    "runs.timeline": "时间线",
     "runs.raw_payload": "压缩原始 payload",
     "runs.no_raw": "本次运行未保存原始 payload。",
     "runs.storage": "{records} 条记录 · {bytes} 压缩字节",
@@ -276,11 +298,23 @@ const I18N = {
     "settings.retention_hours": "诊断保留小时数",
     "settings.saved": "配置已保存。",
     "satellite.title": "卫星端与语音控制",
-    "satellite.description": "这些控制只调用已经暴露到 HA 的实体和服务。唤醒阈值、VAD 参数需要先有 typed 本地应用 API，再放到这里编辑。",
+    "satellite.description": "这些控件使用 HA 实体和 display-agent 暴露的 typed apply API。应用唤醒或麦克风改动会重启本地 satellite 链路。",
     "satellite.pause": "暂停语音",
     "satellite.resume": "恢复语音",
     "satellite.save_minutes": "保存分钟数",
+    "satellite.save_config": "保存配置",
+    "satellite.apply_config": "应用配置",
     "satellite.minutes": "暂停分钟数",
+    "satellite.config": "唤醒和音频调校",
+    "satellite.wake_threshold": "唤醒阈值",
+    "satellite.wake_trigger_level": "连续命中",
+    "satellite.wake_refractory_seconds": "冷却秒数",
+    "satellite.mic_volume_multiplier": "麦克风增益",
+    "satellite.tts_volume_day": "白天播报音量",
+    "satellite.tts_volume_night": "夜间播报音量",
+    "satellite.fallback_clip_volume": "本地片段音量",
+    "satellite.voice_config": "已应用语音配置",
+    "satellite.asr_metrics": "ASR 指标",
     "satellite.unavailable": "HA 卫星端实体不可用。",
     "satellite.voice_pipeline": "语音管线",
     "satellite.voice_paused": "语音暂停",
@@ -304,6 +338,9 @@ const I18N = {
     "providers.fallbacks": "{count} 个备用 provider",
     "providers.none": "未配置备用 provider profiles",
     "providers.config_error": "Provider 配置错误：{message}",
+    "providers.health": "Provider 健康",
+    "providers.health_empty": "当前没有 provider 冷却惩罚",
+    "providers.cooldown": "冷却 {seconds}s",
     "memory.turns": "{count} 轮",
     "memory.user": "用户",
     "memory.assistant": "助手",
@@ -533,6 +570,11 @@ class VoiceHarnessPanel extends HTMLElement {
           entity_id: entityId,
           value,
         });
+      } else if (action === "save-config" || action === "apply-config") {
+        await this._saveSatelliteConfigInputs();
+        if (action === "apply-config") {
+          await this.hass.callService("script", "kukui_voice_apply_config", {});
+        }
       }
     } catch (err) {
       this._error = err.message || String(err);
@@ -548,6 +590,35 @@ class VoiceHarnessPanel extends HTMLElement {
       return Number(input.value || 30);
     }
     return 30;
+  }
+
+  async _saveSatelliteConfigInputs() {
+    const states = this._data?.satellite?.states || {};
+    const keys = [
+      "wake_threshold",
+      "wake_trigger_level",
+      "wake_refractory_seconds",
+      "mic_volume_multiplier",
+      "tts_volume_day",
+      "tts_volume_night",
+      "fallback_clip_volume",
+    ];
+    const calls = [];
+    for (const key of keys) {
+      const input = this.shadowRoot.querySelector(`[data-satellite-config="${key}"]`);
+      const entityId = states[key]?.entity_id;
+      if (!(input instanceof HTMLInputElement) || !entityId) {
+        continue;
+      }
+      calls.push(this.hass.callService("input_number", "set_value", {
+        entity_id: entityId,
+        value: Number(input.value),
+      }));
+    }
+    if (!calls.length) {
+      throw new Error(this._t("satellite.unavailable"));
+    }
+    await Promise.all(calls);
   }
 
   async _api(method, path, payload) {
@@ -903,8 +974,19 @@ class VoiceHarnessPanel extends HTMLElement {
       "voice_paused",
       "pause_requested",
       "display_awake",
+      "voice_config",
+      "asr_metrics",
       "ambient_light",
       "screen_brightness",
+    ];
+    const configKeys = [
+      ["wake_threshold", 0.1, 0.95, 0.01],
+      ["wake_trigger_level", 1, 5, 1],
+      ["wake_refractory_seconds", 1, 30, 1],
+      ["mic_volume_multiplier", 1, 12, 0.1],
+      ["tts_volume_day", 0.2, 1.25, 0.01],
+      ["tts_volume_night", 0.2, 1.25, 0.01],
+      ["fallback_clip_volume", 0.2, 1.25, 0.01],
     ];
     return `
       <div class="satelliteGrid">
@@ -933,11 +1015,44 @@ class VoiceHarnessPanel extends HTMLElement {
               <span>${escapeHtml(this._t("satellite.resume"))}</span>
             </button>
           </div>
+          <h3>${escapeHtml(this._t("satellite.config"))}</h3>
+          <div class="settingsTriples">
+            ${configKeys.map(([key, min, max, step]) => this._satelliteConfigInput(key, states[key], min, max, step)).join("")}
+          </div>
+          <div class="satelliteControls compact">
+            <button type="button" data-satellite-action="save-config" ${services.set_number ? "" : "disabled"}>
+              <ha-icon icon="mdi:content-save-outline"></ha-icon>
+              <span>${escapeHtml(this._t("satellite.save_config"))}</span>
+            </button>
+            <button type="button" data-satellite-action="apply-config" ${services.set_number && services.apply_config ? "" : "disabled"}>
+              <ha-icon icon="mdi:check-circle-outline"></ha-icon>
+              <span>${escapeHtml(this._t("satellite.apply_config"))}</span>
+            </button>
+          </div>
           <div class="stateList">
             ${stateKeys.map((key) => this._satelliteStateRow(key, states[key])).join("")}
           </div>
         </article>
       </div>
+    `;
+  }
+
+  _satelliteConfigInput(key, state, min, max, step) {
+    const available = Boolean(state?.available);
+    const value = Number(state?.state || min);
+    return `
+      <label>
+        <span>${escapeHtml(this._t(`satellite.${key}`))}</span>
+        <input
+          data-satellite-config="${escapeHtml(key)}"
+          type="number"
+          min="${Number(min)}"
+          max="${Number(max)}"
+          step="${Number(step)}"
+          value="${Number.isFinite(value) ? value : Number(min)}"
+          ${available ? "" : "disabled"}
+        >
+      </label>
     `;
   }
 
@@ -960,6 +1075,7 @@ class VoiceHarnessPanel extends HTMLElement {
   _renderTracePanel(entry) {
     const trace = entry.trace || {};
     const records = entry.traces?.records || [];
+    const liveRuns = Array.isArray(entry.voice_runs) ? entry.voice_runs : [];
     const storage = entry.traces?.storage || {};
     return `
       <section class="tracePanel">
@@ -979,7 +1095,46 @@ class VoiceHarnessPanel extends HTMLElement {
         <div class="traceList">
           ${records.map((record) => this._traceCard(record)).join("") || `<div class="empty mini">${escapeHtml(this._t("runs.trace_empty"))}</div>`}
         </div>
+        <h3>${escapeHtml(this._t("runs.live"))}</h3>
+        <div class="traceList">
+          ${liveRuns.map((run) => this._liveRunCard(run)).join("") || `<div class="empty mini">${escapeHtml(this._t("runs.live_empty"))}</div>`}
+        </div>
       </section>
+    `;
+  }
+
+  _liveRunCard(run) {
+    const timeline = Array.isArray(run.events) ? run.events : [];
+    return `
+      <details class="traceCard">
+        <summary>
+          <div>
+            <strong>${escapeHtml(this._formatTime(Number(run.created_at || 0) * 1000))}</strong>
+            <span>${escapeHtml(run.conversation_id || run.id || "")}</span>
+          </div>
+          <span class="chip ${run.status === "error" ? "bad" : "ok"}">${escapeHtml(run.status || "")}</span>
+        </summary>
+        <div class="traceBody">
+          <div class="traceText">
+            <strong>${escapeHtml(this._t("runs.user"))}</strong>
+            <p>${escapeHtml(run.user_text || "")}</p>
+          </div>
+          <div class="meterRow">
+            <span>${escapeHtml(this._routeLabel(run.route))}</span>
+            <span>${escapeHtml(run.provider || "")}</span>
+            <span>${Number(run.latency_ms || 0)} ms</span>
+          </div>
+          <div class="attemptList timelineList">
+            ${timeline.map((event) => `
+              <div class="attempt ${event.status === "error" ? "bad" : "ok"}">
+                <strong>${escapeHtml(event.stage || "")}</strong>
+                <span>${Number(event.t_ms || 0)} ms</span>
+                ${event.attrs ? `<span>${escapeHtml(JSON.stringify(event.attrs))}</span>` : ""}
+              </div>
+            `).join("")}
+          </div>
+        </div>
+      </details>
     `;
   }
 
@@ -988,6 +1143,7 @@ class VoiceHarnessPanel extends HTMLElement {
     const route = record.route || {};
     const provider = route.provider || {};
     const attempts = Array.isArray(route.provider_attempts) ? route.provider_attempts : [];
+    const timeline = Array.isArray(record.timeline) ? record.timeline : [];
     return `
       <details class="traceCard">
         <summary>
@@ -1025,6 +1181,18 @@ class VoiceHarnessPanel extends HTMLElement {
               `).join("")}
             </div>
           ` : ""}
+          ${timeline.length ? `
+            <h3>${escapeHtml(this._t("runs.timeline"))}</h3>
+            <div class="attemptList timelineList">
+              ${timeline.map((event) => `
+                <div class="attempt ${event.status === "error" ? "bad" : "ok"}">
+                  <strong>${escapeHtml(event.stage || "")}</strong>
+                  <span>${Number(event.t_ms || 0)} ms</span>
+                  ${event.attrs ? `<span>${escapeHtml(JSON.stringify(event.attrs))}</span>` : ""}
+                </div>
+              `).join("")}
+            </div>
+          ` : ""}
           <h3>${escapeHtml(this._t("runs.raw_payload"))}</h3>
           ${record.raw_payload ? `<pre>${escapeHtml(JSON.stringify(record.raw_payload, null, 2))}</pre>` : `<div class="empty mini">${escapeHtml(this._t("runs.no_raw"))}</div>`}
         </div>
@@ -1036,6 +1204,7 @@ class VoiceHarnessPanel extends HTMLElement {
     const providers = entry.model_providers || {};
     const primary = providers.primary || {};
     const fallbacks = Array.isArray(providers.fallbacks) ? providers.fallbacks : [];
+    const health = Array.isArray(entry.provider_health) ? entry.provider_health : [];
     if (providers.config_error) {
       return `<div class="providerPanel error">${escapeHtml(this._t("providers.config_error", { message: providers.config_error }))}</div>`;
     }
@@ -1053,6 +1222,14 @@ class VoiceHarnessPanel extends HTMLElement {
           `).join("") || `<span>${escapeHtml(this._t("providers.none"))}</span>`}
         </div>
         <span class="meta">${escapeHtml(this._t("providers.fallbacks", { count: fallbacks.length }))}</span>
+        <div class="providerHealth">
+          <strong>${escapeHtml(this._t("providers.health"))}</strong>
+          ${health.map((item) => `
+            <span class="chip ${Number(item.cooldown_remaining_s || 0) > 0 ? "warning" : "muted"}">
+              ${escapeHtml(item.provider || "")} · ${escapeHtml(this._routeLabel(item.route))} · ${escapeHtml(this._t("providers.cooldown", { seconds: Number(item.cooldown_remaining_s || 0) }))}
+            </span>
+          `).join("") || `<span class="meta">${escapeHtml(this._t("providers.health_empty"))}</span>`}
+        </div>
       </div>
     `;
   }
@@ -1788,6 +1965,11 @@ const styles = `
     color: var(--secondary-text-color);
   }
 
+  .chip.warning {
+    color: var(--warning-color);
+    background: color-mix(in srgb, var(--warning-color) 12%, transparent);
+  }
+
   .routeGrid {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1829,6 +2011,13 @@ const styles = `
   .providerPanel span {
     min-width: 0;
     overflow-wrap: anywhere;
+  }
+
+  .providerHealth {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
   }
 
   .traceHeader {

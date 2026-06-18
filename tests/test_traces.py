@@ -48,6 +48,7 @@ async def test_trace_store_records_bounded_summary_without_raw(hass):
             route={"kind": "fast", "model": "fast-model", "max_tokens": 512},
             latency_ms=88,
             status="ok",
+            timeline=[{"stage": "received", "t_ms": 0, "status": "ok", "attrs": {}}],
             raw_payload={"messages": [{"role": "user", "content": "查一下卧室温度"}]},
         ),
     )
@@ -58,6 +59,7 @@ async def test_trace_store_records_bounded_summary_without_raw(hass):
     assert record["user_text"] == "查一下卧室温度"
     assert record["assistant_text"] == "卧室现在 24 度。"
     assert record["route"]["kind"] == "fast"
+    assert record["timeline"][0]["stage"] == "received"
     assert "raw_payload" not in record
     assert snapshot["storage"]["records"] == 1
     assert snapshot["storage"]["compressed_bytes"] == 0

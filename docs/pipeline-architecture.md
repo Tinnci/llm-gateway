@@ -109,16 +109,31 @@ Selection is ordered failover, not round-robin load balancing:
 - do not fail over on prompt/schema/tool-policy errors,
 - record selected provider, fallback reason, elapsed time, attempts, and final
   status in diagnostic traces,
-- play `provider_fallback.wav` once when a voice-visible failover happens.
+- apply a short in-memory cooldown after repeated provider failures for the same
+  route kind,
+- start the local `processing_loop.wav` cue if a voice-visible provider request
+  crosses the soft latency threshold.
 
 Fast route fallback must be conservative: if a simple HA control request cannot
 complete quickly, prefer deterministic HA intent/tool repair over asking a
 remote deep model. Deep route fallback can be slower because it is already a
 background task.
 
-A short in-memory circuit breaker per provider and route kind remains an
-operational optimization to add only if live traces show repeated provider
-flapping.
+The provider cooldown is intentionally small and in-memory. It avoids repeated
+slow attempts during a live incident without turning provider selection into
+cost-based load balancing.
+
+## Voice run timeline
+
+Each LLM Gateway turn records a recent in-memory `voice_run` timeline and, when
+diagnostic traces are enabled, stores the same timeline in the compressed trace
+summary. Current Gateway-owned stages include request receipt, HA LLM data
+preparation, route selection, provider attempts, tool calls/results, search
+results, TTS Markdown cleanup, and completion.
+
+Wake word, ASR, playback, and microphone-gate events still originate in the
+satellite/display layer. They are surfaced through the lock-screen status and HA
+entities, and can be correlated with Gateway timelines by timestamp.
 
 ## Spoken output
 
@@ -238,9 +253,10 @@ frontend. Local OPUS spoken fallback clips, such as "网络连接失败" or
 "Home Assistant 暂时无响应", live at the satellite playback layer so they can
 still play when HA, TTS, or the network path is unavailable.
 
-`processing_loop.wav` is intentionally short. It should be looped or scheduled
-locally by the satellite at a reduced output gain, then stopped before final
-TTS. Do not ask the LLM to produce this status cue.
+`processing_loop.wav` is intentionally short. LLM Gateway starts the local
+display-agent loop only after the provider request crosses the soft threshold,
+and stops it when the request returns or fails. Do not ask the LLM to produce
+this status cue.
 
 ## Satellite playback boundary
 

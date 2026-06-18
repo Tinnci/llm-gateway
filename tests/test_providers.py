@@ -8,6 +8,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from custom_components.llm_gateway.api import LLMGatewayClient, LLMGatewayHTTPError
 from custom_components.llm_gateway.const import CONF_PROVIDER_PROFILES
 from custom_components.llm_gateway.providers import (
+    ProviderSelector,
     async_chat_completion_with_fallback,
     normalize_provider_profiles_json,
     parse_provider_profiles,
@@ -82,6 +83,39 @@ def test_route_for_provider_overrides_tier_values() -> None:
     assert route.max_tokens == 32
     assert route.timeout_s == 3
     assert route.extra_body == {"fallback": True}
+
+
+def test_provider_selector_moves_cooled_provider_to_end() -> None:
+    selector = ProviderSelector(failure_threshold=2, cooldown_s=60)
+    candidates = [
+        ("primary", object(), _route()),
+        ("fallback", object(), _route()),
+    ]
+
+    selector.record_failure("primary", "fast", retryable=True, error="timeout")
+    assert selector.order_candidates(candidates, "fast")[0][0] == "primary"
+
+    selector.record_failure("primary", "fast", retryable=True, error="timeout")
+    ordered = selector.order_candidates(candidates, "fast")
+
+    assert [candidate[0] for candidate in ordered] == ["fallback", "primary"]
+    assert selector.snapshot()[0]["cooldown_remaining_s"] > 0
+
+
+def test_provider_selector_success_clears_penalty() -> None:
+    selector = ProviderSelector(failure_threshold=1, cooldown_s=60)
+    candidates = [
+        ("primary", object(), _route()),
+        ("fallback", object(), _route()),
+    ]
+
+    selector.record_failure("primary", "fast", retryable=True, error="timeout")
+    assert selector.order_candidates(candidates, "fast")[0][0] == "fallback"
+
+    selector.record_success("primary", "fast")
+
+    assert selector.order_candidates(candidates, "fast")[0][0] == "primary"
+    assert selector.snapshot() == []
 
 
 async def test_chat_completion_falls_back_on_retryable_http_error(

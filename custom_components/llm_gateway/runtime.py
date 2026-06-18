@@ -11,7 +11,7 @@ from homeassistant.util import ulid
 
 from .api import LLMGatewayClient, LLMGatewayError
 from .const import DOMAIN, LOGGER
-from .providers import async_chat_completion_with_fallback
+from .providers import ProviderSelector, async_chat_completion_with_fallback
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from .memory import VoiceMemory
     from .router import ModelRoute
     from .traces import TraceStore
+    from .voice_runs import VoiceRunRecorder
 
 
 @dataclass(slots=True)
@@ -48,6 +49,8 @@ class LLMGatewayRuntimeData:
     memory: VoiceMemory
     deep_tasks: DeepTaskManager
     trace_store: TraceStore
+    provider_selector: ProviderSelector
+    voice_runs: VoiceRunRecorder
 
 
 class DeepTaskManager:
@@ -59,11 +62,13 @@ class DeepTaskManager:
         client: LLMGatewayClient,
         session: aiohttp.ClientSession,
         options_getter: Callable[[], Mapping[str, Any]],
+        provider_selector: ProviderSelector,
     ) -> None:
         self._hass = hass
         self._client = client
         self._session = session
         self._options_getter = options_getter
+        self._provider_selector = provider_selector
         self.records: dict[str, DeepTaskRecord] = {}
 
     def submit(
@@ -126,6 +131,8 @@ class DeepTaskManager:
                 tool_choice=None,
                 temperature=temperature,
                 top_p=top_p,
+                selector=self._provider_selector,
+                processing_cues=False,
             )
             message = result.message
         except LLMGatewayError as err:

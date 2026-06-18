@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import time
 from dataclasses import dataclass
 from http import HTTPStatus
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
-    import aiohttp
+import aiohttp
 
 from .api import (
     LLMGatewayAuthError,
@@ -25,6 +26,13 @@ PROFILE_TEXT_LIMIT = 64
 MODEL_TEXT_LIMIT = 256
 DEFAULT_SOFT_TIMEOUTS = {"fast": 3, "mid": 8, "deep": 30}
 HTTP_SERVER_ERROR = 500
+PROVIDER_FAILURE_THRESHOLD = 2
+PROVIDER_COOLDOWN_S = 60
+DISPLAY_AGENT_BASE_URL = "http://127.0.0.1:10710"
+PROCESSING_CUE_DELAY_S = 2.5
+PROCESSING_CUE_TIMEOUT_S = 0.8
+
+type ProviderCandidate = tuple[str, LLMGatewayClient, ModelRoute]
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +91,86 @@ class ChatFallbackResult:
     attempts: list[dict[str, Any]]
 
 
+class ProviderSelector:
+    """Small in-memory health selector for ordered provider failover."""
+
+    def __init__(
+        self,
+        *,
+        failure_threshold: int = PROVIDER_FAILURE_THRESHOLD,
+        cooldown_s: int = PROVIDER_COOLDOWN_S,
+    ) -> None:
+        self._failure_threshold = failure_threshold
+        self._cooldown_s = cooldown_s
+        self._health: dict[tuple[str, str], dict[str, Any]] = {}
+
+    def order_candidates(
+        self, candidates: list[ProviderCandidate], route_kind: str
+    ) -> list[ProviderCandidate]:
+        """Move cooled providers behind currently available candidates."""
+        available: list[ProviderCandidate] = []
+        cooled: list[ProviderCandidate] = []
+        now = time.monotonic()
+        for candidate in candidates:
+            provider_name = candidate[0]
+            state = self._health.get((provider_name, route_kind)) or {}
+            cooldown_until = float(state.get("cooldown_until") or 0)
+            if cooldown_until > now:
+                cooled.append(candidate)
+            else:
+                available.append(candidate)
+        return [*available, *cooled] if available else candidates
+
+    def record_success(self, provider_name: str, route_kind: str) -> None:
+        """Clear provider health penalties after a successful attempt."""
+        self._health.pop((provider_name, route_kind), None)
+
+    def record_failure(
+        self,
+        provider_name: str,
+        route_kind: str,
+        *,
+        retryable: bool,
+        error: str,
+    ) -> None:
+        """Record one failed provider attempt and open a short cooldown if needed."""
+        key = (provider_name, route_kind)
+        if not retryable:
+            self._health[key] = {
+                "failures": self._failure_threshold,
+                "cooldown_until": time.monotonic() + self._cooldown_s,
+                "last_error": error,
+            }
+            return
+        state = self._health.get(key) or {}
+        failures = int(state.get("failures") or 0) + 1
+        cooldown_until = 0.0
+        if failures >= self._failure_threshold:
+            cooldown_until = time.monotonic() + self._cooldown_s
+        self._health[key] = {
+            "failures": failures,
+            "cooldown_until": cooldown_until,
+            "last_error": error,
+        }
+
+    def snapshot(self) -> list[dict[str, Any]]:
+        """Return provider health state safe for the panel."""
+        now = time.monotonic()
+        rows: list[dict[str, Any]] = []
+        for (provider, route), state in sorted(self._health.items()):
+            cooldown_until = float(state.get("cooldown_until") or 0)
+            rows.append(
+                {
+                    "provider": provider,
+                    "route": route,
+                    "failures": int(state.get("failures") or 0),
+                    "cooldown_remaining_s": max(0, round(cooldown_until - now)),
+                    "last_error": str(state.get("last_error") or ""),
+                }
+            )
+        return rows
+
+
 def provider_profiles_from_options(options: dict[str, Any]) -> list[ProviderProfile]:
     """Parse configured fallback provider profiles."""
     raw = options.get(CONF_PROVIDER_PROFILES)
@@ -130,10 +218,12 @@ async def async_chat_completion_with_fallback(  # noqa: PLR0913
     tool_choice: str | None,
     temperature: float,
     top_p: float,
+    selector: ProviderSelector | None = None,
+    processing_cues: bool = True,
 ) -> ChatFallbackResult:
     """Run chat completion through primary provider and ordered fallbacks."""
     attempts: list[ProviderAttempt] = []
-    candidates = [
+    candidates: list[ProviderCandidate] = [
         ("primary", primary_client, route),
         *[
             (
@@ -144,10 +234,20 @@ async def async_chat_completion_with_fallback(  # noqa: PLR0913
             for profile in provider_profiles_from_options(options)
         ],
     ]
+    if selector is not None:
+        candidates = selector.order_candidates(candidates, route.kind)
 
     last_error: LLMGatewayError | None = None
     for index, (provider_name, client, candidate_route) in enumerate(candidates):
         started = time.monotonic()
+        cue_task = (
+            asyncio.create_task(
+                _processing_cue(session),
+                name="llm_gateway_processing_cue",
+            )
+            if processing_cues
+            else None
+        )
         try:
             message = await client.async_chat_completion(
                 model=candidate_route.model,
@@ -162,14 +262,22 @@ async def async_chat_completion_with_fallback(  # noqa: PLR0913
             )
         except LLMGatewayError as err:
             retryable = _is_retryable(err)
+            error_name = type(err).__name__
             last_error = err
+            if selector is not None:
+                selector.record_failure(
+                    provider_name,
+                    candidate_route.kind,
+                    retryable=retryable,
+                    error=error_name,
+                )
             attempts.append(
                 ProviderAttempt(
                     provider=provider_name,
                     model=candidate_route.model,
                     status="error",
                     latency_ms=int((time.monotonic() - started) * 1000),
-                    error=type(err).__name__,
+                    error=error_name,
                     retryable=retryable,
                 )
             )
@@ -185,6 +293,9 @@ async def async_chat_completion_with_fallback(  # noqa: PLR0913
             if not retryable or index == len(candidates) - 1:
                 raise
             continue
+        finally:
+            if cue_task is not None:
+                await _stop_processing_cue(session, cue_task)
 
         attempts.append(
             ProviderAttempt(
@@ -194,6 +305,8 @@ async def async_chat_completion_with_fallback(  # noqa: PLR0913
                 latency_ms=int((time.monotonic() - started) * 1000),
             )
         )
+        if selector is not None:
+            selector.record_success(provider_name, candidate_route.kind)
         if index:
             LOGGER.info(
                 "Provider fallback succeeded provider=%s model=%s route=%s attempts=%d",
@@ -367,3 +480,38 @@ def _is_retryable(err: LLMGatewayError) -> bool:
             or err.status >= HTTP_SERVER_ERROR
         )
     return False
+
+
+async def _processing_cue(session: aiohttp.ClientSession) -> bool:
+    """Start the local processing earcon loop after a soft delay."""
+    try:
+        await asyncio.sleep(PROCESSING_CUE_DELAY_S)
+        async with session.post(
+            f"{DISPLAY_AGENT_BASE_URL}/voice/processing/start",
+            timeout=aiohttp.ClientTimeout(total=PROCESSING_CUE_TIMEOUT_S),
+        ):
+            return True
+    except (TimeoutError, aiohttp.ClientError):
+        return False
+
+
+async def _stop_processing_cue(
+    session: aiohttp.ClientSession,
+    cue_task: asyncio.Task[bool],
+) -> None:
+    """Stop the local processing earcon loop if it started."""
+    if not cue_task.done():
+        cue_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await cue_task
+        return
+
+    with contextlib.suppress(TimeoutError, aiohttp.ClientError):
+        started = await cue_task
+        if not started:
+            return
+        async with session.post(
+            f"{DISPLAY_AGENT_BASE_URL}/voice/processing/stop",
+            timeout=aiohttp.ClientTimeout(total=PROCESSING_CUE_TIMEOUT_S),
+        ):
+            pass
