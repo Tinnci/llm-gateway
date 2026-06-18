@@ -71,6 +71,23 @@ class DeepTaskManager:
         )
         return task_id
 
+    def snapshot(self) -> list[dict[str, Any]]:
+        """Return task records for the Voice Harness panel."""
+        return [
+            {
+                "id": record.id,
+                "request": record.request,
+                "model": record.model,
+                "status": record.status,
+                "result": record.result,
+                "error": record.error,
+                "created_at": record.created_at,
+            }
+            for record in sorted(
+                self.records.values(), key=lambda item: item.created_at, reverse=True
+            )
+        ]
+
     async def _async_run(
         self,
         task_id: str,

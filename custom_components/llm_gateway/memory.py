@@ -99,6 +99,28 @@ class VoiceMemory:
             + "\n\n".join(parts)
         )
 
+    def snapshot(self) -> dict[str, Any]:
+        """Return an admin/debug snapshot for the Voice Harness panel."""
+        return {
+            "facts": list(self._facts),
+            "sessions": [
+                {
+                    "conversation_id": key,
+                    "summary": session.summary,
+                    "updated_at": session.updated_at,
+                    "turns": [
+                        {
+                            "user": turn.user,
+                            "assistant": turn.assistant,
+                            "created_at": turn.created_at,
+                        }
+                        for turn in session.turns
+                    ],
+                }
+                for key, session in sorted(self._sessions.items())
+            ],
+        }
+
     def _as_dict(self) -> dict[str, Any]:
         return {
             "facts": self._facts,
