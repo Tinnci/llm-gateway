@@ -51,11 +51,7 @@ API_BASE = f"/api/{DOMAIN}"
 STATIC_BASE = f"{API_BASE}/static"
 EARCON_PACK = "ha_voice_minimal_v0"
 EARCON_MANIFEST = (
-    Path(__file__).parent
-    / "frontend"
-    / "earcons"
-    / EARCON_PACK
-    / "manifest.json"
+    Path(__file__).parent / "frontend" / "earcons" / EARCON_PACK / "manifest.json"
 )
 
 PROMPT_POLICIES: list[dict[str, Any]] = [

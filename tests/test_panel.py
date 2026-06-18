@@ -39,9 +39,7 @@ async def test_harness_status_api(hass, hass_client):
     data = await response.json()
     assert data["panel"]["url_path"] == PANEL_URL
     assert data["earcons"]["pack"] == "ha_voice_minimal_v0"
-    assert data["earcons"]["files"]["confirmation"]["url"].endswith(
-        "/confirmation.wav"
-    )
+    assert data["earcons"]["files"]["confirmation"]["url"].endswith("/confirmation.wav")
     assert data["prompt_policies"]
     assert data["sample_scenarios"]
 

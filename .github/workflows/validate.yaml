@@ -24,10 +24,13 @@ jobs:
         with:
           enable-cache: true
       - name: 🧹 Ruff check
-        run: uvx ruff check custom_components tests
+        run: uvx ruff check custom_components tests tools/ha-earcon/src tools/ha-earcon/tests
       - name: 🎨 Ruff format check
-        run: uvx ruff format --check custom_components tests
+        run: uvx ruff format --check custom_components tests tools/ha-earcon/src tools/ha-earcon/tests
       - name: 🧪 Pytest
+        run: uv run pytest -q
+      - name: 🔊 Earcon tool tests
+        working-directory: tools/ha-earcon
         run: uv run pytest -q
 
   validate-hassfest:

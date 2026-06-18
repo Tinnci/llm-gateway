@@ -193,9 +193,7 @@ class LLMGatewayOptionsFlow(OptionsFlow):
             {
                 vol.Optional(
                     CONF_ROUTING_MODE, default=ROUTING_MODE_AUTO
-                ): SelectSelector(
-                    SelectSelectorConfig(options=routing_options)
-                ),
+                ): SelectSelector(SelectSelectorConfig(options=routing_options)),
                 vol.Required(
                     CONF_FAST_MODEL, default=RECOMMENDED_FAST_MODEL
                 ): SelectSelector(
@@ -339,9 +337,7 @@ class LLMGatewayOptionsFlow(OptionsFlow):
 
         return self.async_show_form(
             step_id="init",
-            data_schema=self.add_suggested_values_to_schema(
-                schema, suggested
-            ),
+            data_schema=self.add_suggested_values_to_schema(schema, suggested),
             errors=errors,
         )
 

@@ -110,9 +110,7 @@ def _limit_sentences(text: str, *, max_sentences: int) -> str:
         return ""
 
     parts = [
-        part.strip()
-        for part in _SENTENCE_END_RE.split(normalized)
-        if part.strip()
+        part.strip() for part in _SENTENCE_END_RE.split(normalized) if part.strip()
     ]
     if len(parts) <= max_sentences:
         return normalized

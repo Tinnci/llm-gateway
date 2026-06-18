@@ -95,8 +95,7 @@ class VoiceMemory:
 
         return (
             "以下是助手可用的本地记忆。只在相关时使用；不要向用户朗读内部标题、"
-            "entity_id 或存储细节。\n\n"
-            + "\n\n".join(parts)
+            "entity_id 或存储细节。\n\n" + "\n\n".join(parts)
         )
 
     def snapshot(self) -> dict[str, Any]:
