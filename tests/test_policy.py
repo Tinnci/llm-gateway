@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from homeassistant.helpers import llm
 
-from custom_components.llm_gateway.policy import should_allow_search, validate_tool_call
+from custom_components.llm_gateway.policy import (
+    should_allow_search,
+    should_require_search,
+    validate_tool_call,
+)
 
 
 def test_search_policy_gating():
@@ -13,6 +17,13 @@ def test_search_policy_gating():
     assert should_allow_search("关关雎鸠，在河之洲，这句话是出自哪里？")
     assert not should_allow_search("打开卧室灯")
     assert not should_allow_search("把它调暗一点")
+
+
+def test_search_policy_requires_grounding_for_source_questions():
+    assert should_require_search("关关雎鸠，在河之洲，这句话是出自哪里？")
+    assert should_require_search("这个典故的原文是什么？")
+    assert not should_require_search("查一下今天空气质量")
+    assert not should_require_search("打开卧室灯")
 
 
 def test_high_risk_tool_requires_confirmation():

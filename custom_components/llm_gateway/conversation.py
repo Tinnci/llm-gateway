@@ -14,7 +14,7 @@ from homeassistant.helpers.json import json_dumps
 from homeassistant.util import ulid
 from voluptuous_openapi import convert
 
-from .api import LLMGatewayClient, LLMGatewayError
+from .api import LLMGatewayClient, LLMGatewayError, ToolChoice
 from .const import (
     CONF_TEMPERATURE,
     CONF_TOP_P,
@@ -27,10 +27,11 @@ from .const import (
     RECOMMENDED_TOP_P,
     TOOL_LOOP_ERROR_SPEECH,
 )
-from .policy import validate_tool_call
+from .policy import should_require_search, validate_tool_call
 from .providers import async_chat_completion_with_fallback
 from .router import legacy_model_from_options, parse_extra_body, select_model_route
 from .search import (
+    SEARCH_TOOL_NAME,
     async_execute_search_tool,
     available_search_tools,
     mark_external_tool_calls,
@@ -145,6 +146,33 @@ def _parse_tool_calls(raw: list[dict[str, Any]] | None) -> list[llm.ToolInput]:
 def _is_action_tool(tool_name: str) -> bool:
     """Return whether a built-in Assist tool changes Home Assistant state."""
     return tool_name.startswith("Hass")
+
+
+def _tool_choice_for_turn(
+    user_text: str,
+    tools: list[dict[str, Any]] | None,
+    *,
+    force_tool_call: bool,
+    require_grounding: bool = True,
+) -> ToolChoice | None:
+    """Return a narrow tool choice for turns that need deterministic grounding."""
+    if force_tool_call:
+        return "required"
+    if (
+        require_grounding
+        and should_require_search(user_text)
+        and _has_tool(tools, SEARCH_TOOL_NAME)
+    ):
+        return {"type": "function", "function": {"name": SEARCH_TOOL_NAME}}
+    return None
+
+
+def _has_tool(tools: list[dict[str, Any]] | None, tool_name: str) -> bool:
+    for tool in tools or []:
+        function = tool.get("function") or {}
+        if function.get("name") == tool_name:
+            return True
+    return False
 
 
 def _extra_body_from_options(options: dict[str, Any]) -> dict[str, Any] | None:
@@ -440,6 +468,12 @@ class LLMGatewayConversationEntity(
                 },
             )
             try:
+                tool_choice = _tool_choice_for_turn(
+                    user_text,
+                    tools,
+                    force_tool_call=force_tool_call,
+                    require_grounding=iteration == 1,
+                )
                 fallback_result = await async_chat_completion_with_fallback(
                     session=runtime.session,
                     primary_client=client,
@@ -447,7 +481,7 @@ class LLMGatewayConversationEntity(
                     options=options,
                     messages=messages,
                     tools=tools,
-                    tool_choice="required" if force_tool_call else None,
+                    tool_choice=tool_choice,
                     temperature=options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE),
                     top_p=options.get(CONF_TOP_P, RECOMMENDED_TOP_P),
                     selector=runtime.provider_selector,

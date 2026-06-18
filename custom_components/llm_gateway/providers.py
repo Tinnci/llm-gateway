@@ -18,6 +18,7 @@ from .api import (
     LLMGatewayConnectionError,
     LLMGatewayError,
     LLMGatewayHTTPError,
+    ToolChoice,
 )
 from .const import CONF_PROVIDER_PROFILES, LOGGER
 from .router import ModelRoute
@@ -215,7 +216,7 @@ async def async_chat_completion_with_fallback(  # noqa: PLR0913
     options: dict[str, Any],
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None,
-    tool_choice: str | None,
+    tool_choice: ToolChoice | None,
     temperature: float,
     top_p: float,
     selector: ProviderSelector | None = None,

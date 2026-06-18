@@ -24,6 +24,7 @@ from custom_components.llm_gateway.conversation import (
     _extra_body_from_options,
     _is_action_tool,
     _parse_tool_calls,
+    _tool_choice_for_turn,
 )
 
 MODELS_URL = f"{DEFAULT_BASE_URL}/models"
@@ -87,6 +88,30 @@ def test_action_tool_detection():
     assert _is_action_tool("HassTurnOn")
     assert _is_action_tool("HassLightSet")
     assert not _is_action_tool("GetLiveContext")
+
+
+def test_tool_choice_for_turn_forces_search_for_source_questions():
+    tools = [{"type": "function", "function": {"name": "search_web"}}]
+    assert _tool_choice_for_turn(
+        "关关雎鸠，在河之洲，这句话是出自哪里？",
+        tools,
+        force_tool_call=False,
+    ) == {"type": "function", "function": {"name": "search_web"}}
+    assert (
+        _tool_choice_for_turn(
+            "关关雎鸠，在河之洲，这句话是出自哪里？",
+            tools,
+            force_tool_call=False,
+            require_grounding=False,
+        )
+        is None
+    )
+
+
+def test_tool_choice_for_turn_preserves_action_retry():
+    assert (
+        _tool_choice_for_turn("打开灯", [], force_tool_call=True) == "required"
+    )
 
 
 def test_extra_body_from_options():

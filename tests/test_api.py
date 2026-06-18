@@ -87,6 +87,27 @@ async def test_chat_completion_can_require_tool_call(hass, aioclient_mock):
     assert request_json["tool_choice"] == "required"
 
 
+async def test_chat_completion_can_force_named_tool(hass, aioclient_mock):
+    aioclient_mock.post(
+        f"{BASE}/chat/completions",
+        json={"choices": [{"message": {"role": "assistant", "tool_calls": []}}]},
+    )
+    client = LLMGatewayClient(async_get_clientsession(hass), BASE, "k")
+    tool_choice = {"type": "function", "function": {"name": "search_web"}}
+    await client.async_chat_completion(
+        model="m",
+        messages=[{"role": "user", "content": "x"}],
+        tools=[{"type": "function", "function": {"name": "search_web"}}],
+        tool_choice=tool_choice,
+        max_tokens=8,
+        temperature=0.1,
+        top_p=0.9,
+    )
+
+    request_json = aioclient_mock.mock_calls[-1][2]
+    assert request_json["tool_choice"] == tool_choice
+
+
 async def test_chat_completion_merges_extra_body_without_streaming(
     hass, aioclient_mock
 ):

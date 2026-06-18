@@ -51,6 +51,12 @@ _SEARCH_ALLOW_KEYWORDS = (
     "典故",
     "原文",
 )
+_SEARCH_REQUIRE_KEYWORDS = (
+    "出处",
+    "出自哪里",
+    "典故",
+    "原文",
+)
 _SEARCH_FORBID_KEYWORDS = (
     "打开",
     "关",
@@ -86,6 +92,14 @@ def should_allow_search(text: str) -> bool:
     if any(keyword in normalized for keyword in _SEARCH_FORBID_KEYWORDS):
         return False
     return False
+
+
+def should_require_search(text: str) -> bool:
+    """Return whether the assistant should ground the turn with web search."""
+    normalized = text.strip().lower()
+    return should_allow_search(normalized) and any(
+        keyword in normalized for keyword in _SEARCH_REQUIRE_KEYWORDS
+    )
 
 
 def validate_tool_call(tool_call: llm.ToolInput, user_text: str) -> PolicyDecision:

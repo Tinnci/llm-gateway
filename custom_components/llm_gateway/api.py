@@ -13,6 +13,8 @@ from homeassistant.exceptions import HomeAssistantError
 
 from .const import LOGGER, TIMEOUT_CHAT, TIMEOUT_MODELS
 
+type ToolChoice = str | dict[str, Any]
+
 
 class LLMGatewayError(HomeAssistantError):
     """Base error talking to the gateway."""
@@ -138,7 +140,7 @@ class LLMGatewayClient:
         model: str,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
-        tool_choice: str | None = None,
+        tool_choice: ToolChoice | None = None,
         extra_body: dict[str, Any] | None = None,
         timeout_s: int = TIMEOUT_CHAT,
         max_tokens: int,
