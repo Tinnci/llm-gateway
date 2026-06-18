@@ -50,9 +50,9 @@ Assist pipeline (*Settings → Voice assistants*).
 ## NVIDIA NIM
 
 Create a free API key at <https://build.nvidia.com>. The default model is
-`nvidia/llama-3.1-nemotron-nano-8b-v1` for Fast voice turns. The recommended Mid model
-is `nvidia/nemotron-3-nano-30b-a3b`, and the recommended Deep model is
-`nvidia/nemotron-3-super-120b-a12b`.
+`nvidia/nemotron-3-nano-30b-a3b` for Fast voice turns. The same model is also the
+default Mid route with a larger token budget for diagnostics/search summaries. The
+recommended Deep model is `nvidia/nemotron-3-super-120b-a12b`.
 
 Deep turns are submitted as Home Assistant background tasks and surfaced through
 persistent notifications. They do not directly control Home Assistant devices.

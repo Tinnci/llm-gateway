@@ -53,7 +53,7 @@ ROUTING_MODES = (
     ROUTING_MODE_DEEP,
 )
 
-RECOMMENDED_FAST_MODEL = "nvidia/llama-3.1-nemotron-nano-8b-v1"
+RECOMMENDED_FAST_MODEL = "nvidia/nemotron-3-nano-30b-a3b"
 RECOMMENDED_MID_MODEL = "nvidia/nemotron-3-nano-30b-a3b"
 RECOMMENDED_DEEP_MODEL = "nvidia/nemotron-3-super-120b-a12b"
 RECOMMENDED_DEEP_FALLBACK_MODEL = "nvidia/llama-3_3-nemotron-super-49b-v1"
