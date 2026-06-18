@@ -1,163 +1,194 @@
 # Voice and LLM Gateway pipeline architecture
 
-## Current fixed path
+This document describes the current maintained design for the Home Assistant
+voice stack around LLM Gateway. It separates the deployed runtime from planned
+next layers so operational decisions stay clear.
+
+## Current deployed path
 
 1. `wyoming-openwakeword` detects the wake word.
 2. `wyoming-satellite` starts the Home Assistant Assist pipeline.
 3. Doubao ASR returns transcript text.
 4. Home Assistant local intents run first when possible.
-5. `conversation.llm_gateway` handles open-ended or tool-assisted turns.
-6. TTS plays the response while the tablet microphone is muted.
+5. `conversation.llm_gateway` handles open-ended, routed, or tool-assisted turns.
+6. The final speech text is cleaned for TTS and played by the satellite while
+   the tablet microphone is muted.
 
-The satellite now responds to HA ping/pong, gates the wake cue, gates TTS playback,
-and uses the built-in `alexa` wake word.
+The satellite side is responsible for wake cue playback, microphone gating, and
+local audio behavior. LLM Gateway is responsible for routing, prompt policy, HA
+tool policy, search gating, short memory, and Voice Harness visibility.
 
 ## Model routing
 
-Use three execution classes instead of one model for every turn:
+LLM Gateway uses three route classes:
 
-- `local_control`: HA local intents and deterministic services. Use for device control,
-  timers, scenes, and room state. Target latency: under 2 seconds after ASR.
-- `fast_model`: low-latency chat, clarification, tool repair, short summaries. Target
-  latency: under 5 seconds. This should be the default voice model.
-- `deep_model`: high-capability reasoning such as Nemotron Ultra with large
-  `reasoning_budget`. This should be explicit or auto-escalated as an async task, not
-  the default blocking voice response.
+- `fast`: default voice path, ordinary HA control, short answers,
+  clarifications, and tool repair.
+- `mid`: search-backed answers, device manuals, error codes, firmware,
+  diagnostics, weather, news, traffic, and other freshness-sensitive requests.
+- `deep`: explicit deep analysis, architecture/planning/comparison, or long
+  requests. Deep turns return a short spoken acknowledgement and run as a
+  background task.
 
-Routing policy:
+The current NVIDIA NIM-oriented defaults are:
 
-- If the user asks for direct home control, try `local_control` before any LLM.
-- If an action tool fails, force the model to call a tool again until an action succeeds
-  or the bounded loop ends.
-- If the user asks for analysis, planning, coding, comparison, or long reasoning, return
-  a short acknowledgement through the fast path and submit a `deep_model` task.
-- If the model output would exceed the voice latency budget, continue the task in the
-  background and notify through HA notification, dashboard card, or a later spoken
-  summary.
+- Fast: `nvidia/nemotron-3-nano-30b-a3b`
+- Mid: `nvidia/nemotron-3-nano-30b-a3b`
+- Deep: `nvidia/nemotron-3-super-120b-a12b`
 
-Implemented v1 routes:
-
-- `fast`: default for normal voice turns and Home Assistant control repair.
-- `mid`: selected for search, device manuals, error codes, firmware, diagnostics,
-  weather, news, traffic, and other freshness-sensitive requests.
-- `deep`: selected for explicit deep analysis, architecture/planning/comparison, or
-  long requests. It returns a short spoken acknowledgement and runs a background
-  non-tool model call; the result is posted as a Home Assistant persistent
-  notification.
-
-Legacy `chat_model`, `max_tokens`, `chat_timeout`, and `extra_body` still work as
+Legacy `chat_model`, `max_tokens`, `chat_timeout`, and `extra_body` remain
 fallbacks for the Fast route.
 
 ## Spoken output
 
-The Gateway keeps the model's Markdown content in the chat log, then rewrites only the
-final `IntentResponse` speech into voice-safe plain text. This prevents Edge TTS from
-reading formatting such as `**bold**`, links, tables, and code fences literally while
-preserving richer text for non-voice surfaces.
+The Gateway preserves the model's raw Markdown in the conversation log, then
+rewrites only the final `IntentResponse` speech into voice-safe plain text.
 
-The spoken response is limited to the first two sentences by default. Long details
-should be shown in Home Assistant notifications, traces, or a future Voice Harness
-panel.
+Implemented cleanup:
 
-## Tool policy and search
+- strips bold/italic markers,
+- avoids reading links as URLs,
+- drops code fence syntax,
+- flattens lists, tables, and headings,
+- limits spoken output to a short default of two sentences.
 
-Every model tool call is checked before execution:
+Long details should be surfaced through Home Assistant notifications, the Voice
+Harness panel, or a later visual surface rather than spoken in one turn.
 
-1. Schema validation is handled by Home Assistant for HA tools.
-2. Gateway policy blocks high-risk HA actions unless the user explicitly confirms.
-3. Search tools are exposed only when web search is enabled, a provider key exists, and
-   the user request is search-appropriate.
-4. Tool results are appended back into the chat log for the next model turn.
+## Tool policy
 
-High-risk targets include locks, alarms, covers, valves, and switch-like devices whose
-name suggests doors, alarms, heaters, ovens, high-power loads, or whole-home actions.
+Every model tool call is checked before execution.
 
-Search provider priority is Tavily, Serper, Firecrawl, then Brave. Search logs include
-provider, latency and result count, but never API keys.
+Current policy:
 
-## Context and memory
+- Search tools are marked external to HA and can never directly execute HA
+  actions.
+- `search_web` is exposed only when a provider key exists and the user request
+  is search-appropriate.
+- High-risk HA targets require explicit confirmation before service execution.
+- Deep tasks do not directly control HA devices.
 
-Keep context in explicit layers:
+High-risk domains include locks, alarm control panels, covers, valves, sirens,
+and switch-like devices whose names imply doors, alarms, ovens, heaters,
+high-power equipment, or whole-home actions.
 
-- `turn`: current transcript, device id, area, selected pipeline, exposed entities.
-- `session`: recent N turns for the same satellite/conversation, with a TTL such as
-  5-10 minutes since last interaction.
-- `summary`: rolling compressed summary generated when the session exceeds a token or
-  turn threshold.
-- `long_memory`: durable facts and preferences, for example room aliases, device aliases,
-  user preferences, recurring task state, and stable corrections.
+Search provider priority is:
 
-Do not pass raw long history to every request. Build each request as:
+1. Tavily
+2. Serper
+3. Firecrawl
+4. Brave
 
-1. System prompt and HA Assist API context.
-2. Relevant long-memory snippets.
-3. Current session summary.
-4. Last few raw turns.
-5. Current user turn.
+Search logs may include provider, query, latency, and result count. They must
+not include API keys.
 
-Memory writes should be asynchronous. The voice path should not wait for memory
-extraction unless the user explicitly says to remember something.
+## Memory
 
-Implemented v1 memory stores recent conversation turns for 10 minutes using Home
-Assistant `Store`. It injects a compact local-memory system message only when a
-conversation id is present. Durable aliases and vector RAG are intentionally left as the
-next layer, because the NVIDIA embedding options need per-language validation before
-becoming defaults.
+Implemented v1 memory is intentionally small:
 
-## Continuous conversation
+- sessions are keyed by Home Assistant conversation id,
+- recent turns are stored for a short TTL,
+- a compact memory context is injected only when a conversation id is present,
+- data is persisted with Home Assistant `Store`.
 
-Implement continuous conversation as a session lease:
-
-- Start lease on wake detection.
-- Keep lease alive while the user continues within a configured silence window.
-- Reuse `conversation_id` during the lease.
-- End lease after timeout, explicit stop, or long TTS completion with no follow-up.
-- Summarize and persist the session at lease end.
-
-Suggested first values:
-
-- Follow-up window: 8 seconds after TTS played.
-- Session TTL: 10 minutes.
-- Raw window: last 6 turns.
-- Summarize threshold: 3,000-5,000 tokens or 8 turns.
+Durable room aliases, device aliases, long-term user preferences, and vector RAG
+are next layers. They should be added only after the retrieval model and Chinese
+quality are validated.
 
 ## Deep task handoff
 
-Deep tasks need an explicit queue:
+Deep turns are queued by `DeepTaskManager`:
 
-- Store task id, user request, current context pack, selected deep model, and status.
-- Immediately respond with a short acknowledgement.
-- Run the deep model outside the wake/ASR/TTS critical path.
-- Save result and surface it through HA notification/dashboard, with optional spoken
-  summary when the user next wakes the tablet.
+1. The voice response says a short acknowledgement.
+2. A background task calls the Deep model outside the voice critical path.
+3. The result is posted as a Home Assistant persistent notification.
+4. The Voice Harness panel can show task snapshots.
 
-This avoids blocking voice on a 16k-token reasoning request.
+This prevents long reasoning requests from blocking wake -> ASR -> intent -> TTS.
 
-## Harness structure
+## Voice Harness panel
 
-The harness should have four layers:
+The integration auto-registers an admin-only sidebar panel named `语音测试台`.
+It uses the modern static path API and does not require `panel_custom` YAML.
 
-- `unit`: payload construction, `extra_body` merging, tool-choice forcing, memory pack
-  assembly, routing decisions.
-- `component`: HA `conversation/process` with mocked NIM responses and fake tools.
-- `remote integration`: real HA plus real NIM, no audio. Assert response, logs, tool
-  result, and entity state.
-- `acoustic e2e`: real wake word, mic, ASR, TTS, and entity state. Run only when the
-  room is quiet and the satellite state is `listening`.
+Current views:
 
-Each remote run should capture:
+- `运行记录`: loaded entries, route examples, search provider visibility.
+- `提示策略`: spoken prompt policies and risk levels.
+- `场景测试`: ad hoc scenario evaluation.
+- `搜索实验室`: search gate evaluation.
+- `记忆实验室`: active short-memory sessions.
+- `提示音`: rendered earcon pack playback and metadata.
+- `回归测试`: sample scenario runner.
 
-- wall-clock start and end timestamps,
+Current APIs:
+
+- `GET /api/llm_gateway/harness/status`
+- `POST /api/llm_gateway/harness/evaluate`
+
+The status API reads the earcon manifest through Home Assistant's executor to
+avoid blocking the event loop.
+
+## Earcons and local audio fallbacks
+
+The repository includes `tools/ha-earcon`, a small uv-managed Typer CLI that
+renders deterministic WAV earcons from YAML packs and lints loudness/peak levels.
+
+Current deployed earcon pack:
+
+- wake
+- listening_start
+- listening_end
+- success
+- failure
+- clarification
+- confirmation
+- search
+- deep_task
+
+The current integration only serves these WAV assets to the panel and Home
+Assistant frontend. Local OPUS spoken fallback clips, such as "网络连接失败" or
+"Home Assistant 暂时无响应", should live at the satellite playback layer so they
+can still play when HA, TTS, or the network path is unavailable.
+
+## Satellite playback boundary
+
+LLM Gateway should not manage hardware volume, microphone gain, or ALS policy.
+Those belong to the satellite/display layer.
+
+Recommended next satellite work:
+
+- wrap `snd-command` with a playback script that records start/end/failure,
+- set output volume based on day/night/user preference,
+- play local OPUS fallback clips for network/TTS failures,
+- keep microphone mute gates around wake cues and TTS playback,
+- log enough audio-chain telemetry for Voice Harness or lock-screen display.
+
+## Harness layers
+
+Implemented:
+
+- unit tests for routing, policy, search, TTS Markdown cleanup, memory, and
+  panel registration,
+- a pure Python scenario harness that checks search gating, spoken style,
+  forbidden phrases, confirmation requirements, and unsafe service-call markers.
+
+Planned:
+
+- real Assist run trace capture,
+- search evidence/citation auditing,
+- satellite playback trace ingestion,
+- remote no-audio conversation tests,
+- acoustic end-to-end tests run only when the satellite is idle and the room is
+  quiet.
+
+Each remote/acoustic run should capture:
+
+- timestamps,
 - satellite journal,
-- ASR request id/transcript length,
+- ASR transcript/request metadata,
 - Gateway request metrics,
 - tool names and success/error flags,
 - entity state before/after,
-- microphone mute state after completion.
-
-Avoid synthetic speaker injection while a user is actively testing; it contaminates ASR
-and wake-word results.
-
-Implemented v1 adds a pure Python scenario harness that evaluates search gating, spoken
-style, forbidden phrases, confirmation requirements, and unsafe service-call markers
-from YAML-like scenario dictionaries.
+- microphone mute state after completion,
+- final spoken text.
