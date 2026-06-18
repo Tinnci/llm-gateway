@@ -221,6 +221,7 @@ async def async_chat_completion_with_fallback(  # noqa: PLR0913
     top_p: float,
     selector: ProviderSelector | None = None,
     processing_cues: bool = True,
+    processing_cue_delay_s: float = PROCESSING_CUE_DELAY_S,
 ) -> ChatFallbackResult:
     """Run chat completion through primary provider and ordered fallbacks."""
     attempts: list[ProviderAttempt] = []
@@ -243,7 +244,7 @@ async def async_chat_completion_with_fallback(  # noqa: PLR0913
         started = time.monotonic()
         cue_task = (
             asyncio.create_task(
-                _processing_cue(session),
+                _processing_cue(session, processing_cue_delay_s),
                 name="llm_gateway_processing_cue",
             )
             if processing_cues
@@ -483,10 +484,10 @@ def _is_retryable(err: LLMGatewayError) -> bool:
     return False
 
 
-async def _processing_cue(session: aiohttp.ClientSession) -> bool:
+async def _processing_cue(session: aiohttp.ClientSession, delay_s: float) -> bool:
     """Start the local processing earcon loop after a soft delay."""
     try:
-        await asyncio.sleep(PROCESSING_CUE_DELAY_S)
+        await asyncio.sleep(max(0.0, delay_s))
         async with session.post(
             f"{DISPLAY_AGENT_BASE_URL}/voice/processing/start",
             timeout=aiohttp.ClientTimeout(total=PROCESSING_CUE_TIMEOUT_S),

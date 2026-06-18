@@ -92,29 +92,32 @@ def test_action_tool_detection():
     assert not _is_action_tool("GetLiveContext")
 
 
-def test_tool_choice_for_turn_forces_search_for_source_questions():
+def test_tool_choice_for_turn_does_not_force_search_for_stable_source_questions():
     tools = [{"type": "function", "function": {"name": "search_web"}}]
-    assert _tool_choice_for_turn(
-        "关关雎鸠，在河之洲，这句话是出自哪里？",
-        tools,
-        force_tool_call=False,
-    ) == {"type": "function", "function": {"name": "search_web"}}
     assert (
         _tool_choice_for_turn(
             "关关雎鸠，在河之洲，这句话是出自哪里？",
             tools,
             force_tool_call=False,
-            require_grounding=False,
         )
         is None
     )
+
+
+def test_tool_choice_for_turn_forces_search_for_current_questions():
+    tools = [{"type": "function", "function": {"name": "search_web"}}]
+    assert _tool_choice_for_turn(
+        "查一下今天空气质量",
+        tools,
+        force_tool_call=False,
+    ) == {"type": "function", "function": {"name": "search_web"}}
 
 
 def test_tool_choice_for_turn_preserves_action_retry():
     assert _tool_choice_for_turn("打开灯", [], force_tool_call=True) == "required"
 
 
-async def test_async_grounding_for_turn_uses_verifier_sub_agent():
+async def test_async_grounding_for_turn_uses_cheap_canonical_evidence():
     content = [
         conversation.ToolResultContent(
             agent_id="a",
@@ -125,7 +128,7 @@ async def test_async_grounding_for_turn_uses_verifier_sub_agent():
                 "results": [
                     {
                         "title": "关雎原文翻译",
-                        "content": "之《诗经》之《关雎》原文赏析及翻译",
+                        "content": "《关雎》是《诗经·周南》第一篇。",
                     }
                 ],
             },
@@ -137,27 +140,9 @@ async def test_async_grounding_for_turn_uses_verifier_sub_agent():
         provider_selector=None,
     )
 
-    async def verify(**kwargs: object):
-        assert kwargs["route"].kind == "deep"
-        assert kwargs["route"].async_deep_task is False
-        assert kwargs["tools"] is None
-        assert kwargs["processing_cues"] is False
-        assert kwargs["temperature"] == 0
-        return SimpleNamespace(
-            message={
-                "content": (
-                    '{"status":"corrected","answer":"这句诗出自《诗经·周南·关雎》。",'
-                    '"confidence":0.94,"reason":"证据标题为周南·关雎"}'
-                )
-            },
-            provider={"name": "primary", "model": "deep"},
-            attempts=[],
-        )
-
     with patch(
         "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
-        side_effect=verify,
-    ):
+    ) as verify:
         grounding = await _async_grounding_for_turn(
             runtime,
             {},
@@ -166,10 +151,11 @@ async def test_async_grounding_for_turn_uses_verifier_sub_agent():
             content,
         )
 
+    verify.assert_not_called()
     assert grounding.status == "repaired"
     assert grounding.text == "这句诗出自《诗经·周南·关雎》。"
-    assert grounding.confidence == 0.94
-    assert grounding.verifier["route"] == "deep"
+    assert grounding.confidence == 0.92
+    assert grounding.verifier["mode"] == "cheap_evidence"
 
 
 async def test_async_grounding_for_turn_ignores_non_source_turns():
@@ -184,7 +170,7 @@ async def test_async_grounding_for_turn_ignores_non_source_turns():
     assert grounding.text == "这句诗出自《诗经·关关》。"
 
 
-async def test_async_grounding_for_turn_reports_verifier_error():
+async def test_async_grounding_for_turn_does_not_call_deep_verifier_without_evidence():
     content = [
         conversation.ToolResultContent(
             agent_id="a",
@@ -201,7 +187,7 @@ async def test_async_grounding_for_turn_reports_verifier_error():
     with patch(
         "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
         side_effect=LLMGatewayConnectionError("timeout"),
-    ):
+    ) as verify:
         grounding = await _async_grounding_for_turn(
             runtime,
             {},
@@ -210,7 +196,8 @@ async def test_async_grounding_for_turn_reports_verifier_error():
             content,
         )
 
-    assert grounding.status == "verifier_error"
+    verify.assert_not_called()
+    assert grounding.status == "no_evidence"
     assert grounding.text == "这句诗出自《诗经·周南·关关》。"
 
 

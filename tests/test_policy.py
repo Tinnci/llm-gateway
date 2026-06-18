@@ -6,6 +6,7 @@ from homeassistant.helpers import llm
 
 from custom_components.llm_gateway.policy import (
     should_allow_search,
+    should_force_search_in_voice_path,
     should_require_search,
     validate_tool_call,
 )
@@ -24,6 +25,15 @@ def test_search_policy_requires_grounding_for_source_questions():
     assert should_require_search("这个典故的原文是什么？")
     assert not should_require_search("查一下今天空气质量")
     assert not should_require_search("打开卧室灯")
+
+
+def test_search_policy_only_forces_voice_path_for_current_or_explicit_search():
+    assert should_force_search_in_voice_path("查一下今天空气质量")
+    assert should_force_search_in_voice_path("这个设备错误码是什么意思")
+    assert not should_force_search_in_voice_path(
+        "关关雎鸠，在河之洲，这句话是出自哪里？"
+    )
+    assert not should_force_search_in_voice_path("打开卧室灯")
 
 
 def test_high_risk_tool_requires_confirmation():

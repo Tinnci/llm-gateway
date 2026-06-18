@@ -40,6 +40,36 @@ These are examples, not a provider requirement. Legacy `chat_model`,
 `max_tokens`, `chat_timeout`, and `extra_body` remain fallbacks for the Fast
 route.
 
+## First response controller
+
+Voice turns run a local first-response controller before slow model, search, or
+grounding work can dominate the critical path. The controller is intentionally
+small and deterministic: it classifies the turn for immediate feedback and
+selects a local cue policy, but it does not own complex reasoning.
+
+Current local task classes:
+
+- `home_control`: ordinary device control; avoid extra audio before completion.
+- `home_state`: state questions; prefer HA context/tool answers over web search.
+- `search_needed`: explicit or current-information search; start the processing
+  cue quickly while search/model work runs.
+- `stable_fact`: stable knowledge such as canonical quote origins; prefer local
+  cache or fast model before web search.
+- `planning`: long planning/automation requests; acknowledge quickly, then use
+  the Deep background path.
+- `high_risk`: lock/alarm/whole-home/high-power requests; confirmation policy
+  takes priority over model confidence.
+
+This is a race-to-first-safe policy, not a race-to-first-answer policy. Fast
+local answers can be committed only when they are low risk and high confidence.
+Strong models can still help with complex reasoning, but they should not block
+ordinary spoken feedback.
+
+The first-response controller also drives the local processing cue delay:
+explicit search and planning requests can start the display-agent processing
+loop quickly, while ordinary HA control remains quiet unless it actually takes
+too long.
+
 ## Latency feedback
 
 Voice latency should be handled as a user-interface state, not as extra model
@@ -150,6 +180,27 @@ Implemented cleanup:
 
 Long details should be surfaced through Home Assistant notifications, the Voice
 Harness panel, or a later visual surface rather than spoken in one turn.
+
+## Source grounding
+
+Source grounding does not use a Deep model synchronously in the voice critical
+path. The previous design could add 10+ seconds of latency and allowed a
+generative verifier to invent merged titles from polluted search candidates.
+
+The current voice-path grounding is a cheap evidence Module:
+
+- distinguish noisy `source_candidates` from `source_canonical_answers`,
+- repair only when one canonical answer is directly supported by an evidence
+  span,
+- never construct a new title by combining unrelated candidates,
+- preserve the original answer when evidence is missing or ambiguous,
+- record candidates, canonical answers, repairs, confidence, and reason in
+  Voice Harness traces.
+
+The model verifier prompt remains available for future background audit work,
+but its interface is now `accept/select/reject/abstain`. `select` must choose an
+exact string from `allowed_answers`; unlisted answers are treated as verifier
+errors and cannot replace spoken output.
 
 ## Tool policy
 

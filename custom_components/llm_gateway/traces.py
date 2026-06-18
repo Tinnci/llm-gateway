@@ -229,6 +229,11 @@ def _grounding_summary(raw_payload: dict[str, Any]) -> dict[str, Any]:
             for candidate in grounding.get("candidates") or []
             if candidate
         ][:8],
+        "canonical_answers": [
+            _truncate(str(answer), 120)
+            for answer in grounding.get("canonical_answers") or []
+            if answer
+        ][:4],
         "repairs": [
             {
                 "from": _truncate(str(repair.get("from") or ""), 80),
@@ -254,6 +259,7 @@ def _verifier_summary(value: object) -> dict[str, Any]:
         "provider": str(provider.get("name") or ""),
         "latency_ms": value.get("latency_ms"),
         "error": str(value.get("error") or ""),
+        "raw_excerpt": _truncate(str(value.get("raw_excerpt") or ""), 240),
     }
 
 

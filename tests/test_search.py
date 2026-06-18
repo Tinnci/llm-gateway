@@ -61,4 +61,5 @@ def test_search_result_extracts_source_candidates():
     )
 
     assert result["source_candidates"] == ["诗经", "关雎"]
-    assert "Do not rename titles" in result["grounding_instruction"]
+    assert result["source_canonical_answers"] == []
+    assert "Do not build new titles" in result["grounding_instruction"]

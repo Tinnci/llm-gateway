@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from custom_components.llm_gateway.const import (
     CONF_CHAT_MODEL,
+    CONF_DEEP_EXTRA_BODY,
     CONF_DEEP_MODEL,
     CONF_FAST_MODEL,
     CONF_MID_MODEL,
@@ -60,4 +61,19 @@ def test_select_verifier_route_uses_bounded_deep_model():
     assert route.model == "deep"
     assert route.max_tokens <= 512
     assert route.timeout_s <= 45
+    assert route.extra_body == {"response_format": {"type": "json_object"}}
     assert route.async_deep_task is False
+
+
+def test_select_verifier_route_preserves_extra_body_with_json_response():
+    route = select_verifier_route(
+        {
+            CONF_DEEP_MODEL: "deep",
+            CONF_DEEP_EXTRA_BODY: '{"reasoning_budget": 256}',
+        }
+    )
+
+    assert route.extra_body == {
+        "reasoning_budget": 256,
+        "response_format": {"type": "json_object"},
+    }

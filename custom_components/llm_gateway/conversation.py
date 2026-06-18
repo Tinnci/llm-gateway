@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Literal
 
 from homeassistant.components import conversation
@@ -28,19 +27,21 @@ from .const import (
     RECOMMENDED_TOP_P,
     TOOL_LOOP_ERROR_SPEECH,
 )
+from .first_response import (
+    FirstResponseDecision,
+    decide_first_response,
+    stable_fact_answer,
+)
 from .grounding import (
     GroundingResult,
-    build_grounding_verifier_messages,
     initial_grounding_result,
-    parse_grounding_verifier_response,
 )
-from .policy import should_require_search, validate_tool_call
+from .policy import should_force_search_in_voice_path, validate_tool_call
 from .providers import async_chat_completion_with_fallback
 from .router import (
     legacy_model_from_options,
     parse_extra_body,
     select_model_route,
-    select_verifier_route,
 )
 from .search import (
     SEARCH_TOOL_NAME,
@@ -66,8 +67,8 @@ VOICE_RESPONSE_CONTRACT = """Voice response contract:
 - Final assistant content is spoken aloud, so use plain text rather than Markdown.
 - Do not wrap quotations, poems, entity names, or short facts in code fences.
 - Use code fences only when the user explicitly asks for code.
-- For source/origin questions about quotations or named works, verify with
-  search_web when it is available.
+- Use search_web only when current external information is required or the user
+  explicitly asks to search. Stable facts may be answered without web search.
 - Keep the spoken answer concise; put long details in the Home Assistant panel.
 """
 
@@ -172,7 +173,7 @@ def _tool_choice_for_turn(
         return "required"
     if (
         require_grounding
-        and should_require_search(user_text)
+        and should_force_search_in_voice_path(user_text)
         and _has_tool(tools, SEARCH_TOOL_NAME)
     ):
         return {"type": "function", "function": {"name": SEARCH_TOOL_NAME}}
@@ -296,6 +297,40 @@ class LLMGatewayConversationEntity(
                 run_id,
             )
 
+        first_response = decide_first_response(user_input.text)
+        runtime.voice_runs.mark(
+            run_id,
+            "first_response",
+            attrs=first_response.as_dict(),
+        )
+        if local_answer := stable_fact_answer(user_input.text):
+            runtime.voice_runs.mark(
+                run_id,
+                "local_stable_answer",
+                attrs={"source": "quote_origin_cache"},
+            )
+            async for _tool_result in chat_log.async_add_assistant_content(
+                conversation.AssistantContent(
+                    agent_id=self.entity_id,
+                    content=local_answer,
+                )
+            ):
+                pass
+            return await self._async_finalize_turn(
+                user_input,
+                chat_log,
+                started,
+                {
+                    "kind": "local_stable_fact",
+                    "model": "local_knowledge_cache",
+                    "max_tokens": 0,
+                    "timeout_s": 0,
+                    "async_deep_task": False,
+                    "first_response": first_response.as_dict(),
+                },
+                run_id,
+            )
+
         route = select_model_route(user_input.text, options)
         runtime.voice_runs.mark(
             run_id,
@@ -350,7 +385,7 @@ class LLMGatewayConversationEntity(
                 pass
         else:
             provider_runs = await self._async_run_chat_log(
-                chat_log, route, user_input.text, run_id
+                chat_log, route, user_input.text, run_id, first_response
             )
 
         return await self._async_finalize_turn(
@@ -461,6 +496,7 @@ class LLMGatewayConversationEntity(
         route: ModelRoute,
         user_text: str,
         run_id: str,
+        first_response: FirstResponseDecision,
     ) -> list[dict[str, Any]]:
         """Drive the model, executing tool calls until it returns a final answer."""
         runtime = self.entry.runtime_data
@@ -517,6 +553,7 @@ class LLMGatewayConversationEntity(
                     temperature=options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE),
                     top_p=options.get(CONF_TOP_P, RECOMMENDED_TOP_P),
                     selector=runtime.provider_selector,
+                    processing_cue_delay_s=first_response.processing_cue_delay_s,
                 )
                 message = fallback_result.message
                 runtime.voice_runs.mark(
@@ -690,69 +727,15 @@ def _trace_status(assistant_text: str) -> str:
 
 
 async def _async_grounding_for_turn(
-    runtime: LLMGatewayRuntimeData,
-    options: dict[str, Any],
+    _runtime: LLMGatewayRuntimeData,
+    _options: dict[str, Any],
     user_text: str,
     assistant_text: str,
     content: list[conversation.Content],
 ) -> GroundingResult:
-    """Run source grounding through a bounded verifier sub-agent."""
+    """Run cheap source grounding on the voice critical path."""
     search_results = _search_results_from_content(content)
-    initial = initial_grounding_result(user_text, assistant_text, search_results)
-    if initial.status != "ok":
-        return initial
-
-    route = select_verifier_route(options)
-    started = time.monotonic()
-    try:
-        fallback_result = await async_chat_completion_with_fallback(
-            session=runtime.session,
-            primary_client=runtime.client,
-            route=route,
-            options=options,
-            messages=build_grounding_verifier_messages(
-                user_text=user_text,
-                assistant_text=assistant_text,
-                search_results=search_results,
-            ),
-            tools=None,
-            tool_choice=None,
-            temperature=0,
-            top_p=0.1,
-            selector=runtime.provider_selector,
-            processing_cues=False,
-        )
-    except LLMGatewayError as err:
-        return GroundingResult(
-            status="verifier_error",
-            text=assistant_text,
-            candidates=initial.candidates,
-            reason=type(err).__name__,
-            verifier={
-                "mode": "model",
-                "route": route.kind,
-                "model": route.model,
-                "error": type(err).__name__,
-                "latency_ms": int((time.monotonic() - started) * 1000),
-            },
-        )
-
-    grounding = parse_grounding_verifier_response(
-        str(fallback_result.message.get("content") or ""),
-        fallback_text=assistant_text,
-        candidates=initial.candidates,
-    )
-    return replace(
-        grounding,
-        verifier={
-            **grounding.verifier,
-            "route": route.kind,
-            "model": route.model,
-            "provider": fallback_result.provider,
-            "attempts": fallback_result.attempts,
-            "latency_ms": int((time.monotonic() - started) * 1000),
-        },
-    )
+    return initial_grounding_result(user_text, assistant_text, search_results)
 
 
 def _search_results_from_content(

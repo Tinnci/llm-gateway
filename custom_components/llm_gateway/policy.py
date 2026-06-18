@@ -57,6 +57,22 @@ _SEARCH_REQUIRE_KEYWORDS = (
     "典故",
     "原文",
 )
+_VOICE_PATH_SEARCH_KEYWORDS = (
+    "查一下",
+    "搜一下",
+    "搜索",
+    "最新",
+    "新闻",
+    "交通",
+    "天气",
+    "空气质量",
+    "说明书",
+    "错误码",
+    "固件",
+    "兼容",
+    "价格",
+    "电价",
+)
 _SEARCH_FORBID_KEYWORDS = (
     "打开",
     "关",
@@ -99,6 +115,16 @@ def should_require_search(text: str) -> bool:
     normalized = text.strip().lower()
     return should_allow_search(normalized) and any(
         keyword in normalized for keyword in _SEARCH_REQUIRE_KEYWORDS
+    )
+
+
+def should_force_search_in_voice_path(text: str) -> bool:
+    """Return whether search should be forced before the first model answer."""
+    normalized = text.strip().lower()
+    if not normalized:
+        return False
+    return should_allow_search(normalized) and any(
+        keyword in normalized for keyword in _VOICE_PATH_SEARCH_KEYWORDS
     )
 
 

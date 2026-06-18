@@ -91,6 +91,7 @@ const I18N = {
     "runs.provider_attempts": "Provider attempts",
     "runs.grounding": "Grounding verifier",
     "runs.grounding_candidates": "Evidence candidates",
+    "runs.grounding_canonical": "Canonical answers",
     "runs.grounding_repairs": "Repairs",
     "runs.timeline": "Timeline",
     "runs.raw_payload": "Raw compressed payload",
@@ -287,6 +288,7 @@ const I18N = {
     "runs.provider_attempts": "Provider 尝试",
     "runs.grounding": "证据校验",
     "runs.grounding_candidates": "证据候选",
+    "runs.grounding_canonical": "标准答案",
     "runs.grounding_repairs": "修正",
     "runs.timeline": "时间线",
     "runs.raw_payload": "压缩原始 payload",
@@ -1229,6 +1231,7 @@ class VoiceHarnessPanel extends HTMLElement {
     }
     const tone = this._groundingTone(status);
     const candidates = Array.isArray(grounding.candidates) ? grounding.candidates : [];
+    const canonical = Array.isArray(grounding.canonical_answers) ? grounding.canonical_answers : [];
     const repairs = Array.isArray(grounding.repairs) ? grounding.repairs : [];
     return `
       <div class="groundingBox ${tone}">
@@ -1240,6 +1243,12 @@ class VoiceHarnessPanel extends HTMLElement {
           <div class="ruleList compact">
             <strong>${escapeHtml(this._t("runs.grounding_candidates"))}</strong>
             ${candidates.map((candidate) => `<span>${escapeHtml(candidate)}</span>`).join("")}
+          </div>
+        ` : ""}
+        ${canonical.length ? `
+          <div class="ruleList compact">
+            <strong>${escapeHtml(this._t("runs.grounding_canonical"))}</strong>
+            ${canonical.map((answer) => `<span>${escapeHtml(answer)}</span>`).join("")}
           </div>
         ` : ""}
         ${repairs.length ? `
