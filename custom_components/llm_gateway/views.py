@@ -292,6 +292,7 @@ class HarnessStatusView(HomeAssistantView):
                     "api_base": API_BASE,
                 },
                 "entries": [_entry_status(entry) for entry in _entries(hass)],
+                "satellite": _satellite_status(hass),
                 "editable": _editable_schema(),
                 "earcons": await hass.async_add_executor_job(_earcon_pack_status),
                 "prompt_policies": PROMPT_POLICIES,
@@ -474,6 +475,64 @@ def _entry_status(entry: ConfigEntry) -> dict[str, Any]:
     }
 
 
+SATELLITE_STATE_ENTITIES = {
+    "voice_pipeline": "binary_sensor.kukui_voice_pipeline",
+    "voice_paused": "binary_sensor.kukui_voice_paused",
+    "display_awake": "binary_sensor.kukui_display_awake",
+    "pause_requested": "input_boolean.kukui_voice_pause_requested",
+    "pause_minutes": "input_number.kukui_voice_pause_minutes",
+    "ambient_light": "sensor.kukui_ambient_light",
+    "screen_brightness": "sensor.kukui_screen_brightness",
+}
+
+
+def _satellite_status(hass: HomeAssistant) -> dict[str, Any]:
+    """Return safe HA-exposed satellite controls and state for the panel."""
+    states = {
+        key: _entity_state(hass, entity_id)
+        for key, entity_id in SATELLITE_STATE_ENTITIES.items()
+    }
+    return {
+        "states": states,
+        "services": {
+            "pause": hass.services.has_service("script", "kukui_voice_pause"),
+            "resume": hass.services.has_service("script", "kukui_voice_resume"),
+            "set_pause_minutes": hass.services.has_service("input_number", "set_value"),
+        },
+    }
+
+
+def _entity_state(hass: HomeAssistant, entity_id: str) -> dict[str, Any]:
+    state = hass.states.get(entity_id)
+    if state is None:
+        return {
+            "entity_id": entity_id,
+            "state": "missing",
+            "available": False,
+            "name": entity_id,
+        }
+    return {
+        "entity_id": entity_id,
+        "state": state.state,
+        "available": True,
+        "name": state.attributes.get("friendly_name") or entity_id,
+        "unit": state.attributes.get("unit_of_measurement") or "",
+        "attributes": {
+            key: value
+            for key, value in state.attributes.items()
+            if key
+            in {
+                "paused_until",
+                "remaining_seconds",
+                "detail",
+                "summary",
+                "friendly_name",
+                "unit_of_measurement",
+            }
+        },
+    }
+
+
 def _options_status(options: dict[str, Any]) -> dict[str, Any]:
     return {
         "routing_mode": options.get(CONF_ROUTING_MODE, ROUTING_MODE_AUTO),
@@ -522,7 +581,7 @@ def _editable_schema() -> dict[str, Any]:
     }
 
 
-def _validate_editable_options(payload: dict[str, Any]) -> dict[str, Any]:
+def _validate_editable_options(payload: dict[str, Any]) -> dict[str, Any]:  # noqa: PLR0912
     updates: dict[str, Any] = {}
 
     if CONF_ROUTING_MODE in payload:

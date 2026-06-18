@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
+from typing import Self
+
 import pytest
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from custom_components.llm_gateway.api import (
     LLMGatewayAuthError,
     LLMGatewayClient,
+    LLMGatewayConnectionError,
     LLMGatewayError,
     LLMGatewayHTTPError,
 )
@@ -121,3 +126,39 @@ async def test_chat_completion_malformed(hass, aioclient_mock):
             temperature=0.1,
             top_p=0.9,
         )
+
+
+class _HangingRequest:
+    async def __aenter__(self) -> Self:
+        await asyncio.sleep(30)
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: object,
+    ) -> bool:
+        return False
+
+
+class _HangingSession:
+    def request(self, *args: object, **kwargs: object) -> _HangingRequest:
+        return _HangingRequest()
+
+
+async def test_chat_completion_has_outer_hard_timeout():
+    client = LLMGatewayClient(_HangingSession(), BASE, "k")
+    started = time.monotonic()
+
+    with pytest.raises(LLMGatewayConnectionError):
+        await client.async_chat_completion(
+            model="m",
+            messages=[{"role": "user", "content": "x"}],
+            max_tokens=8,
+            temperature=0.1,
+            top_p=0.9,
+            timeout_s=1,
+        )
+
+    assert time.monotonic() - started < 3

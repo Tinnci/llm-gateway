@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from http import HTTPStatus
@@ -63,6 +64,7 @@ class LLMGatewayClient:
     ) -> dict[str, Any]:
         url = f"{self._base_url}/{path.lstrip('/')}"
         started = time.monotonic()
+        timeout_s = max(1, int(timeout_s))
         payload_bytes = (
             len(json.dumps(json_payload, ensure_ascii=False).encode())
             if json_payload is not None
@@ -76,38 +78,40 @@ class LLMGatewayClient:
             timeout_s,
         )
         try:
-            async with self._session.request(
-                method,
-                url,
-                headers=self._headers,
-                json=json_payload,
-                timeout=aiohttp.ClientTimeout(total=timeout_s),
-            ) as resp:
-                body = await resp.text()
-                LOGGER.info(
-                    "Gateway request completed method=%s path=%s status=%d "
-                    "elapsed_s=%.3f response_bytes=%d",
+            async with asyncio.timeout(timeout_s):
+                async with self._session.request(
                     method,
-                    path,
-                    resp.status,
-                    time.monotonic() - started,
-                    len(body.encode()),
-                )
-                if resp.status in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
-                    raise LLMGatewayAuthError(
-                        f"Authentication failed ({resp.status}); check the API key"
+                    url,
+                    headers=self._headers,
+                    json=json_payload,
+                    timeout=aiohttp.ClientTimeout(total=timeout_s),
+                ) as resp:
+                    body = await resp.text()
+                    LOGGER.info(
+                        "Gateway request completed method=%s path=%s status=%d "
+                        "elapsed_s=%.3f response_bytes=%d",
+                        method,
+                        path,
+                        resp.status,
+                        time.monotonic() - started,
+                        len(body.encode()),
                     )
-                if resp.status >= HTTPStatus.BAD_REQUEST:
-                    raise LLMGatewayHTTPError(resp.status, body)
-                return _parse_json(body)
+                    if resp.status in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN):
+                        raise LLMGatewayAuthError(
+                            f"Authentication failed ({resp.status}); check the API key"
+                        )
+                    if resp.status >= HTTPStatus.BAD_REQUEST:
+                        raise LLMGatewayHTTPError(resp.status, body)
+                    return _parse_json(body)
         except TimeoutError as err:
             LOGGER.warning(
                 "Gateway request timed out method=%s path=%s elapsed_s=%.3f "
-                "payload_bytes=%d",
+                "payload_bytes=%d timeout_s=%d",
                 method,
                 path,
                 time.monotonic() - started,
                 payload_bytes,
+                timeout_s,
             )
             raise LLMGatewayConnectionError(f"Timeout contacting {url}") from err
         except aiohttp.ClientError as err:

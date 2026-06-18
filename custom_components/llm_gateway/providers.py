@@ -6,9 +6,10 @@ import json
 import time
 from dataclasses import dataclass
 from http import HTTPStatus
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import aiohttp
+if TYPE_CHECKING:
+    import aiohttp
 
 from .api import (
     LLMGatewayAuthError,
@@ -23,6 +24,7 @@ from .router import ModelRoute
 PROFILE_TEXT_LIMIT = 64
 MODEL_TEXT_LIMIT = 256
 DEFAULT_SOFT_TIMEOUTS = {"fast": 3, "mid": 8, "deep": 30}
+HTTP_SERVER_ERROR = 500
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,12 +99,12 @@ def parse_provider_profiles(raw: object) -> list[ProviderProfile]:
     if data in (None, ""):
         return []
     if not isinstance(data, list):
-        raise ValueError("provider_profiles must be a list or {providers: [...]}")
+        raise ValueError("provider_profiles must be a list or {providers: [...]}")  # noqa: TRY004
 
     profiles: list[ProviderProfile] = []
     for index, item in enumerate(data, start=1):
         if not isinstance(item, dict):
-            raise ValueError(f"provider profile {index} must be an object")
+            raise ValueError(f"provider profile {index} must be an object")  # noqa: TRY004
         profiles.append(_profile_from_dict(item, index))
     return profiles
 
@@ -311,7 +313,7 @@ def _tier_int_map(
         value = _bounded_int(raw, field, minimum=minimum, maximum=maximum)
         return {"fast": value, "mid": value, "deep": value}
     if not isinstance(raw, dict):
-        raise ValueError(f"{field} must be a number or object")
+        raise ValueError(f"{field} must be a number or object")  # noqa: TRY004
     result = dict(default)
     for tier in ("fast", "mid", "deep"):
         if tier in raw:
@@ -325,14 +327,14 @@ def _tier_object_map(raw: object, field: str) -> dict[str, dict[str, Any]]:
     if raw in (None, ""):
         return {}
     if not isinstance(raw, dict):
-        raise ValueError(f"{field} must be an object")
+        raise ValueError(f"{field} must be an object")  # noqa: TRY004
     result: dict[str, dict[str, Any]] = {}
     for tier in ("fast", "mid", "deep"):
         value = raw.get(tier) or raw.get(f"{tier}_extra_body")
         if value is None:
             continue
         if not isinstance(value, dict):
-            raise ValueError(f"{field}.{tier} must be an object")
+            raise ValueError(f"{field}.{tier} must be an object")  # noqa: TRY004
         result[tier] = value
     return result
 
@@ -360,5 +362,8 @@ def _is_retryable(err: LLMGatewayError) -> bool:
     if isinstance(err, LLMGatewayConnectionError | LLMGatewayAuthError):
         return True
     if isinstance(err, LLMGatewayHTTPError):
-        return err.status == HTTPStatus.TOO_MANY_REQUESTS or err.status >= 500
+        return (
+            err.status == HTTPStatus.TOO_MANY_REQUESTS
+            or err.status >= HTTP_SERVER_ERROR
+        )
     return False

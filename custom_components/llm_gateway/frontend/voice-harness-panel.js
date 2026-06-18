@@ -16,7 +16,9 @@
  * @typedef {{ id: string, name?: string, name_i18n?: Record<string, string>, user?: string, user_i18n?: Record<string, string>, response?: string, response_i18n?: Record<string, string>, expected?: Record<string, unknown>, expected_i18n?: Record<string, Record<string, unknown>> }} SampleScenario
  * @typedef {{ path?: string, url?: string, duration_ms?: number, lufs?: number, peak_dbfs?: number, purpose?: string, purpose_i18n?: Record<string, string> }} EarconFile
  * @typedef {{ pack?: string, sample_rate?: number, target_lufs?: number, true_peak_dbfs?: number, files?: Record<string, EarconFile> }} EarconPack
- * @typedef {{ entries: HarnessEntry[], editable: EditableSchema, earcons?: EarconPack, prompt_policies?: PromptPolicy[], sample_scenarios?: SampleScenario[] }} HarnessStatus
+ * @typedef {{ entity_id: string, state: string, available: boolean, name?: string, unit?: string, attributes?: Record<string, unknown> }} SatelliteEntityState
+ * @typedef {{ states?: Record<string, SatelliteEntityState>, services?: Record<string, boolean> }} SatelliteStatus
+ * @typedef {{ entries: HarnessEntry[], editable: EditableSchema, satellite?: SatelliteStatus, earcons?: EarconPack, prompt_policies?: PromptPolicy[], sample_scenarios?: SampleScenario[] }} HarnessStatus
  * @typedef {{ entry_id: string, options: { routing_mode: RouteKind, models: TierTextMap, max_tokens: TierNumberMap, timeouts: TierNumberMap, trace: TraceOptions } }} OptionsUpdateRequest
  * @typedef {{ user: string, response: string, expected: string }} ScenarioDraft
  */
@@ -24,6 +26,7 @@
 const TABS = [
   ["runs", "tab.runs", "mdi:play-circle-outline"],
   ["settings", "tab.settings", "mdi:tune-variant"],
+  ["satellite", "tab.satellite", "mdi:microphone-settings"],
   ["policies", "tab.policies", "mdi:shield-check-outline"],
   ["scenarios", "tab.scenarios", "mdi:clipboard-text-search-outline"],
   ["search", "tab.search", "mdi:web"],
@@ -60,6 +63,7 @@ const I18N = {
     "common.disabled": "Disabled",
     "tab.runs": "Runs",
     "tab.settings": "Settings",
+    "tab.satellite": "Satellite",
     "tab.policies": "Prompt Policies",
     "tab.scenarios": "Scenarios",
     "tab.search": "Search Lab",
@@ -89,7 +93,7 @@ const I18N = {
     "entry.base_url_missing": "Base URL not configured",
     "settings.empty": "No editable config entries.",
     "settings.title": "Editable runtime settings",
-    "settings.description": "These fields update the safe options subset. Secrets, base URL, HA LLM API exposure and the system prompt stay in Home Assistant options.",
+    "settings.description": "These fields update runtime-safe options. Secrets, base URL, HA LLM API exposure and the system prompt use Home Assistant options flow for admin validation and redaction.",
     "settings.routing": "Routing",
     "settings.routing_mode": "Routing mode",
     "settings.models": "Models",
@@ -103,6 +107,22 @@ const I18N = {
     "settings.max_runs": "Maximum diagnostic runs",
     "settings.retention_hours": "Diagnostic retention hours",
     "settings.saved": "Settings saved.",
+    "satellite.title": "Satellite and voice controls",
+    "satellite.description": "These controls use HA entities and services that are already exposed. Wake thresholds and VAD tuning need a typed local apply API before they should be edited here.",
+    "satellite.pause": "Pause voice",
+    "satellite.resume": "Resume voice",
+    "satellite.save_minutes": "Save minutes",
+    "satellite.minutes": "Pause minutes",
+    "satellite.unavailable": "HA satellite entities are not available.",
+    "satellite.voice_pipeline": "Voice pipeline",
+    "satellite.voice_paused": "Voice paused",
+    "satellite.display_awake": "Display awake",
+    "satellite.pause_requested": "Pause request switch",
+    "satellite.pause_minutes": "Pause minutes",
+    "satellite.ambient_light": "Ambient light",
+    "satellite.screen_brightness": "Screen brightness",
+    "satellite.missing": "missing",
+    "satellite.service_unavailable": "Required HA service is not available.",
     "policies.empty": "No prompt policies.",
     "scenario.user": "User input",
     "scenario.response": "Assistant response",
@@ -211,6 +231,7 @@ const I18N = {
     "common.disabled": "未启用",
     "tab.runs": "运行记录",
     "tab.settings": "配置",
+    "tab.satellite": "卫星端",
     "tab.policies": "提示策略",
     "tab.scenarios": "场景测试",
     "tab.search": "搜索实验室",
@@ -240,7 +261,7 @@ const I18N = {
     "entry.base_url_missing": "未配置 Base URL",
     "settings.empty": "没有可编辑的配置项。",
     "settings.title": "可编辑运行配置",
-    "settings.description": "这些字段只会更新安全的 options 子集。密钥、Base URL、HA LLM API 暴露范围和系统提示词仍在 Home Assistant options flow 中编辑。",
+    "settings.description": "这些字段只更新运行期安全选项。密钥、Base URL、HA LLM API 暴露范围和系统提示词使用 Home Assistant options flow 做管理员校验和脱敏。",
     "settings.routing": "路由",
     "settings.routing_mode": "路由模式",
     "settings.models": "模型",
@@ -254,6 +275,22 @@ const I18N = {
     "settings.max_runs": "最多诊断运行数",
     "settings.retention_hours": "诊断保留小时数",
     "settings.saved": "配置已保存。",
+    "satellite.title": "卫星端与语音控制",
+    "satellite.description": "这些控制只调用已经暴露到 HA 的实体和服务。唤醒阈值、VAD 参数需要先有 typed 本地应用 API，再放到这里编辑。",
+    "satellite.pause": "暂停语音",
+    "satellite.resume": "恢复语音",
+    "satellite.save_minutes": "保存分钟数",
+    "satellite.minutes": "暂停分钟数",
+    "satellite.unavailable": "HA 卫星端实体不可用。",
+    "satellite.voice_pipeline": "语音管线",
+    "satellite.voice_paused": "语音暂停",
+    "satellite.display_awake": "屏幕唤醒",
+    "satellite.pause_requested": "暂停请求开关",
+    "satellite.pause_minutes": "暂停分钟数",
+    "satellite.ambient_light": "环境光",
+    "satellite.screen_brightness": "屏幕亮度",
+    "satellite.missing": "缺失",
+    "satellite.service_unavailable": "所需 HA 服务不可用。",
     "policies.empty": "没有提示策略。",
     "scenario.user": "用户输入",
     "scenario.response": "助手回复",
@@ -468,6 +505,51 @@ class VoiceHarnessPanel extends HTMLElement {
     }
   }
 
+  async _satelliteAction(action) {
+    if (!this.hass?.callService) {
+      this._error = this._t("satellite.service_unavailable");
+      this._render();
+      return;
+    }
+    this._busy = true;
+    this._error = "";
+      this._render();
+    try {
+      if (action === "pause") {
+        const minutes = this._satellitePauseMinutes();
+        await this.hass.callService("script", "kukui_voice_pause", {
+          minutes,
+          reason: "voice_harness",
+        });
+      } else if (action === "resume") {
+        await this.hass.callService("script", "kukui_voice_resume", {});
+      } else if (action === "save-minutes") {
+        const entityId = this._data?.satellite?.states?.pause_minutes?.entity_id;
+        const value = this._satellitePauseMinutes();
+        if (!entityId) {
+          throw new Error(this._t("satellite.unavailable"));
+        }
+        await this.hass.callService("input_number", "set_value", {
+          entity_id: entityId,
+          value,
+        });
+      }
+    } catch (err) {
+      this._error = err.message || String(err);
+    } finally {
+      this._busy = false;
+      await this._load();
+    }
+  }
+
+  _satellitePauseMinutes() {
+    const input = this.shadowRoot.querySelector("[data-satellite-minutes]");
+    if (input instanceof HTMLInputElement) {
+      return Number(input.value || 30);
+    }
+    return 30;
+  }
+
   async _api(method, path, payload) {
     if (this.hass?.callApi) {
       return this.hass.callApi(method, path, payload);
@@ -497,6 +579,10 @@ class VoiceHarnessPanel extends HTMLElement {
     }
     if (button.dataset.action === "refresh") {
       this._load();
+      return;
+    }
+    if (button.dataset.satelliteAction) {
+      this._satelliteAction(button.dataset.satelliteAction);
       return;
     }
     if (button.dataset.earcon) {
@@ -654,6 +740,9 @@ class VoiceHarnessPanel extends HTMLElement {
     if (this._activeTab === "settings") {
       return this._renderSettings(entries);
     }
+    if (this._activeTab === "satellite") {
+      return this._renderSatellite();
+    }
     if (this._activeTab === "policies") {
       return this._renderPolicies(entries);
     }
@@ -801,6 +890,70 @@ class VoiceHarnessPanel extends HTMLElement {
           </div>
         </fieldset>
       </form>
+    `;
+  }
+
+  _renderSatellite() {
+    const satellite = this._data?.satellite || {};
+    const states = satellite.states || {};
+    const services = satellite.services || {};
+    const pauseMinutes = Number(states.pause_minutes?.state || 30);
+    const stateKeys = [
+      "voice_pipeline",
+      "voice_paused",
+      "pause_requested",
+      "display_awake",
+      "ambient_light",
+      "screen_brightness",
+    ];
+    return `
+      <div class="satelliteGrid">
+        <article class="surface satellitePanel">
+          <div class="sectionHead">
+            <div>
+              <h2>${escapeHtml(this._t("satellite.title"))}</h2>
+              <div class="meta">${escapeHtml(this._t("satellite.description"))}</div>
+            </div>
+          </div>
+          <div class="satelliteControls">
+            <label>
+              <span>${escapeHtml(this._t("satellite.minutes"))}</span>
+              <input data-satellite-minutes type="number" min="1" max="120" step="1" value="${pauseMinutes}">
+            </label>
+            <button type="button" data-satellite-action="save-minutes" ${services.set_pause_minutes ? "" : "disabled"}>
+              <ha-icon icon="mdi:content-save-outline"></ha-icon>
+              <span>${escapeHtml(this._t("satellite.save_minutes"))}</span>
+            </button>
+            <button type="button" data-satellite-action="pause" ${services.pause ? "" : "disabled"}>
+              <ha-icon icon="mdi:microphone-off"></ha-icon>
+              <span>${escapeHtml(this._t("satellite.pause"))}</span>
+            </button>
+            <button type="button" data-satellite-action="resume" ${services.resume ? "" : "disabled"}>
+              <ha-icon icon="mdi:microphone"></ha-icon>
+              <span>${escapeHtml(this._t("satellite.resume"))}</span>
+            </button>
+          </div>
+          <div class="stateList">
+            ${stateKeys.map((key) => this._satelliteStateRow(key, states[key])).join("")}
+          </div>
+        </article>
+      </div>
+    `;
+  }
+
+  _satelliteStateRow(key, state) {
+    const available = Boolean(state?.available);
+    const value = available
+      ? `${state.state}${state.unit ? ` ${state.unit}` : ""}`
+      : this._t("satellite.missing");
+    return `
+      <div class="stateRow">
+        <div>
+          <strong>${escapeHtml(this._t(`satellite.${key}`))}</strong>
+          <span>${escapeHtml(state?.entity_id || "")}</span>
+        </div>
+        <span class="chip ${available ? "ok" : "error"}">${escapeHtml(value)}</span>
+      </div>
     `;
   }
 
@@ -1453,7 +1606,8 @@ const styles = `
   .policyGrid,
   .memoryGrid,
   .earconGrid,
-  .settingsGrid {
+  .settingsGrid,
+  .satelliteGrid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
     gap: 14px;
@@ -1472,6 +1626,51 @@ const styles = `
     color: var(--secondary-text-color);
     font-size: 13px;
     line-height: 1.45;
+  }
+
+  .satellitePanel {
+    display: grid;
+    gap: 14px;
+  }
+
+  .satelliteControls {
+    align-items: end;
+    display: grid;
+    gap: 10px;
+    grid-template-columns: minmax(140px, 1fr) repeat(3, max-content);
+  }
+
+  .stateList {
+    display: grid;
+    gap: 8px;
+  }
+
+  .stateRow {
+    align-items: center;
+    border: 1px solid var(--divider-color);
+    border-radius: 8px;
+    display: grid;
+    gap: 10px;
+    grid-template-columns: minmax(0, 1fr) max-content;
+    min-height: 56px;
+    padding: 8px 10px;
+  }
+
+  .stateRow div {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+  }
+
+  .stateRow strong {
+    font-size: 13px;
+  }
+
+  .stateRow span:not(.chip) {
+    color: var(--secondary-text-color);
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   fieldset {
@@ -1576,6 +1775,11 @@ const styles = `
   }
 
   .chip.bad {
+    color: var(--error-color);
+    background: color-mix(in srgb, var(--error-color) 12%, transparent);
+  }
+
+  .chip.error {
     color: var(--error-color);
     background: color-mix(in srgb, var(--error-color) 12%, transparent);
   }
@@ -1986,7 +2190,12 @@ const styles = `
     .policyGrid,
     .memoryGrid,
     .earconGrid,
-    .settingsGrid {
+    .settingsGrid,
+    .satelliteGrid {
+      grid-template-columns: 1fr;
+    }
+
+    .satelliteControls {
       grid-template-columns: 1fr;
     }
 

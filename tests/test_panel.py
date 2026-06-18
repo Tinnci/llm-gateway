@@ -41,6 +41,16 @@ async def test_panel_registers_sidebar_entry(hass):
 async def test_harness_status_api(hass, hass_client):
     """The panel status API returns sample scenarios."""
     assert await async_setup_component(hass, "http", {})
+    hass.states.async_set(
+        "binary_sensor.kukui_voice_paused",
+        "off",
+        {"friendly_name": "Kukui 语音暂停"},
+    )
+    hass.states.async_set(
+        "input_number.kukui_voice_pause_minutes",
+        "30",
+        {"friendly_name": "Kukui 语音暂停分钟数", "unit_of_measurement": "min"},
+    )
     await async_setup_panel(hass)
     client = await hass_client()
 
@@ -64,6 +74,12 @@ async def test_harness_status_api(hass, hass_client):
     assert data["sample_scenarios"]
     assert data["editable"]["routing_modes"]
     assert data["editable"]["max_tokens"]["max"] >= 16384
+    assert data["satellite"]["states"]["voice_paused"]["state"] == "off"
+    assert data["satellite"]["states"]["pause_minutes"]["unit"] == "min"
+    assert (
+        data["satellite"]["states"]["pause_requested"]["entity_id"]
+        == "input_boolean.kukui_voice_pause_requested"
+    )
 
 
 async def test_harness_evaluate_api(hass, hass_client):

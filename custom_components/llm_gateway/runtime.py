@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.components import persistent_notification
 from homeassistant.util import ulid
@@ -14,8 +14,9 @@ from .const import DOMAIN, LOGGER
 from .providers import async_chat_completion_with_fallback
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
+
     import aiohttp
-    from collections.abc import Mapping
     from homeassistant.core import HomeAssistant
 
     from .memory import VoiceMemory
