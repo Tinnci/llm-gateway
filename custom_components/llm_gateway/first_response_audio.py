@@ -461,7 +461,7 @@ class FirstResponsePlayer:
                         "semantic_state": SHORT_TTS_CACHE.get(text, "dynamic"),
                         "adapter": "display_agent",
                     },
-                    blocking=False,
+                    blocking=True,
                 )
             else:
                 await self._hass.services.async_call(

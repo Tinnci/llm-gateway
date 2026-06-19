@@ -42,6 +42,32 @@ class DeepTaskRecord:
     created_at: float = field(default_factory=time.time)
 
 
+@dataclass(frozen=True, slots=True)
+class TurnToken:
+    """Generation token for one active assistant turn."""
+
+    turn_id: str
+    generation: int
+
+
+@dataclass(frozen=True, slots=True)
+class TurnStart:
+    """Result of starting a new assistant turn."""
+
+    token: TurnToken
+    cancelled_turn_id: str = ""
+    cancel_reason: str = ""
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return trace-safe turn controller metadata."""
+        return {
+            "turn_id": self.token.turn_id,
+            "generation": self.token.generation,
+            "cancelled_turn_id": self.cancelled_turn_id,
+            "cancel_reason": self.cancel_reason,
+        }
+
+
 @dataclass(slots=True)
 class LLMGatewayRuntimeData:
     """Runtime objects shared by Gateway platforms."""
@@ -55,6 +81,62 @@ class LLMGatewayRuntimeData:
     first_response_player: FirstResponsePlayer
     provider_selector: ProviderSelector
     voice_runs: VoiceRunRecorder
+    turn_controller: TurnController
+
+
+class TurnController:
+    """Track current turn generation and stale results."""
+
+    def __init__(self) -> None:
+        self.current_turn_id = ""
+        self.generation = 0
+        self._cancelled: dict[str, dict[str, Any]] = {}
+
+    def start(self, turn_id: str) -> TurnStart:
+        """Start a new turn and mark the previous active turn as stale."""
+        previous = self.current_turn_id
+        self.generation += 1
+        self.current_turn_id = turn_id
+        cancelled_turn_id = ""
+        cancel_reason = ""
+        if previous and previous != turn_id:
+            cancelled_turn_id = previous
+            cancel_reason = "superseded_by_new_turn"
+            self._cancelled[previous] = {
+                "reason": cancel_reason,
+                "superseded_by": turn_id,
+                "generation": self.generation,
+            }
+        return TurnStart(
+            token=TurnToken(turn_id=turn_id, generation=self.generation),
+            cancelled_turn_id=cancelled_turn_id,
+            cancel_reason=cancel_reason,
+        )
+
+    def is_current(self, token: TurnToken) -> bool:
+        """Return whether a token still owns the active turn."""
+        return (
+            self.current_turn_id == token.turn_id
+            and self.generation == token.generation
+            and token.turn_id not in self._cancelled
+        )
+
+    def finish(self, token: TurnToken) -> None:
+        """Clear the active turn if it still belongs to this token."""
+        if self.is_current(token):
+            self.current_turn_id = ""
+
+    def stale_attrs(self, token: TurnToken) -> dict[str, Any]:
+        """Return trace-safe metadata explaining why a token is stale."""
+        cancel = self._cancelled.get(token.turn_id, {})
+        return {
+            "turn_id": token.turn_id,
+            "generation": token.generation,
+            "current_turn_id": self.current_turn_id,
+            "current_generation": self.generation,
+            "cancel_reason": str(cancel.get("reason") or "not_current_turn"),
+            "superseded_by": str(cancel.get("superseded_by") or ""),
+        }
 
 
 class DeepTaskManager:

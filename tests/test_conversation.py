@@ -36,6 +36,7 @@ from custom_components.llm_gateway.conversation import (
     _tool_choice_for_turn,
     _tool_events_from_content,
 )
+from custom_components.llm_gateway.runtime import TurnController
 
 MODELS_URL = f"{DEFAULT_BASE_URL}/models"
 CHAT_URL = f"{DEFAULT_BASE_URL}/chat/completions"
@@ -132,6 +133,23 @@ def test_normalize_live_context_args_removes_tool_name_as_entity_name():
         LIVE_CONTEXT_TOOL_NAME,
         {"name": LIVE_CONTEXT_TOOL_NAME, "area": "静安"},
     ) == {"area": "静安"}
+
+
+def test_turn_controller_marks_previous_turn_stale():
+    controller = TurnController()
+
+    first = controller.start("turn-1")
+    second = controller.start("turn-2")
+
+    assert first.cancelled_turn_id == ""
+    assert second.cancelled_turn_id == "turn-1"
+    assert second.cancel_reason == "superseded_by_new_turn"
+    assert not controller.is_current(first.token)
+    assert controller.is_current(second.token)
+    assert controller.stale_attrs(first.token)["superseded_by"] == "turn-2"
+
+    controller.finish(second.token)
+    assert not controller.is_current(second.token)
 
 
 def test_tool_events_are_limited_to_current_turn():

@@ -8,8 +8,10 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from homeassistant.components import conversation
 from homeassistant.const import CONF_LLM_HASS_API, CONF_PROMPT, MATCH_ALL
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import llm
+from homeassistant.helpers.intent import IntentResponse
 from homeassistant.helpers.json import json_dumps
 from homeassistant.util import ulid
 from voluptuous_openapi import convert
@@ -67,7 +69,7 @@ if TYPE_CHECKING:
 
     from .config_entry import LLMGatewayConfigEntry
     from .router import ModelRoute
-    from .runtime import LLMGatewayRuntimeData
+    from .runtime import LLMGatewayRuntimeData, TurnToken
 
 VOICE_RESPONSE_CONTRACT = """Voice response contract:
 - Final assistant content is spoken aloud, so use plain text rather than Markdown.
@@ -331,6 +333,30 @@ class LLMGatewayConversationEntity(
             conversation_id=user_input.conversation_id,
             user_text=user_input.text,
         )
+        turn_start = runtime.turn_controller.start(run_id)
+        turn_token = turn_start.token
+        self._mark_run(
+            runtime,
+            run_id,
+            "turn_started",
+            attrs=turn_start.as_dict(),
+        )
+        if turn_start.cancelled_turn_id:
+            runtime.voice_runs.mark(
+                turn_start.cancelled_turn_id,
+                "turn_cancelled",
+                status="cancelled",
+                attrs={
+                    "reason": turn_start.cancel_reason,
+                    "superseded_by": run_id,
+                    "generation": turn_token.generation,
+                },
+            )
+            await self._async_request_local_barge_in(
+                runtime,
+                run_id,
+                turn_start.cancelled_turn_id,
+            )
         self._mark_run(
             runtime,
             run_id,
@@ -357,6 +383,7 @@ class LLMGatewayConversationEntity(
                 status="error",
                 latency_ms=int((time.monotonic() - started) * 1000),
             )
+            runtime.turn_controller.finish(turn_token)
             return err.as_conversation_result()
         _insert_system_once(chat_log.content, VOICE_RESPONSE_CONTRACT, index=1)
         self._mark_run(runtime, run_id, "llm_data")
@@ -385,6 +412,7 @@ class LLMGatewayConversationEntity(
                     "async_deep_task": False,
                 },
                 run_id,
+                turn_token,
             )
 
         first_response = decide_first_response(user_input.text)
@@ -426,6 +454,7 @@ class LLMGatewayConversationEntity(
                         "first_response": first_response.as_dict(),
                     },
                     run_id,
+                    turn_token,
                 )
         if local_answer := stable_fact_answer(user_input.text):
             self._mark_run(
@@ -454,6 +483,7 @@ class LLMGatewayConversationEntity(
                     "first_response": first_response.as_dict(),
                 },
                 run_id,
+                turn_token,
             )
 
         route = select_model_route(user_input.text, options)
@@ -512,7 +542,12 @@ class LLMGatewayConversationEntity(
                 pass
         else:
             provider_runs = await self._async_run_chat_log(
-                chat_log, route, user_input.text, run_id, first_response
+                chat_log,
+                route,
+                user_input.text,
+                run_id,
+                first_response,
+                turn_token,
             )
 
         return await self._async_finalize_turn(
@@ -521,19 +556,30 @@ class LLMGatewayConversationEntity(
             started,
             _route_trace(route, provider_runs),
             run_id,
+            turn_token,
         )
 
-    async def _async_finalize_turn(
+    async def _async_finalize_turn(  # noqa: PLR0913
         self,
         user_input: conversation.ConversationInput,
         chat_log: conversation.ChatLog,
         started: float,
         route_trace: dict[str, Any],
         run_id: str,
+        turn_token: TurnToken,
     ) -> conversation.ConversationResult:
         """Build the HA result, clean TTS, and record diagnostics."""
         options = self.entry.options
         runtime = self.entry.runtime_data
+        if not runtime.turn_controller.is_current(turn_token):
+            return await self._async_finalize_stale_turn(
+                user_input,
+                chat_log,
+                started,
+                route_trace,
+                run_id,
+                turn_token,
+            )
         result = conversation.async_get_result_from_chat_log(user_input, chat_log)
         raw_spoken = result.response.speech.get("plain", {}).get("speech", "")
         first_response = decide_first_response(user_input.text)
@@ -632,7 +678,84 @@ class LLMGatewayConversationEntity(
                 run_id=run_id,
             ),
         )
+        runtime.turn_controller.finish(turn_token)
         return result
+
+    async def _async_finalize_stale_turn(  # noqa: PLR0913
+        self,
+        user_input: conversation.ConversationInput,
+        chat_log: conversation.ChatLog,
+        started: float,
+        route_trace: dict[str, Any],
+        run_id: str,
+        turn_token: TurnToken,
+    ) -> conversation.ConversationResult:
+        """Finish a stale turn without emitting user-visible output."""
+        options = self.entry.options
+        runtime = self.entry.runtime_data
+        attrs = runtime.turn_controller.stale_attrs(turn_token)
+        self._mark_run(
+            runtime,
+            run_id,
+            "stale_result_discarded",
+            status="cancelled",
+            attrs=attrs,
+        )
+        latency_ms = int((time.monotonic() - started) * 1000)
+        timeline = runtime.voice_runs.finish(
+            run_id,
+            status="cancelled",
+            route=str(route_trace.get("kind") or "cancelled"),
+            provider="turn_controller",
+            latency_ms=latency_ms,
+        )
+        await runtime.trace_store.async_record_turn(
+            options,
+            TraceTurn(
+                conversation_id=user_input.conversation_id,
+                user_text=user_input.text,
+                assistant_text="",
+                route={**route_trace, "cancelled": True, "turn": attrs},
+                latency_ms=latency_ms,
+                status="cancelled",
+                timeline=timeline,
+                raw_payload={
+                    "input": {
+                        "text": user_input.text,
+                        "conversation_id": user_input.conversation_id or "",
+                        "language": getattr(user_input, "language", "") or "",
+                        "device_id": getattr(user_input, "device_id", "") or "",
+                    },
+                    "route": {**route_trace, "cancelled": True, "turn": attrs},
+                    "timeline": timeline,
+                    "tool_events": _tool_events_from_content(
+                        chat_log.content,
+                        user_input.text,
+                    ),
+                    "messages": _content_to_messages(chat_log.content),
+                    "speech": {
+                        "raw": "",
+                        "grounded": "",
+                        "final": "",
+                        "tts_cleaned": False,
+                    },
+                    "grounding": {"status": "not_required"},
+                    "earcon_events": runtime.feedback.earcons_for_turn(run_id),
+                    "display_status_events": runtime.feedback.display_events_for_turn(
+                        run_id
+                    ),
+                    "first_response_audio_events": (
+                        runtime.feedback.first_response_audio_for_turn(run_id)
+                    ),
+                },
+                run_id=run_id,
+            ),
+        )
+        response = IntentResponse(language=getattr(user_input, "language", "") or "zh")
+        return conversation.ConversationResult(
+            response=response,
+            conversation_id=user_input.conversation_id,
+        )
 
     def _mark_run(
         self,
@@ -696,6 +819,51 @@ class LLMGatewayConversationEntity(
             },
         )
 
+    async def _async_request_local_barge_in(
+        self,
+        runtime: LLMGatewayRuntimeData,
+        run_id: str,
+        previous_turn_id: str,
+    ) -> None:
+        """Ask the local display-agent adapter to stop old playback."""
+        service_domain = "rest_command"
+        service_name = "kukui_voice_barge_in"
+        attrs = {
+            "service": f"{service_domain}.{service_name}",
+            "previous_turn_id": previous_turn_id,
+            "new_turn_id": run_id,
+        }
+        if not self.hass.services.has_service(service_domain, service_name):
+            self._mark_run(
+                runtime,
+                run_id,
+                "barge_in_requested",
+                status="error",
+                attrs={**attrs, "reason": "missing_local_barge_in_service"},
+            )
+            return
+        try:
+            await self.hass.services.async_call(
+                service_domain,
+                service_name,
+                {
+                    "reason": "superseded_by_new_turn",
+                    "previous_turn_id": previous_turn_id,
+                    "new_turn_id": run_id,
+                },
+                blocking=False,
+            )
+        except (HomeAssistantError, ValueError, TypeError) as err:
+            self._mark_run(
+                runtime,
+                run_id,
+                "barge_in_requested",
+                status="error",
+                attrs={**attrs, "reason": type(err).__name__},
+            )
+            return
+        self._mark_run(runtime, run_id, "barge_in_requested", attrs=attrs)
+
     def _inject_memory_context(
         self,
         chat_log: conversation.ChatLog,
@@ -707,13 +875,14 @@ class LLMGatewayConversationEntity(
         if memory_context:
             _insert_system_once(chat_log.content, memory_context, index=1)
 
-    async def _async_run_chat_log(  # noqa: PLR0912, PLR0915
+    async def _async_run_chat_log(  # noqa: C901, PLR0911, PLR0912, PLR0913, PLR0915
         self,
         chat_log: conversation.ChatLog,
         route: ModelRoute,
         user_text: str,
         run_id: str,
         first_response: FirstResponseDecision,
+        turn_token: TurnToken,
     ) -> list[dict[str, Any]]:
         """Drive the model, executing tool calls until it returns a final answer."""
         runtime = self.entry.runtime_data
@@ -736,6 +905,18 @@ class LLMGatewayConversationEntity(
         forced_final_contract_added = False
         tool_counts: dict[tuple[str, str], int] = {}
         for iteration in range(1, MAX_TOOL_ITERATIONS + 1):
+            if not runtime.turn_controller.is_current(turn_token):
+                self._mark_run(
+                    runtime,
+                    run_id,
+                    "backend_tasks_cancelled",
+                    status="cancelled",
+                    attrs={
+                        "reason": "stale_before_provider",
+                        **runtime.turn_controller.stale_attrs(turn_token),
+                    },
+                )
+                return provider_runs
             if force_final and not forced_final_contract_added:
                 chat_log.content.append(
                     conversation.SystemContent(content=FORCED_FINAL_CONTRACT)
@@ -811,6 +992,19 @@ class LLMGatewayConversationEntity(
                         "attempts": fallback_result.attempts,
                     }
                 )
+                if not runtime.turn_controller.is_current(turn_token):
+                    self._mark_run(
+                        runtime,
+                        run_id,
+                        "backend_tasks_cancelled",
+                        status="cancelled",
+                        attrs={
+                            "reason": "stale_after_provider",
+                            "iteration": iteration,
+                            **runtime.turn_controller.stale_attrs(turn_token),
+                        },
+                    )
+                    return provider_runs
             except LLMGatewayError as err:
                 LOGGER.error("Error talking to the gateway: %s", err)
                 self._mark_run(
@@ -836,6 +1030,19 @@ class LLMGatewayConversationEntity(
                 tool_calls=_parse_tool_calls(message.get("tool_calls")) or None,
             )
             if content.tool_calls:
+                if not runtime.turn_controller.is_current(turn_token):
+                    self._mark_run(
+                        runtime,
+                        run_id,
+                        "backend_tasks_cancelled",
+                        status="cancelled",
+                        attrs={
+                            "reason": "stale_before_tool_execution",
+                            "iteration": iteration,
+                            **runtime.turn_controller.stale_attrs(turn_token),
+                        },
+                    )
+                    return provider_runs
                 if force_final:
                     for tool_call in content.tool_calls:
                         self._mark_run(
@@ -959,6 +1166,22 @@ class LLMGatewayConversationEntity(
                             "iteration": iteration,
                         },
                     )
+
+            if content.tool_calls and not runtime.turn_controller.is_current(
+                turn_token
+            ):
+                self._mark_run(
+                    runtime,
+                    run_id,
+                    "backend_tasks_cancelled",
+                    status="cancelled",
+                    attrs={
+                        "reason": "stale_before_external_tool",
+                        "iteration": iteration,
+                        **runtime.turn_controller.stale_attrs(turn_token),
+                    },
+                )
+                return provider_runs
 
             for tool_call in content.tool_calls or []:
                 if not tool_call.external:

@@ -15,7 +15,7 @@ from .first_response_audio import FirstResponsePlayer
 from .memory import VoiceMemory
 from .panel import async_setup_panel
 from .providers import ProviderSelector
-from .runtime import DeepTaskManager, LLMGatewayRuntimeData
+from .runtime import DeepTaskManager, LLMGatewayRuntimeData, TurnController
 from .traces import TraceStore
 from .voice_runs import VoiceRunRecorder
 
@@ -67,6 +67,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: LLMGatewayConfigEntry) -
         first_response_player=first_response_player,
         provider_selector=provider_selector,
         voice_runs=VoiceRunRecorder(),
+        turn_controller=TurnController(),
         deep_tasks=DeepTaskManager(
             hass,
             client,
