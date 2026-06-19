@@ -156,6 +156,22 @@ def test_normalize_live_context_weather_prefix_name_is_not_exact_entity():
     ) == {"domain": "sensor"}
 
 
+def test_normalize_live_context_external_area_hint_for_weather_query():
+    assert _normalize_tool_args(
+        LIVE_CONTEXT_TOOL_NAME,
+        {"domain": "sensor", "area": "静安"},
+        user_text="查一下今天空气质量",
+    ) == {"domain": "sensor"}
+
+
+def test_normalize_live_context_keeps_home_area_for_weather_query():
+    assert _normalize_tool_args(
+        LIVE_CONTEXT_TOOL_NAME,
+        {"domain": "sensor", "area": "卧室"},
+        user_text="查一下卧室空气质量",
+    ) == {"domain": "sensor", "area": "卧室"}
+
+
 def test_turn_controller_marks_previous_turn_stale():
     controller = TurnController()
 

@@ -104,6 +104,7 @@ _GENERIC_LIVE_CONTEXT_NAMES = {
     "tvoc",
     "eco2",
 }
+_HOME_AREA_HINTS = {"卧室", "客厅", "餐厅", "厨房", "书房", "卫生间", "阳台"}
 WEATHER_CONTEXT_FALLBACK_SPEECH = "暂时没有本地天气数据。"
 HOME_STATE_FALLBACK_SPEECH = "暂时没有本地状态数据。"
 HIGH_RISK_FALLBACK_SPEECH = "这个需要确认。"
@@ -182,7 +183,10 @@ def _content_to_messages(content: list[conversation.Content]) -> list[dict[str, 
     return messages
 
 
-def _parse_tool_calls(raw: list[dict[str, Any]] | None) -> list[llm.ToolInput]:
+def _parse_tool_calls(
+    raw: list[dict[str, Any]] | None,
+    user_text: str = "",
+) -> list[llm.ToolInput]:
     """Parse OpenAI tool_calls into HA ToolInput objects."""
     if not raw:
         return []
@@ -200,13 +204,18 @@ def _parse_tool_calls(raw: list[dict[str, Any]] | None) -> list[llm.ToolInput]:
             llm.ToolInput(
                 id=call.get("id") or ulid.ulid_now(),
                 tool_name=tool_name,
-                tool_args=_normalize_tool_args(tool_name, args),
+                tool_args=_normalize_tool_args(tool_name, args, user_text=user_text),
             )
         )
     return mark_external_tool_calls(calls)
 
 
-def _normalize_tool_args(tool_name: str, args: object) -> dict[str, Any]:
+def _normalize_tool_args(
+    tool_name: str,
+    args: object,
+    *,
+    user_text: str = "",
+) -> dict[str, Any]:
     """Normalize model tool args before HA tool execution."""
     normalized = dict(args) if isinstance(args, dict) else {}
     if tool_name == LIVE_CONTEXT_TOOL_NAME:
@@ -215,6 +224,12 @@ def _normalize_tool_args(tool_name: str, args: object) -> dict[str, Any]:
         area = normalized.get("area")
         if isinstance(area, str) and _looks_like_live_context_entity_hint(area):
             normalized.setdefault("name", area)
+            normalized.pop("area", None)
+        elif (
+            isinstance(area, str)
+            and _looks_like_weather_state_text(user_text)
+            and area not in _HOME_AREA_HINTS
+        ):
             normalized.pop("area", None)
         name = normalized.get("name")
         if isinstance(name, str) and _is_generic_live_context_name(name):
@@ -237,6 +252,14 @@ def _is_generic_live_context_name(value: str) -> bool:
     )
     return not has_specific_metric and (
         "天气" in normalized or "空气质量" in normalized
+    )
+
+
+def _looks_like_weather_state_text(value: str) -> bool:
+    normalized = _normalize_live_context_hint(value)
+    return any(
+        term in normalized
+        for term in ("天气", "空气质量", "pm2.5", "pm25", "雾霾", "气温")
     )
 
 
@@ -1123,7 +1146,11 @@ class LLMGatewayConversationEntity(
             content = conversation.AssistantContent(
                 agent_id=self.entity_id,
                 content=message.get("content") or None,
-                tool_calls=_parse_tool_calls(message.get("tool_calls")) or None,
+                tool_calls=_parse_tool_calls(
+                    message.get("tool_calls"),
+                    user_text,
+                )
+                or None,
             )
             if content.tool_calls:
                 if not runtime.turn_controller.is_current(turn_token):
