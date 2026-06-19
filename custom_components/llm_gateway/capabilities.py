@@ -13,6 +13,7 @@ TaskFamily = Literal[
     "home_state",
     "home_inventory",
     "home_capability",
+    "volume_control",
     "location_dependent_query",
     "external_current_info",
     "stable_knowledge",
@@ -34,6 +35,7 @@ TaskType = Literal[
     "exposed_context_query",
     "static_context_query",
     "nearby_place_query",
+    "volume_control",
     "search_needed",
     "stable_fact",
     "planning",
@@ -113,6 +115,17 @@ _EXPLICIT_EXTERNAL_RE = re.compile(
 _STABLE_KNOWLEDGE_RE = re.compile(
     r"(出自哪里|出自哪|出处|谁写的|什么意思|是什么|典故|原文)"
 )
+_LITERARY_KNOWLEDGE_RE = re.compile(
+    r"(诗|词|代表作|作品|作者|诗人|文学|春江花月夜|张若虚|李白|杜甫|苏轼|王维|白居易)"
+)
+_LITERARY_QUERY_RE = re.compile(
+    r"(有什么|有哪些|什么样|哪首|是谁写|谁写|写过|代表作|作品|作者|赏析|意思|理解)"
+)
+_VOLUME_RE = re.compile(
+    r"(音量|声音|声量|大声|小声|调大|调小|调高|调低|最大|最小|静音)"
+)
+_ASSISTANT_VOLUME_RE = re.compile(r"(自己|你说话|你的声音|助手|播报|回答声音|说话声音)")
+_MEDIA_VOLUME_RE = re.compile(r"(音箱|播放器|homepod|喇叭|扬声器|电视|客厅|卧室|媒体)")
 _PLANNING_RE = re.compile(
     r"(帮我设计|规划|以后我说|如果.+就|自动化|场景|方案|深度分析|详细分析|完整分析|架构|排查方案|控制管线)"
 )
@@ -219,6 +232,12 @@ CAPABILITY_REGISTRY: tuple[Capability, ...] = (
         requires_live_home_context=True,
     ),
     Capability(
+        family="volume_control",
+        examples=("把自己的音量调到最大", "你说话声音大一点", "把客厅音箱音量调高"),
+        route="local_clarify_or_home_action",
+        tools=("HassCallService",),
+    ),
+    Capability(
         family="location_dependent_query",
         examples=(
             "附近最近的麦当劳在哪里",
@@ -241,7 +260,7 @@ CAPABILITY_REGISTRY: tuple[Capability, ...] = (
     ),
     Capability(
         family="stable_knowledge",
-        examples=("这句话出自哪里", "这个词是什么意思", "谁写的"),
+        examples=("这句话出自哪里", "张若虚有什么样的诗", "李白有什么代表作"),
         route="fast_qa",
         requires_llm=True,
     ),
@@ -316,6 +335,9 @@ def decide_route(text: str) -> RouteDecision:  # noqa: PLR0911, PLR0912
             risk="high",
             matched_capability="home_control",
         )
+
+    if _VOLUME_RE.search(value):
+        return _volume_route(value)
 
     inventory_spec = classify_inventory_query(value)
     if inventory_spec is not None:
@@ -417,15 +439,17 @@ def decide_route(text: str) -> RouteDecision:  # noqa: PLR0911, PLR0912
             matched_capability="home_state",
         )
 
-    if _STABLE_KNOWLEDGE_RE.search(value):
+    if _STABLE_KNOWLEDGE_RE.search(value) or _is_literary_knowledge(value):
         return RouteDecision(
             task_family="stable_knowledge",
             task_type="stable_fact",
-            confidence=0.72,
+            confidence=0.78,
             requires_llm=True,
             next_action="answer_with_llm",
             route="fast",
-            matched_capability="stable_knowledge",
+            matched_capability="literary_knowledge"
+            if _is_literary_knowledge(value)
+            else "stable_knowledge",
         )
 
     if _HOME_CONTROL_RE.search(value):
@@ -468,6 +492,48 @@ def _unknown(reason: str) -> RouteDecision:
         route="local_clarify",
         matched_capability="unknown_or_ambiguous",
         metadata={"reason": reason},
+    )
+
+
+def _is_literary_knowledge(text: str) -> bool:
+    return bool(_LITERARY_KNOWLEDGE_RE.search(text) and _LITERARY_QUERY_RE.search(text))
+
+
+def _volume_route(text: str) -> RouteDecision:
+    is_assistant = bool(_ASSISTANT_VOLUME_RE.search(text))
+    is_media = bool(_MEDIA_VOLUME_RE.search(text))
+    if is_assistant and not is_media:
+        return RouteDecision(
+            task_family="volume_control",
+            task_type="volume_control",
+            confidence=0.78,
+            next_action="clarify",
+            user_visible_prompt=(
+                "你是要调我说话的音量，还是调整某个播放器的音量？"
+            ),
+            route="local_clarify",
+            matched_capability="self_or_media_volume_control",
+            metadata={"clarification_reason": "assistant_or_media_volume"},
+        )
+    if is_media and not is_assistant:
+        return RouteDecision(
+            task_family="volume_control",
+            task_type="volume_control",
+            confidence=0.8,
+            allowed_tools=("HassCallService",),
+            next_action="answer_with_llm",
+            route="fast",
+            matched_capability="media_volume_control",
+        )
+    return RouteDecision(
+        task_family="volume_control",
+        task_type="volume_control",
+        confidence=0.62,
+        next_action="clarify",
+        user_visible_prompt="你是要调我说话的音量，还是调整某个播放器的音量？",
+        route="local_clarify",
+        matched_capability="self_or_media_volume_control",
+        metadata={"clarification_reason": "ambiguous_volume_target"},
     )
 
 

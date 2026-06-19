@@ -16,6 +16,7 @@ def test_capability_registry_covers_core_task_families():
         "home_state",
         "home_control",
         "home_capability",
+        "volume_control",
         "location_dependent_query",
         "external_current_info",
         "stable_knowledge",
@@ -79,6 +80,41 @@ def test_unknown_is_clarification_not_direct_answer():
     assert decision.next_action == "clarify"
     assert decision.route == "local_clarify"
     assert "换个说法" in decision.user_visible_prompt
+
+
+def test_literary_knowledge_routes_to_stable_knowledge():
+    utterances = (
+        "张若虚有什么样的诗？",
+        "李白有什么代表作？",
+        "春江花月夜是谁写的？",
+        "某句诗是什么意思？",
+    )
+
+    for text in utterances:
+        decision = decide_route(text)
+
+        assert decision.task_family == "stable_knowledge", text
+        assert decision.task_type == "stable_fact"
+        assert decision.route == "fast"
+        assert decision.requires_llm
+        assert decision.next_action == "answer_with_llm"
+
+
+def test_volume_control_gets_targeted_route_or_clarification():
+    self_volume = decide_route("把自己的音量调到最大吗？")
+
+    assert self_volume.task_family == "volume_control"
+    assert self_volume.task_type == "volume_control"
+    assert self_volume.next_action == "clarify"
+    assert "我说话的音量" in self_volume.user_visible_prompt
+    assert "播放器" in self_volume.user_visible_prompt
+
+    media_volume = decide_route("把客厅音箱音量调高")
+
+    assert media_volume.task_family == "volume_control"
+    assert media_volume.task_type == "volume_control"
+    assert media_volume.next_action == "answer_with_llm"
+    assert "HassCallService" in media_volume.allowed_tools
 
 
 def test_bare_lookup_weather_stays_home_state():

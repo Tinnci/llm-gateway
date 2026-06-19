@@ -21,6 +21,7 @@ TaskType = Literal[
     "static_context_query",
     "search_needed",
     "stable_fact",
+    "volume_control",
     "planning",
     "high_risk",
     "unknown",
@@ -63,7 +64,7 @@ class FirstResponseDecision:
         }
 
 
-def decide_first_response(text: str) -> FirstResponseDecision:  # noqa: PLR0911
+def decide_first_response(text: str) -> FirstResponseDecision:  # noqa: PLR0911, PLR0912
     """Return local first-response policy for a user utterance."""
     normalized = str(text or "").strip()
     if not normalized:
@@ -144,6 +145,14 @@ def decide_first_response(text: str) -> FirstResponseDecision:  # noqa: PLR0911
             "我看一下。",
             THINKING_PROCESSING_CUE_DELAY_S,
             "stable_fact_question",
+        )
+    if route.task_family == "volume_control":
+        return _decision(
+            "volume_control",
+            "none",
+            "",
+            DEFAULT_PROCESSING_CUE_DELAY_S,
+            "volume_control",
         )
     if route.task_type == "home_control":
         return _decision(

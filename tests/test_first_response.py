@@ -23,6 +23,14 @@ def test_first_response_keeps_stable_fact_off_search_path():
     assert decision.cue == "none"
 
 
+def test_first_response_literary_knowledge_is_not_unknown():
+    decision = decide_first_response("张若虚有什么样的诗？")
+
+    assert decision.task_type == "stable_fact"
+    assert decision.cue == "thinking"
+    assert decision.reason == "stable_fact_question"
+
+
 def test_first_response_uses_fast_search_cue_for_current_info():
     decision = decide_first_response("查一下 Home Assistant 最新语音更新")
 
@@ -48,6 +56,15 @@ def test_first_response_suppresses_unknown_fallback_hint():
     assert decision.cue == "none"
     assert decision.spoken_hint == ""
     assert decision.reason == "unknown_or_ambiguous"
+
+
+def test_first_response_volume_control_uses_no_spoken_hint():
+    decision = decide_first_response("把自己的音量调到最大吗？")
+
+    assert decision.task_type == "volume_control"
+    assert decision.cue == "none"
+    assert decision.spoken_hint == ""
+    assert decision.reason == "volume_control"
 
 
 def test_first_response_classifies_weather_as_local_state_by_default():
