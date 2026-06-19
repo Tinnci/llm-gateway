@@ -117,6 +117,23 @@ def test_volume_control_gets_targeted_route_or_clarification():
     assert "HassCallService" in media_volume.allowed_tools
 
 
+def test_colloquial_home_control_routes_to_control_capability():
+    utterances = (
+        "把风扇关了。",
+        "把卧室灯关了",
+        "把空调开了",
+        "把客厅灯关上",
+    )
+
+    for text in utterances:
+        decision = decide_route(text)
+
+        assert decision.task_family == "home_control", text
+        assert decision.task_type == "home_control"
+        assert decision.route == "fast"
+        assert "HassTurnOff" in decision.allowed_tools
+
+
 def test_bare_lookup_weather_stays_home_state():
     decision = decide_route("查一下今天空气质量")
 

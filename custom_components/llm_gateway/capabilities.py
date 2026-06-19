@@ -101,7 +101,9 @@ _EXPLICIT_LOCATION_HINTS = (
     "南京西路",
     "陆家嘴",
 )
-_HOME_CONTROL_RE = re.compile(r"(打开|开启|关闭|关掉|调亮|调暗|设置|开一下|关一下)")
+_HOME_CONTROL_RE = re.compile(
+    r"(打开|开启|关闭|关掉|关上|开了|关了|调亮|调暗|设置|开一下|关一下)"
+)
 _HOME_STATE_RE = re.compile(r"(多少|是不是|现在|开着吗|关着吗|锁了吗|温度|湿度|状态)")
 _WEATHER_RE = re.compile(
     r"(天气|空气质量|空气怎么样|下雨|雨|外面|室外|冷不冷|热不热|气温|pm2\.?5|雾霾)"

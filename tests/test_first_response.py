@@ -104,6 +104,8 @@ def test_first_response_classifies_inventory_as_fast_static_query():
 
 def test_first_response_inventory_classifier_avoids_action_and_weather_false_hits():
     assert decide_first_response("打开客厅灯").task_type == "home_control"
+    assert decide_first_response("把风扇关了。").task_type == "home_control"
+    assert decide_first_response("把空调开了").task_type == "home_control"
     assert decide_first_response("今天天气怎么样？").task_type == "weather_query"
     assert decide_first_response("卧室温度是多少？").task_type == "home_state"
 
