@@ -48,6 +48,7 @@ TaskType = Literal[
 
 NextAction = Literal[
     "execute_local",
+    "call_tool_then_local_render",
     "ask_location_permission",
     "search",
     "ask_confirmation",
@@ -229,7 +230,7 @@ CAPABILITY_REGISTRY: tuple[Capability, ...] = (
     Capability(
         family="home_state",
         examples=("家里 PM2.5 是多少", "客厅温度多少", "今天天气怎么样"),
-        route="live_context",
+        route="local_live_context",
         tools=("GetLiveContext",),
         requires_live_home_context=True,
     ),
@@ -411,8 +412,8 @@ def decide_route(text: str) -> RouteDecision:  # noqa: PLR0911, PLR0912
             confidence=0.82,
             requires_live_home_context=True,
             allowed_tools=("GetLiveContext",),
-            next_action="answer_with_llm",
-            route="fast",
+            next_action="call_tool_then_local_render",
+            route="local_live_context",
             matched_capability="home_state",
         )
 
@@ -436,8 +437,8 @@ def decide_route(text: str) -> RouteDecision:  # noqa: PLR0911, PLR0912
             confidence=0.74,
             requires_live_home_context=True,
             allowed_tools=("GetLiveContext",),
-            next_action="answer_with_llm",
-            route="fast",
+            next_action="call_tool_then_local_render",
+            route="local_live_context",
             matched_capability="home_state",
         )
 

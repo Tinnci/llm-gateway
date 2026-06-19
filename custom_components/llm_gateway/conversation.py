@@ -303,6 +303,68 @@ def _has_tool(tools: list[dict[str, Any]] | None, tool_name: str) -> bool:
     return False
 
 
+def _chat_log_has_tool(chat_log: conversation.ChatLog, tool_name: str) -> bool:
+    llm_api = getattr(chat_log, "llm_api", None)
+    return any(
+        getattr(tool, "name", "") == tool_name
+        for tool in getattr(llm_api, "tools", ()) or ()
+    )
+
+
+def _local_live_context_tool_args(text: str) -> dict[str, Any]:
+    slots = _local_live_context_slots(text)
+    args: dict[str, Any] = {}
+    domain = str(slots.get("domain") or "")
+    area = str(slots.get("area") or "")
+    if domain:
+        args["domain"] = domain
+    if area:
+        args["area"] = area
+    return _normalize_tool_args(LIVE_CONTEXT_TOOL_NAME, args, user_text=text)
+
+
+def _local_live_context_slots(text: str) -> dict[str, str]:
+    normalized = _normalize_live_context_hint(text)
+    area = _local_live_context_area(text)
+    metric = _local_live_context_metric(normalized)
+    device_hint = ""
+    if "空调" in text:
+        domain = "climate"
+        device_hint = "空调"
+    else:
+        domain = "sensor"
+    return {
+        "area": area,
+        "metric": metric,
+        "domain": domain,
+        "device_hint": device_hint,
+    }
+
+
+def _local_live_context_area(text: str) -> str:
+    for area in sorted(_HOME_AREA_HINTS, key=len, reverse=True):
+        if area in text:
+            return area
+    return ""
+
+
+def _local_live_context_metric(normalized: str) -> str:
+    metric_terms = (
+        ("air_quality", ("空气质量", "空气怎么样")),
+        ("pm25", ("pm25", "pm2.5", "雾霾")),
+        ("eco2", ("eco2",)),
+        ("co2", ("co2", "二氧化碳")),
+        ("tvoc", ("tvoc", "甲醛", "挥发")),
+        ("temperature", ("温度", "气温", "几度", "冷不冷", "热不热")),
+        ("humidity", ("湿度",)),
+        ("weather", ("天气",)),
+    )
+    for metric, terms in metric_terms:
+        if any(term in normalized for term in terms):
+            return metric
+    return "state"
+
+
 def _tool_call_fingerprint(tool_call: llm.ToolInput) -> tuple[str, str]:
     """Return a stable per-turn fingerprint for duplicate tool suppression."""
     if tool_call.tool_name == LIVE_CONTEXT_TOOL_NAME:
@@ -394,7 +456,7 @@ class LLMGatewayConversationEntity(
         conversation.async_unset_agent(self.hass, self.entry)
         await super().async_will_remove_from_hass()
 
-    async def _async_handle_message(  # noqa: PLR0912, PLR0915
+    async def _async_handle_message(  # noqa: PLR0911, PLR0912, PLR0915
         self,
         user_input: conversation.ConversationInput,
         chat_log: conversation.ChatLog,
@@ -579,7 +641,7 @@ class LLMGatewayConversationEntity(
                 runtime,
                 run_id,
                 "local_stable_answer",
-                attrs={"source": "quote_origin_cache"},
+                attrs={"source": "local_knowledge_cache"},
             )
             async for _tool_result in chat_log.async_add_assistant_content(
                 conversation.AssistantContent(
@@ -604,6 +666,19 @@ class LLMGatewayConversationEntity(
                 run_id,
                 turn_token,
             )
+
+        if route_decision.next_action == "call_tool_then_local_render":
+            local_live_result = await self._async_try_local_live_context(
+                user_input,
+                chat_log,
+                started,
+                first_response,
+                route_decision,
+                run_id,
+                turn_token,
+            )
+            if local_live_result is not None:
+                return local_live_result
 
         route = select_model_route(user_input.text, options)
         self._mark_run(
@@ -674,6 +749,159 @@ class LLMGatewayConversationEntity(
             chat_log,
             started,
             _route_trace(route, provider_runs, route_decision),
+            run_id,
+            turn_token,
+        )
+
+    async def _async_try_local_live_context(  # noqa: PLR0913
+        self,
+        user_input: conversation.ConversationInput,
+        chat_log: conversation.ChatLog,
+        started: float,
+        first_response: FirstResponseDecision,
+        route_decision: RouteDecision,
+        run_id: str,
+        turn_token: TurnToken,
+    ) -> conversation.ConversationResult | None:
+        """Execute GetLiveContext locally and render scalar state without an LLM."""
+        runtime = self.entry.runtime_data
+        if not _chat_log_has_tool(chat_log, LIVE_CONTEXT_TOOL_NAME):
+            self._mark_run(
+                runtime,
+                run_id,
+                "local_live_context_unavailable",
+                attrs={
+                    "reason": "missing_GetLiveContext_tool",
+                    "llm_used": False,
+                    "route": route_decision.route,
+                },
+            )
+            return None
+
+        tool_args = _local_live_context_tool_args(user_input.text)
+        slots = _local_live_context_slots(user_input.text)
+        tool_call = llm.ToolInput(
+            id=ulid.ulid_now(),
+            tool_name=LIVE_CONTEXT_TOOL_NAME,
+            tool_args=tool_args,
+        )
+        self._mark_run(
+            runtime,
+            run_id,
+            "local_live_context_call",
+            attrs={
+                "name": LIVE_CONTEXT_TOOL_NAME,
+                "args": tool_args,
+                "slots": slots,
+                "llm_used": False,
+                "tools_used": [LIVE_CONTEXT_TOOL_NAME],
+            },
+        )
+        try:
+            async for tool_result in chat_log.async_add_assistant_content(
+                conversation.AssistantContent(
+                    agent_id=self.entity_id,
+                    content=None,
+                    tool_calls=[tool_call],
+                )
+            ):
+                result = tool_result.tool_result
+                self._mark_run(
+                    runtime,
+                    run_id,
+                    "tool_result",
+                    status="error" if "error" in result else "ok",
+                    attrs={
+                        "name": tool_result.tool_name,
+                        "iteration": 0,
+                        "local_live_context": True,
+                    },
+                )
+                if "error" in result:
+                    self._mark_run(
+                        runtime,
+                        run_id,
+                        "local_live_context_failed",
+                        status="error",
+                        attrs={
+                            "error": str(result.get("error") or ""),
+                            "llm_used": False,
+                        },
+                    )
+                    break
+                local_state = render_scalar_state_answer(
+                    user_input.text,
+                    result,
+                    task_type=first_response.task_type,
+                )
+                if local_state is not None:
+                    self._mark_run(
+                        runtime,
+                        run_id,
+                        "local_state_render",
+                        attrs=local_state.trace_attrs(),
+                    )
+                    async for _tool_result in chat_log.async_add_assistant_content(
+                        conversation.AssistantContent(
+                            agent_id=self.entity_id,
+                            content=local_state.speech,
+                        )
+                    ):
+                        pass
+                    return await self._async_finalize_turn(
+                        user_input,
+                        chat_log,
+                        started,
+                        _local_route_trace(
+                            "local_live_context",
+                            "live_context_renderer",
+                            first_response,
+                            route_decision,
+                        ),
+                        run_id,
+                        turn_token,
+                    )
+        except (HomeAssistantError, ValueError) as err:
+            self._mark_run(
+                runtime,
+                run_id,
+                "local_live_context_failed",
+                status="error",
+                attrs={
+                    "error": type(err).__name__,
+                    "llm_used": False,
+                },
+            )
+
+        fallback = _empty_response_fallback(first_response)
+        self._mark_run(
+            runtime,
+            run_id,
+            "local_state_render",
+            status="error",
+            attrs={
+                "reason": "no_renderable_state",
+                "llm_final_used": False,
+                "source": "GetLiveContext",
+            },
+        )
+        async for _tool_result in chat_log.async_add_assistant_content(
+            conversation.AssistantContent(
+                agent_id=self.entity_id,
+                content=fallback,
+            )
+        ):
+            pass
+        return await self._async_finalize_turn(
+            user_input,
+            chat_log,
+            started,
+            _local_route_trace(
+                "local_live_context",
+                "live_context_renderer",
+                first_response,
+                route_decision,
+            ),
             run_id,
             turn_token,
         )

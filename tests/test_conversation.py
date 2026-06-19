@@ -60,6 +60,25 @@ STATIC_CONTEXT = (
     "- names: 静安天气 PM2.5\n"
     "  domain: sensor\n"
 )
+LIVE_CONTEXT_RESULT = {
+    "success": True,
+    "result": (
+        "Live Context: An overview of the areas and the devices in this smart "
+        "home:\n"
+        "- names: zM1_AD46 温度\n"
+        "  domain: sensor\n"
+        "  state: '25.5'\n"
+        "  areas: 卧室\n"
+        "  attributes:\n"
+        "    unit_of_measurement: °C\n"
+        "- names: zM1_AD46 湿度\n"
+        "  domain: sensor\n"
+        "  state: '80.2'\n"
+        "  areas: 卧室\n"
+        "  attributes:\n"
+        "    unit_of_measurement: %\n"
+    ),
+}
 
 
 async def _setup_agent(hass, mock_config_entry, options=None) -> str:
@@ -589,6 +608,38 @@ async def test_nearby_place_query_without_location_asks_permission_locally(
     assert clarify_span["attrs"]["tools_used"] == []
 
 
+async def test_literary_stable_fact_answers_locally_without_model(
+    hass, aioclient_mock, mock_config_entry
+):
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
+        },
+    )
+
+    with patch(
+        "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
+    ) as completion:
+        result = await conversation.async_converse(
+            hass, "张若虚有什么样的诗？", None, Context(), agent_id=agent_id
+        )
+
+    completion.assert_not_called()
+    speech = result.response.speech["plain"]["speech"]
+    assert "《春江花月夜》" in speech
+    assert "存世作品很少" in speech
+    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+    assert trace["route"]["kind"] == "local_stable_fact"
+    assert trace["first_response_decision"]["reason"] == "local_stable_knowledge"
+    assert not trace["tools"]
+
+
 async def test_unknown_query_clarifies_locally_without_model_final(
     hass, aioclient_mock, mock_config_entry
 ):
@@ -619,6 +670,74 @@ async def test_unknown_query_clarifies_locally_without_model_final(
     assert trace["route_decision"]["task_family"] == "unknown_or_ambiguous"
     assert trace["first_response_decision"]["cue"] == "none"
     assert not trace["tools"]
+
+
+async def test_home_state_uses_local_live_context_without_model(
+    hass, aioclient_mock, mock_config_entry
+):
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {
+            CONF_LLM_HASS_API: "assist",
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
+        },
+    )
+
+    class FakeLiveContextApi:
+        custom_serializer = None
+
+        def __init__(self) -> None:
+            self.tools = [SimpleNamespace(name=LIVE_CONTEXT_TOOL_NAME)]
+
+        async def async_call_tool(self, tool_input: llm.ToolInput):
+            assert tool_input.tool_name == LIVE_CONTEXT_TOOL_NAME
+            assert tool_input.tool_args == {"domain": "sensor", "area": "卧室"}
+            return LIVE_CONTEXT_RESULT
+
+    async def provide_live_context_api(
+        self,
+        *_args: object,
+        **_kwargs: object,
+    ) -> None:
+        self.llm_api = FakeLiveContextApi()
+        self.content.append(conversation.SystemContent(content=STATIC_CONTEXT))
+
+    with (
+        patch(
+            "homeassistant.components.conversation.ChatLog.async_provide_llm_data",
+            provide_live_context_api,
+        ),
+        patch(
+            "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
+        ) as completion,
+    ):
+        result = await conversation.async_converse(
+            hass, "卧室温度是多少？", None, Context(), agent_id=agent_id
+        )
+
+    completion.assert_not_called()
+    assert result.response.speech["plain"]["speech"] == "卧室现在 25.5 度。"
+    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+    assert trace["route"]["kind"] == "local_live_context"
+    assert trace["route"]["model"] == "live_context_renderer"
+    assert trace["route_decision"]["route"] == "local_live_context"
+    assert trace["route_decision"]["next_action"] == "call_tool_then_local_render"
+    assert trace["route_decision"]["requires_llm"] is False
+    assert trace["tools"][0]["phase"] == "call"
+    assert trace["tools"][0]["name"] == LIVE_CONTEXT_TOOL_NAME
+    assert trace["tools"][0]["args"] == {"domain": "sensor", "area": "卧室"}
+    render_span = next(
+        span
+        for span in trace["timeline_spans"]
+        if span["stage"] == "local_state_render"
+    )
+    assert render_span["attrs"]["llm_final_used"] is False
+    assert render_span["attrs"]["source"] == "GetLiveContext"
 
 
 async def test_weather_query_uses_local_context_path_without_forced_search(

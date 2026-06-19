@@ -774,27 +774,50 @@ def _render_scalar_state_summary(
     else:
         subject = "状态"
 
+    single_entity = entities[0] if len(entities) == 1 else None
+    single_metric = _metric_for_entity(single_entity) if single_entity else ""
+    if (
+        single_entity
+        and single_metric in {"temperature", "humidity"}
+        and _state_is_available(single_entity.state)
+    ):
+        return _render_single_scalar_state(text, single_entity, single_metric)
+
     available: list[str] = []
     unavailable: list[str] = []
     for entity in entities:
         metric = _metric_for_entity(entity)
         label = STATE_METRIC_LABELS.get(metric, entity.name)
         if _state_is_available(entity.state):
-            available.append(f"{label} {entity.state}{_unit_suffix(entity)}")
+            available.append(f"{label} {_state_with_spoken_unit(entity)}")
         else:
             unavailable.append(label)
 
     if available:
-        speech = f"当前已暴露给助手的{subject}读数：{'，'.join(available)}。"
+        speech = f"{subject}：{'，'.join(available)}。"
         if unavailable:
             speech += f"{'、'.join(_dedup_names(unavailable))} 当前不可用。"
         return speech
     if unavailable:
-        return (
-            f"我能看到已暴露给助手的{subject}传感器，"
-            f"但{'、'.join(_dedup_names(unavailable))}当前不可用。"
-        )
-    return f"我暂时没有看到已暴露给助手的{subject}读数。"
+        return f"{subject}传感器当前不可用：{'、'.join(_dedup_names(unavailable))}。"
+    return f"我暂时没有看到{subject}读数。"
+
+
+def _render_single_scalar_state(
+    text: str,
+    entity: ExposedEntity,
+    metric: str,
+) -> str:
+    area = _state_area_label(text, entity)
+    value = _clean_state_value(entity.state)
+    if metric == "temperature":
+        prefix = f"{area}现在" if area else "现在"
+        return f"{prefix} {value} 度。"
+    if metric == "humidity":
+        prefix = f"{area}湿度现在" if area else "湿度现在"
+        return f"{prefix} {value}%。"
+    label = STATE_METRIC_LABELS.get(metric, entity.name)
+    return f"{label} {_state_with_spoken_unit(entity)}。"
 
 
 def _metric_for_entity(entity: ExposedEntity) -> str:
@@ -826,6 +849,20 @@ def _state_is_available(value: str) -> bool:
 def _unit_suffix(entity: ExposedEntity) -> str:
     unit = _clean_state_value(entity.unit_of_measurement)
     return f" {unit}" if unit else ""
+
+
+def _state_with_spoken_unit(entity: ExposedEntity) -> str:
+    state = _clean_state_value(entity.state)
+    unit = _clean_state_value(entity.unit_of_measurement)
+    if unit in {"°C", "℃"}:
+        return f"{state} 度"
+    if unit == "%":
+        return f"{state}%"
+    return f"{state}{_unit_suffix(entity)}"
+
+
+def _state_area_label(text: str, entity: ExposedEntity) -> str:
+    return _area_from_common(text) or next(iter(entity.areas), "")
 
 
 def _area_from_common(text: str) -> str:

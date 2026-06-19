@@ -39,6 +39,9 @@ _QUOTE_ORIGINS = {
     "关关睢鸠在河之洲": "这句诗出自《诗经·国风·周南·关雎》。",
     "关关隹鸠在河之洲": "这句诗出自《诗经·国风·周南·关雎》。",
 }
+_ZHANG_RUOXU_WORKS_TERMS = ("诗", "代表作", "作品", "写过", "什么样")
+_AUTHOR_TERMS = ("谁写", "谁写的", "作者")
+_LI_BAI_WORKS_TERMS = ("代表作", "作品", "写过", "诗")
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,6 +215,20 @@ def stable_fact_answer(text: str) -> str | None:
     for quote, answer in _QUOTE_ORIGINS.items():
         if quote in normalized:
             return answer
+    if "张若虚" in normalized and any(
+        term in normalized for term in _ZHANG_RUOXU_WORKS_TERMS
+    ):
+        return (
+            "张若虚是唐代诗人，存世作品很少，最著名的是《春江花月夜》。"
+            "通常提到他的代表作，主要就是这首。"
+        )
+    if "春江花月夜" in normalized and any(term in normalized for term in _AUTHOR_TERMS):
+        return "《春江花月夜》的作者是唐代诗人张若虚。"
+    if "李白" in normalized and any(term in normalized for term in _LI_BAI_WORKS_TERMS):
+        return (
+            "李白的代表作包括《静夜思》《将进酒》《蜀道难》"
+            "《望庐山瀑布》《行路难》等。"
+        )
     return None
 
 

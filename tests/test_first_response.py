@@ -16,6 +16,18 @@ def test_stable_quote_origin_cache_handles_asr_variants():
     )
 
 
+def test_stable_literary_cache_handles_common_author_facts():
+    assert stable_fact_answer("张若虚有什么样的诗？") == (
+        "张若虚是唐代诗人，存世作品很少，最著名的是《春江花月夜》。"
+        "通常提到他的代表作，主要就是这首。"
+    )
+    assert (
+        stable_fact_answer("春江花月夜是谁写的？")
+        == "《春江花月夜》的作者是唐代诗人张若虚。"
+    )
+    assert "将进酒" in (stable_fact_answer("李白有什么代表作？") or "")
+
+
 def test_first_response_keeps_stable_fact_off_search_path():
     decision = decide_first_response("关关雎鸠，在河之洲，这句话是出自哪里？")
 
@@ -27,8 +39,8 @@ def test_first_response_literary_knowledge_is_not_unknown():
     decision = decide_first_response("张若虚有什么样的诗？")
 
     assert decision.task_type == "stable_fact"
-    assert decision.cue == "thinking"
-    assert decision.reason == "stable_fact_question"
+    assert decision.cue == "none"
+    assert decision.reason == "local_stable_knowledge"
 
 
 def test_first_response_uses_fast_search_cue_for_current_info():

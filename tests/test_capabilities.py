@@ -117,6 +117,24 @@ def test_volume_control_gets_targeted_route_or_clarification():
     assert "HassCallService" in media_volume.allowed_tools
 
 
+def test_home_state_routes_to_local_live_context_without_llm():
+    for text in (
+        "卧室温度是多少？",
+        "当前卧室的温度是多少？",
+        "当前客厅的温度是多少？",
+        "卧室湿度多少？",
+    ):
+        decision = decide_route(text)
+
+        assert decision.task_family == "home_state", text
+        assert decision.task_type == "home_state"
+        assert decision.route == "local_live_context"
+        assert decision.next_action == "call_tool_then_local_render"
+        assert not decision.requires_llm
+        assert decision.requires_live_home_context
+        assert decision.allowed_tools == ("GetLiveContext",)
+
+
 def test_colloquial_home_control_routes_to_control_capability():
     utterances = (
         "把风扇关了。",
@@ -139,7 +157,9 @@ def test_bare_lookup_weather_stays_home_state():
 
     assert decision.task_family == "home_state"
     assert decision.task_type == "weather_query"
-    assert decision.next_action == "answer_with_llm"
+    assert decision.route == "local_live_context"
+    assert decision.next_action == "call_tool_then_local_render"
+    assert not decision.requires_llm
     assert decision.allowed_tools == ("GetLiveContext",)
 
 
@@ -157,4 +177,7 @@ def test_default_weather_stays_home_state():
 
     assert decision.task_family == "home_state"
     assert decision.task_type == "weather_query"
+    assert decision.route == "local_live_context"
+    assert decision.next_action == "call_tool_then_local_render"
+    assert not decision.requires_llm
     assert decision.allowed_tools == ("GetLiveContext",)

@@ -155,7 +155,8 @@ def test_render_scalar_state_answer_uses_live_context_readings() -> None:
     result = render_scalar_state_answer("查一下今天空气质量", LIVE_CONTEXT_RESULT)
 
     assert result
-    assert "当前已暴露给助手的空气质量读数" in result.speech
+    assert "已暴露给助手" not in result.speech
+    assert result.speech.startswith("空气质量：")
     assert "PM2.5 10.0 μg/m³" in result.speech
     assert "CO2" in result.speech
     assert "TVOC" in result.speech
@@ -173,5 +174,17 @@ def test_render_scalar_state_answer_handles_temperature_query() -> None:
     )
 
     assert result
-    assert result.speech == "当前已暴露给助手的温度读数：温度 25.5 °C。"
+    assert result.speech == "卧室现在 25.5 度。"
     assert result.trace_attrs()["task_type"] == "home_state"
+
+
+def test_render_scalar_state_answer_handles_humidity_query() -> None:
+    result = render_scalar_state_answer(
+        "卧室湿度多少",
+        LIVE_CONTEXT_RESULT,
+        task_type="home_state",
+    )
+
+    assert result
+    assert result.speech == "卧室湿度现在 80.2%。"
+    assert result.trace_attrs()["source"] == "GetLiveContext"
