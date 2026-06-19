@@ -17,6 +17,7 @@ from homeassistant.util import ulid
 from voluptuous_openapi import convert
 
 from .api import LLMGatewayClient, LLMGatewayError, ToolChoice
+from .capabilities import RouteDecision, decide_route
 from .const import (
     CONF_TEMPERATURE,
     CONF_TOP_P,
@@ -320,7 +321,7 @@ class LLMGatewayConversationEntity(
         conversation.async_unset_agent(self.hass, self.entry)
         await super().async_will_remove_from_hass()
 
-    async def _async_handle_message(
+    async def _async_handle_message(  # noqa: PLR0912, PLR0915
         self,
         user_input: conversation.ConversationInput,
         chat_log: conversation.ChatLog,
@@ -387,6 +388,13 @@ class LLMGatewayConversationEntity(
             return err.as_conversation_result()
         _insert_system_once(chat_log.content, VOICE_RESPONSE_CONTRACT, index=1)
         self._mark_run(runtime, run_id, "llm_data")
+        route_decision = decide_route(user_input.text)
+        self._mark_run(
+            runtime,
+            run_id,
+            "route_decision",
+            attrs=route_decision.as_dict(),
+        )
 
         local_control_speech = await async_handle_voice_runtime_command(
             self.hass, user_input.text
@@ -410,6 +418,7 @@ class LLMGatewayConversationEntity(
                     "max_tokens": 0,
                     "timeout_s": 0,
                     "async_deep_task": False,
+                    "route_decision": route_decision.as_dict(),
                 },
                 run_id,
                 turn_token,
@@ -422,6 +431,41 @@ class LLMGatewayConversationEntity(
             "first_response",
             attrs=first_response.as_dict(),
         )
+        if route_decision.next_action in {"ask_location_permission", "clarify"}:
+            prompt = (
+                route_decision.user_visible_prompt
+                or "我还不确定你想让我做什么，可以换个说法吗？"
+            )
+            self._mark_run(
+                runtime,
+                run_id,
+                "local_route_clarify",
+                attrs={
+                    **route_decision.as_dict(),
+                    "llm_used": False,
+                    "tools_used": [],
+                },
+            )
+            async for _tool_result in chat_log.async_add_assistant_content(
+                conversation.AssistantContent(
+                    agent_id=self.entity_id,
+                    content=prompt,
+                )
+            ):
+                pass
+            return await self._async_finalize_turn(
+                user_input,
+                chat_log,
+                started,
+                _local_route_trace(
+                    "local_clarify",
+                    "capability_router",
+                    first_response,
+                    route_decision,
+                ),
+                run_id,
+                turn_token,
+            )
         if first_response.task_type in INVENTORY_TASK_TYPES:
             inventory = render_device_inventory(
                 user_input.text,
@@ -452,6 +496,7 @@ class LLMGatewayConversationEntity(
                         "timeout_s": 0,
                         "async_deep_task": False,
                         "first_response": first_response.as_dict(),
+                        "route_decision": route_decision.as_dict(),
                     },
                     run_id,
                     turn_token,
@@ -481,6 +526,7 @@ class LLMGatewayConversationEntity(
                     "timeout_s": 0,
                     "async_deep_task": False,
                     "first_response": first_response.as_dict(),
+                    "route_decision": route_decision.as_dict(),
                 },
                 run_id,
                 turn_token,
@@ -554,7 +600,7 @@ class LLMGatewayConversationEntity(
             user_input,
             chat_log,
             started,
-            _route_trace(route, provider_runs),
+            _route_trace(route, provider_runs, route_decision),
             run_id,
             turn_token,
         )
@@ -1118,16 +1164,18 @@ class LLMGatewayConversationEntity(
 
                 policy_block = self._policy_block(content.tool_calls, user_text)
                 if policy_block:
+                    prompt, block_attrs = policy_block
                     self._mark_run(
                         runtime,
                         run_id,
                         "tool_policy_block",
                         status="error",
+                        attrs={"iteration": iteration, **block_attrs},
                     )
                     async for _tool_result in chat_log.async_add_assistant_content(
                         conversation.AssistantContent(
                             agent_id=self.entity_id,
-                            content=policy_block,
+                            content=prompt,
                         )
                     ):
                         pass
@@ -1221,7 +1269,7 @@ class LLMGatewayConversationEntity(
 
     def _policy_block(
         self, tool_calls: list[llm.ToolInput], user_text: str
-    ) -> str | None:
+    ) -> tuple[str, dict[str, Any]] | None:
         """Return a spoken block prompt if any tool call violates policy."""
         for tool_call in tool_calls:
             decision = validate_tool_call(tool_call, user_text)
@@ -1232,17 +1280,24 @@ class LLMGatewayConversationEntity(
                 tool_call.tool_name,
                 decision.reason,
             )
-            return decision.spoken_prompt or "这个操作需要先确认。"
+            attrs = {
+                "tool": tool_call.tool_name,
+                "blocked_reason": decision.reason,
+                **decision.metadata,
+            }
+            return decision.spoken_prompt or "这个操作需要先确认。", attrs
         return None
 
 
 def _route_trace(
-    route: ModelRoute, provider_runs: list[dict[str, Any]] | None = None
+    route: ModelRoute,
+    provider_runs: list[dict[str, Any]] | None = None,
+    route_decision: RouteDecision | None = None,
 ) -> dict[str, Any]:
     """Return route metadata safe for diagnostic traces."""
     provider_runs = provider_runs or []
     last_provider = provider_runs[-1]["provider"] if provider_runs else None
-    return {
+    trace = {
         "kind": route.kind,
         "model": route.model,
         "max_tokens": route.max_tokens,
@@ -1259,6 +1314,27 @@ def _route_trace(
             for attempt in run.get("attempts", [])
             if isinstance(attempt, dict)
         ],
+    }
+    if route_decision is not None:
+        trace["route_decision"] = route_decision.as_dict()
+    return trace
+
+
+def _local_route_trace(
+    kind: str,
+    model: str,
+    first_response: FirstResponseDecision,
+    route_decision: RouteDecision,
+) -> dict[str, Any]:
+    """Return trace metadata for local capability routes."""
+    return {
+        "kind": kind,
+        "model": model,
+        "max_tokens": 0,
+        "timeout_s": 0,
+        "async_deep_task": False,
+        "first_response": first_response.as_dict(),
+        "route_decision": route_decision.as_dict(),
     }
 
 

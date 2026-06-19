@@ -472,6 +472,86 @@ async def test_device_inventory_query_uses_static_context_renderer(
     assert render_span["attrs"]["entity_count"] >= 5
 
 
+async def test_nearby_place_query_without_location_asks_permission_locally(
+    hass, aioclient_mock, mock_config_entry
+):
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
+        },
+    )
+
+    with patch(
+        "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
+    ) as completion:
+        result = await conversation.async_converse(
+            hass,
+            "我想知道附近最近的麦当劳在哪里？",
+            None,
+            Context(),
+            agent_id=agent_id,
+        )
+
+    completion.assert_not_called()
+    speech = result.response.speech["plain"]["speech"]
+    assert speech == "我需要知道你的位置才能查附近地点。要使用当前位置吗？"
+    assert "不需要联网搜索" not in speech
+    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+    assert trace["route"]["kind"] == "local_clarify"
+    assert trace["route_decision"]["task_family"] == "location_dependent_query"
+    assert trace["route_decision"]["task_type"] == "nearby_place_query"
+    assert trace["route_decision"]["missing_requirements"] == ["location"]
+    assert trace["first_response_decision"]["task_type"] == "nearby_place_query"
+    assert trace["first_response_audio"]["scheduled"] is False
+    assert trace["first_response_audio"]["suppressed_reason"] == "missing_location"
+    assert not trace["tools"]
+    clarify_span = next(
+        span
+        for span in trace["timeline_spans"]
+        if span["stage"] == "local_route_clarify"
+    )
+    assert clarify_span["attrs"]["llm_used"] is False
+    assert clarify_span["attrs"]["tools_used"] == []
+
+
+async def test_unknown_query_clarifies_locally_without_model_final(
+    hass, aioclient_mock, mock_config_entry
+):
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
+        },
+    )
+
+    with patch(
+        "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
+    ) as completion:
+        result = await conversation.async_converse(
+            hass, "咕噜咕噜", None, Context(), agent_id=agent_id
+        )
+
+    completion.assert_not_called()
+    speech = result.response.speech["plain"]["speech"]
+    assert "换个说法" in speech
+    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+    assert trace["route"]["kind"] == "local_clarify"
+    assert trace["route_decision"]["task_family"] == "unknown_or_ambiguous"
+    assert trace["first_response_decision"]["cue"] == "none"
+    assert not trace["tools"]
+
+
 async def test_weather_query_uses_local_context_path_without_forced_search(
     hass, aioclient_mock, mock_config_entry
 ):

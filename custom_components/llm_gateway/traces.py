@@ -114,6 +114,7 @@ class TraceStore:
                 "provider": turn.route.get("provider"),
                 "provider_attempts": turn.route.get("provider_attempts") or [],
             },
+            "route_decision": _route_decision_summary(turn.route, timeline_spans),
             "latency_ms": turn.latency_ms,
             "status": turn.status,
             "completion": _completion_summary(
@@ -423,6 +424,21 @@ def _first_response_summary(
         summary = _bound_mapping(attrs, limit=600)
         summary["triggered_ms"] = _safe_int(event.get("t_ms"))
         return summary
+    return {}
+
+
+def _route_decision_summary(
+    route: dict[str, Any],
+    timeline_spans: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Return structured capability route metadata for the panel."""
+    route_decision = route.get("route_decision")
+    if isinstance(route_decision, dict):
+        return _bound_mapping(route_decision, limit=1200)
+    for span in timeline_spans:
+        if str(span.get("stage") or "") != "route_decision":
+            continue
+        return _bound_mapping(span.get("attrs"), limit=1200)
     return {}
 
 

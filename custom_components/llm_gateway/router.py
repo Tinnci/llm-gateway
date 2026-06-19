@@ -6,6 +6,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from .capabilities import decide_route
 from .const import (
     CONF_CHAT_MODEL,
     CONF_CHAT_TIMEOUT,
@@ -123,11 +124,19 @@ def select_verifier_route(options: dict[str, Any]) -> ModelRoute:
     )
 
 
-def classify_route(text: str) -> RouteKind:
+def classify_route(text: str) -> RouteKind:  # noqa: PLR0911
     """Classify a user turn into fast/mid/deep."""
     normalized = text.strip().lower()
     if not normalized:
         return "fast"
+
+    decision = decide_route(text)
+    if decision.route == "deep" or decision.next_action == "plan_async":
+        return "deep"
+    if decision.requires_external_info and decision.next_action == "search":
+        return "mid"
+    if decision.task_family == "location_dependent_query":
+        return "fast" if decision.next_action == "ask_location_permission" else "mid"
 
     if len(normalized) > _DEEP_LENGTH_THRESHOLD or any(
         keyword in normalized for keyword in _DEEP_KEYWORDS

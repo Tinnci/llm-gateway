@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from .capabilities import RouteDecision, decide_route
+
 if TYPE_CHECKING:
     from homeassistant.helpers import llm
 
@@ -109,6 +111,17 @@ def should_allow_search(text: str) -> bool:
     normalized = text.strip().lower()
     if not normalized:
         return False
+    route = decide_route(text)
+    if route.task_family in {"location_dependent_query", "external_current_info"}:
+        return "search_web" in route.allowed_tools and not route.missing_requirements
+    if route.task_family in {
+        "home_control",
+        "home_inventory",
+        "home_capability",
+        "home_state",
+        "conversation_control",
+    }:
+        return False
     if any(keyword in normalized for keyword in _SEARCH_ALLOW_KEYWORDS):
         return True
     if any(keyword in normalized for keyword in _SEARCH_FORBID_KEYWORDS):
@@ -129,27 +142,51 @@ def should_force_search_in_voice_path(text: str) -> bool:
     normalized = text.strip().lower()
     if not normalized:
         return False
+    route = decide_route(text)
+    if route.task_family == "location_dependent_query":
+        return route.next_action == "search"
+    if route.task_family == "external_current_info":
+        return True
     return should_allow_search(normalized) and any(
         keyword in normalized for keyword in _VOICE_PATH_SEARCH_KEYWORDS
     )
 
 
-def validate_tool_call(tool_call: llm.ToolInput, user_text: str) -> PolicyDecision:
+def validate_tool_call(  # noqa: PLR0911
+    tool_call: llm.ToolInput, user_text: str
+) -> PolicyDecision:
     """Validate a proposed tool call before execution."""
+    route = decide_route(user_text)
     if tool_call.external and tool_call.tool_name == "search_web":
-        if should_allow_search(user_text):
-            return PolicyDecision(allowed=True)
+        if route.missing_requirements:
+            return PolicyDecision(
+                allowed=False,
+                reason="missing_requirements",
+                spoken_prompt=_search_block_prompt(route),
+                metadata=_policy_metadata(
+                    route,
+                    blocked_reason="missing_requirements",
+                    policy_name="external_search_policy",
+                ),
+            )
+        if should_allow_search(user_text) and "search_web" in route.allowed_tools:
+            return PolicyDecision(allowed=True, metadata=_policy_metadata(route))
         return PolicyDecision(
             allowed=False,
             reason="search_forbidden",
-            spoken_prompt="这个问题不需要联网搜索。",
+            spoken_prompt=_search_block_prompt(route),
+            metadata=_policy_metadata(
+                route,
+                blocked_reason="search_forbidden",
+                policy_name="external_search_policy",
+            ),
         )
 
     if not _is_home_action(tool_call.tool_name):
-        return PolicyDecision(allowed=True)
+        return PolicyDecision(allowed=True, metadata=_policy_metadata(route))
 
     if not _requires_confirmation(tool_call):
-        return PolicyDecision(allowed=True)
+        return PolicyDecision(allowed=True, metadata=_policy_metadata(route))
 
     if _contains_confirmation(user_text):
         return PolicyDecision(allowed=True, metadata={"confirmed": True})
@@ -159,8 +196,42 @@ def validate_tool_call(tool_call: llm.ToolInput, user_text: str) -> PolicyDecisi
         allowed=False,
         reason="confirmation_required",
         spoken_prompt=f"要操作{target}吗？请确认。",
-        metadata={"risk": "high", "target": target},
+        metadata=_policy_metadata(
+            route,
+            blocked_reason="confirmation_required",
+            user_visible_action="ask_confirmation",
+            policy_name="high_risk_confirmation",
+            extra={"risk": "high", "target": target},
+        ),
     )
+
+
+def _search_block_prompt(route: RouteDecision) -> str:
+    if route.missing_requirements:
+        return route.user_visible_prompt or "这个问题还缺少必要信息。"
+    if route.task_family == "unknown_or_ambiguous":
+        return "我还不确定你想查什么，可以换个说法吗？"
+    return "这个问题需要更多信息才能决定是否联网。"
+
+
+def _policy_metadata(
+    route: RouteDecision,
+    *,
+    blocked_reason: str = "",
+    user_visible_action: str = "",
+    policy_name: str = "",
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "task_family": route.task_family,
+        "task_type": route.task_type,
+        "blocked_reason": blocked_reason,
+        "user_visible_action": user_visible_action or route.next_action,
+        "allowed_tools": list(route.allowed_tools),
+        "missing_requirements": list(route.missing_requirements),
+        "policy_name": policy_name,
+        **(extra or {}),
+    }
 
 
 def _is_home_action(tool_name: str) -> bool:

@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-from .static_context import classify_inventory_query
+from .capabilities import decide_route
 
 TaskType = Literal[
     "home_control",
@@ -16,6 +16,7 @@ TaskType = Literal[
     "area_inventory_query",
     "domain_inventory_query",
     "capability_query",
+    "nearby_place_query",
     "exposed_context_query",
     "static_context_query",
     "search_needed",
@@ -32,20 +33,6 @@ FAST_PROCESSING_CUE_DELAY_S = 0.35
 THINKING_PROCESSING_CUE_DELAY_S = 1.2
 
 _NORMALIZE_RE = re.compile(r"[\s《》「」『』“”\"'`·.。,:：，、_\-—!?！？]+")
-_HOME_CONTROL_RE = re.compile(r"(打开|开启|关闭|关掉|调亮|调暗|设置|开一下|关一下)")
-_HOME_STATE_RE = re.compile(r"(多少|是不是|现在|开着吗|关着吗|锁了吗|温度|湿度|状态)")
-_WEATHER_QUERY_RE = re.compile(
-    r"(天气|空气质量|空气怎么样|下雨|雨|外面|室外|冷不冷|热不热|气温|pm2\.?5|雾霾)"
-)
-_EXPLICIT_SEARCH_RE = re.compile(
-    r"(查一下|搜一下|搜索|网上|上网|联网|外网|最新|新闻|交通|说明书|错误码|固件|兼容|价格|电价|发布)"
-)
-_STABLE_FACT_RE = re.compile(r"(出自哪里|出自哪|出处|谁写的|什么意思|是什么|典故|原文)")
-_PLANNING_RE = re.compile(r"(帮我设计|规划|以后我说|如果.+就|自动化|场景|方案)")
-_HIGH_RISK_RE = re.compile(
-    r"(门锁|开门|前门|后门|报警|警报|车库门|卷帘门|门禁|热水器|取暖器|烤箱|炉灶|全屋)"
-)
-
 _QUOTE_ORIGINS = {
     "关关雎鸠在河之洲": "这句诗出自《诗经·国风·周南·关雎》。",
     "关关睢鸠在河之洲": "这句诗出自《诗经·国风·周南·关雎》。",
@@ -76,7 +63,7 @@ class FirstResponseDecision:
         }
 
 
-def decide_first_response(text: str) -> FirstResponseDecision:
+def decide_first_response(text: str) -> FirstResponseDecision:  # noqa: PLR0911
     """Return local first-response policy for a user utterance."""
     normalized = str(text or "").strip()
     if not normalized:
@@ -88,93 +75,107 @@ def decide_first_response(text: str) -> FirstResponseDecision:
             "empty_or_unknown",
         )
 
-    inventory_spec = classify_inventory_query(normalized)
-    inventory_task_type = inventory_spec.task_type if inventory_spec else ""
+    if stable_fact_answer(normalized):
+        return _decision(
+            "stable_fact",
+            "none",
+            "",
+            DEFAULT_PROCESSING_CUE_DELAY_S,
+            "local_stable_knowledge",
+        )
 
-    checks = (
-        (
-            bool(_HIGH_RISK_RE.search(normalized)),
-            ("high_risk", "confirmation", "这个需要确认。", "risk_keyword"),
-            FAST_PROCESSING_CUE_DELAY_S,
+    route = decide_route(normalized)
+    if route.task_family in {"home_inventory", "home_capability"}:
+        return _decision(
+            route.task_type,
+            "none",
             "",
-        ),
-        (
-            bool(stable_fact_answer(normalized)),
-            ("stable_fact", "none", "", "local_stable_knowledge"),
             DEFAULT_PROCESSING_CUE_DELAY_S,
-            "",
-        ),
-        (
-            inventory_spec is not None,
-            (
-                inventory_task_type,
-                "none",
-                "",
-                "local_static_context_inventory",
-            ),
-            DEFAULT_PROCESSING_CUE_DELAY_S,
+            "local_static_context_inventory",
             "fast_static_query",
-        ),
-        (
-            bool(_PLANNING_RE.search(normalized)),
-            (
-                "planning",
-                "planning",
-                "我来规划一下，不会直接执行。",
-                "planning_keyword",
-            ),
-            FAST_PROCESSING_CUE_DELAY_S,
+        )
+    if route.task_family == "location_dependent_query":
+        return _decision(
+            route.task_type,
+            "none" if route.next_action == "ask_location_permission" else "search",
             "",
-        ),
-        (
-            bool(_EXPLICIT_SEARCH_RE.search(normalized)),
-            ("search_needed", "search", "我查一下。", "explicit_or_current_search"),
-            FAST_PROCESSING_CUE_DELAY_S,
-            "",
-        ),
-        (
-            bool(_WEATHER_QUERY_RE.search(normalized)),
-            ("weather_query", "none", "", "home_state_weather"),
             DEFAULT_PROCESSING_CUE_DELAY_S,
+            "location_dependent_query",
+            "missing_location"
+            if route.next_action == "ask_location_permission"
+            else "",
+        )
+    if route.task_type == "planning":
+        return _decision(
+            "planning",
+            "planning",
+            "我来规划一下，不会直接执行。",
+            FAST_PROCESSING_CUE_DELAY_S,
+            "planning_keyword",
+        )
+    if route.task_type == "search_needed":
+        return _decision(
+            "search_needed",
+            "search",
+            "我查一下。",
+            FAST_PROCESSING_CUE_DELAY_S,
+            "explicit_or_current_search",
+        )
+    if route.task_type == "weather_query":
+        return _decision(
+            "weather_query",
+            "none",
             "",
-        ),
-        (
-            bool(_HOME_STATE_RE.search(normalized)),
-            ("home_state", "none", "", "home_state_pattern"),
             DEFAULT_PROCESSING_CUE_DELAY_S,
+            "home_state_weather",
+        )
+    if route.task_type == "home_state":
+        return _decision(
+            "home_state",
+            "none",
             "",
-        ),
-        (
-            bool(_STABLE_FACT_RE.search(normalized)),
-            ("stable_fact", "thinking", "我看一下。", "stable_fact_question"),
+            DEFAULT_PROCESSING_CUE_DELAY_S,
+            "home_state_pattern",
+        )
+    if route.task_type == "stable_fact":
+        return _decision(
+            "stable_fact",
+            "thinking",
+            "我看一下。",
             THINKING_PROCESSING_CUE_DELAY_S,
+            "stable_fact_question",
+        )
+    if route.task_type == "home_control":
+        return _decision(
+            "home_control",
+            "none",
             "",
-        ),
-        (
-            bool(_HOME_CONTROL_RE.search(normalized)),
-            ("home_control", "none", "", "home_control_pattern"),
             DEFAULT_PROCESSING_CUE_DELAY_S,
+            "home_control_pattern",
+        )
+    if route.task_type == "high_risk":
+        return _decision(
+            "high_risk",
+            "confirmation",
+            "这个需要确认。",
+            FAST_PROCESSING_CUE_DELAY_S,
+            "risk_keyword",
+        )
+    if route.task_family == "content_generation":
+        return _decision(
+            "unknown",
+            "none",
             "",
-        ),
-    )
-    for matched, fields, delay_s, audio_suppressed_reason in checks:
-        if matched:
-            task_type, cue, spoken_hint, reason = fields
-            return _decision(
-                task_type,
-                cue,
-                spoken_hint,
-                delay_s,
-                reason,
-                audio_suppressed_reason,
-            )
+            DEFAULT_PROCESSING_CUE_DELAY_S,
+            "content_generation",
+        )
 
     return _decision(
         "unknown",
-        "thinking",
-        "我看一下。",
+        "none",
+        "",
         THINKING_PROCESSING_CUE_DELAY_S,
-        "fallback",
+        "unknown_or_ambiguous",
     )
 
 

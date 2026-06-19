@@ -32,6 +32,24 @@ def test_first_response_uses_fast_search_cue_for_current_info():
     assert decision.processing_cue_delay_s == FAST_PROCESSING_CUE_DELAY_S
 
 
+def test_first_response_suppresses_missing_location_poi_prompt():
+    decision = decide_first_response("我想知道附近最近的麦当劳在哪里？")
+
+    assert decision.task_type == "nearby_place_query"
+    assert decision.cue == "none"
+    assert decision.spoken_hint == ""
+    assert decision.audio_suppressed_reason == "missing_location"
+
+
+def test_first_response_suppresses_unknown_fallback_hint():
+    decision = decide_first_response("咕噜咕噜")
+
+    assert decision.task_type == "unknown"
+    assert decision.cue == "none"
+    assert decision.spoken_hint == ""
+    assert decision.reason == "unknown_or_ambiguous"
+
+
 def test_first_response_classifies_weather_as_local_state_by_default():
     for text in (
         "今天天气。",
