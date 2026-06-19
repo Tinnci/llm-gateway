@@ -233,6 +233,7 @@ class ScalarStateRenderResult:
     """Rendered spoken state summary plus debug metadata."""
 
     speech: str
+    task_type: str
     source: str
     entity_count: int
     entities: tuple[ExposedEntity, ...]
@@ -241,7 +242,7 @@ class ScalarStateRenderResult:
     def trace_attrs(self) -> dict[str, object]:
         """Return Voice Harness timeline attrs for the local state renderer."""
         return {
-            "task_type": "weather_query",
+            "task_type": self.task_type,
             "source": self.source,
             "entity_count": self.entity_count,
             "metrics": list(self.metrics),
@@ -461,6 +462,8 @@ def render_device_inventory(
 def render_scalar_state_answer(
     text: str,
     tool_result: dict[str, object],
+    *,
+    task_type: str = "home_state",
 ) -> ScalarStateRenderResult | None:
     """Render deterministic scalar state answers from GetLiveContext output."""
     if tool_result.get("success") is not True:
@@ -485,6 +488,7 @@ def render_scalar_state_answer(
     speech = _render_scalar_state_summary(text, selected, metrics)
     return ScalarStateRenderResult(
         speech=speech,
+        task_type=task_type,
         source="GetLiveContext",
         entity_count=len(selected),
         entities=selected,
@@ -763,6 +767,10 @@ def _render_scalar_state_summary(
         subject = "空气质量"
     elif "天气" in normalized or "weather" in metrics:
         subject = "天气相关"
+    elif metrics == ("temperature",):
+        subject = "温度"
+    elif metrics == ("humidity",):
+        subject = "湿度"
     else:
         subject = "状态"
 

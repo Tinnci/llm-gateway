@@ -163,3 +163,15 @@ def test_render_scalar_state_answer_uses_live_context_readings() -> None:
     assert "温度" not in result.speech
     assert "湿度" not in result.speech
     assert result.trace_attrs()["llm_final_used"] is False
+
+
+def test_render_scalar_state_answer_handles_temperature_query() -> None:
+    result = render_scalar_state_answer(
+        "卧室温度是多少",
+        LIVE_CONTEXT_RESULT,
+        task_type="home_state",
+    )
+
+    assert result
+    assert result.speech == "当前已暴露给助手的温度读数：温度 25.5 °C。"
+    assert result.trace_attrs()["task_type"] == "home_state"

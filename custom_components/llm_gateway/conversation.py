@@ -1277,11 +1277,15 @@ class LLMGatewayConversationEntity(
                     attrs={"name": tool_result.tool_name, "iteration": iteration},
                 )
                 if (
-                    first_response.task_type == "weather_query"
+                    first_response.task_type in {"weather_query", "home_state"}
                     and tool_result.tool_name == LIVE_CONTEXT_TOOL_NAME
                     and "error" not in result
                 ):
-                    local_state = render_scalar_state_answer(user_text, result)
+                    local_state = render_scalar_state_answer(
+                        user_text,
+                        result,
+                        task_type=first_response.task_type,
+                    )
                     if local_state is not None:
                         self._mark_run(
                             runtime,
