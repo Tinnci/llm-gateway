@@ -25,7 +25,9 @@ InventoryTaskType = Literal[
 EntitySource = Literal["static_context", "live_context", "ha_registry"]
 
 _DEVICE_START_RE = re.compile(r"^\s*-\s*names:\s*(?P<names>.+?)\s*$")
-_FIELD_RE = re.compile(r"^\s*(?P<key>domain|areas):\s*(?P<value>.+?)\s*$")
+_FIELD_RE = re.compile(
+    r"^\s*(?P<key>domain|areas|state|unit_of_measurement):\s*(?P<value>.*?)\s*$"
+)
 _TEXT_NORMALIZE_RE = re.compile(r"[\s《》「」『』“”\"'`·.。,:：，、_\-—!?！？]+")
 
 CONTROLLABLE_DOMAINS = {
@@ -102,6 +104,33 @@ STATE_VALUE_PHRASES = (
     "热不热",
 )
 SCALAR_STATE_TERMS = ("温度", "湿度", "pm25", "co2", "tvoc", "空气质量", "天气")
+STATE_UNAVAILABLE_VALUES = {"", "unknown", "unavailable", "none", "null"}
+STATE_METRIC_ORDER = (
+    "pm25",
+    "co2",
+    "eco2",
+    "tvoc",
+    "temperature",
+    "humidity",
+    "weather",
+)
+STATE_METRIC_LABELS = {
+    "pm25": "PM2.5",
+    "co2": "CO2",
+    "eco2": "eCO2",
+    "tvoc": "TVOC",
+    "temperature": "温度",
+    "humidity": "湿度",
+    "weather": "天气",
+}
+STATE_ENTITY_PATTERNS = (
+    ("pm25", ("pm25", "pm2")),
+    ("eco2", ("eco2",)),
+    ("co2", ("co2", "二氧化碳")),
+    ("tvoc", ("tvoc", "挥发")),
+    ("temperature", ("温度", "temperature")),
+    ("humidity", ("湿度", "humidity")),
+)
 INVENTORY_ENUMERATION_TERMS = (
     "设备",
     "实体",
@@ -122,6 +151,8 @@ class ExposedEntity:
     domain: str
     areas: tuple[str, ...] = ()
     aliases: tuple[str, ...] = ()
+    state: str = ""
+    unit_of_measurement: str = ""
     entity_id: str | None = None
     can_control: bool = False
     can_read_state: bool = True
@@ -194,6 +225,38 @@ class InventoryRenderResult:
             ],
             "llm_used": False,
             "tools_used": [],
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ScalarStateRenderResult:
+    """Rendered spoken state summary plus debug metadata."""
+
+    speech: str
+    source: str
+    entity_count: int
+    entities: tuple[ExposedEntity, ...]
+    metrics: tuple[str, ...]
+
+    def trace_attrs(self) -> dict[str, object]:
+        """Return Voice Harness timeline attrs for the local state renderer."""
+        return {
+            "task_type": "weather_query",
+            "source": self.source,
+            "entity_count": self.entity_count,
+            "metrics": list(self.metrics),
+            "entities": [
+                {
+                    "name": entity.name,
+                    "domain": entity.domain,
+                    "areas": list(entity.areas),
+                    "state": entity.state,
+                    "unit_of_measurement": entity.unit_of_measurement,
+                    "source": entity.source,
+                }
+                for entity in self.entities
+            ],
+            "llm_final_used": False,
         }
 
 
@@ -395,6 +458,40 @@ def render_device_inventory(
     return ExposedEntityIndex.from_content(content).render(text)
 
 
+def render_scalar_state_answer(
+    text: str,
+    tool_result: dict[str, object],
+) -> ScalarStateRenderResult | None:
+    """Render deterministic scalar state answers from GetLiveContext output."""
+    if tool_result.get("success") is not True:
+        return None
+    raw_result = tool_result.get("result")
+    if not isinstance(raw_result, str) or not raw_result.strip():
+        return None
+
+    entities = tuple(
+        entity
+        for entity in parse_static_devices(raw_result, source="live_context")
+        if entity.domain in {"sensor", "weather", "climate"} and entity.state
+    )
+    if not entities:
+        return None
+
+    metrics = _state_metrics_from_text(text)
+    selected = _select_state_entities(entities, metrics)
+    if not selected:
+        return None
+
+    speech = _render_scalar_state_summary(text, selected, metrics)
+    return ScalarStateRenderResult(
+        speech=speech,
+        source="GetLiveContext",
+        entity_count=len(selected),
+        entities=selected,
+        metrics=metrics,
+    )
+
+
 def parse_static_devices_from_content(
     content: list[conversation.Content],
 ) -> list[ExposedEntity]:
@@ -407,12 +504,18 @@ def parse_static_devices_from_content(
     return _dedup_entities(entities)
 
 
-def parse_static_devices(text: str) -> list[ExposedEntity]:
+def parse_static_devices(
+    text: str,
+    *,
+    source: EntitySource = "static_context",
+) -> list[ExposedEntity]:
     """Parse entity entries from a Home Assistant static context block."""
     entities: list[ExposedEntity] = []
     current_name = ""
     current_domain = ""
     current_areas: tuple[str, ...] = ()
+    current_state = ""
+    current_unit = ""
 
     def flush() -> None:
         if current_name and current_domain:
@@ -422,9 +525,11 @@ def parse_static_devices(text: str) -> list[ExposedEntity]:
                     domain=current_domain.strip(),
                     areas=current_areas,
                     aliases=_aliases_for_name(current_name),
+                    state=_clean_state_value(current_state),
+                    unit_of_measurement=_clean_state_value(current_unit),
                     can_control=current_domain.strip() in CONTROLLABLE_DOMAINS,
                     can_read_state=True,
-                    source="static_context",
+                    source=source,
                 )
             )
 
@@ -434,6 +539,8 @@ def parse_static_devices(text: str) -> list[ExposedEntity]:
             current_name = match.group("names")
             current_domain = ""
             current_areas = ()
+            current_state = ""
+            current_unit = ""
             continue
         if not current_name:
             continue
@@ -444,6 +551,10 @@ def parse_static_devices(text: str) -> list[ExposedEntity]:
                 current_domain = value
             elif key == "areas":
                 current_areas = tuple(_split_areas(value))
+            elif key == "state":
+                current_state = value
+            elif key == "unit_of_measurement":
+                current_unit = value
     flush()
     return entities
 
@@ -593,6 +704,114 @@ def _entity_matches_domain(entity: ExposedEntity, domain: str) -> bool:
     return False
 
 
+def _state_metrics_from_text(text: str) -> tuple[str, ...]:
+    normalized = _normalize_query_text(text)
+    metrics: list[str] = []
+    if "空气质量" in normalized or "空气怎么样" in normalized:
+        metrics.extend(("pm25", "co2", "eco2", "tvoc", "temperature", "humidity"))
+    if "pm25" in normalized or "pm2" in normalized or "雾霾" in normalized:
+        metrics.append("pm25")
+    if "co2" in normalized or "二氧化碳" in normalized:
+        metrics.append("co2")
+    if "eco2" in normalized:
+        metrics.append("eco2")
+    if "tvoc" in normalized or "甲醛" in normalized or "挥发" in normalized:
+        metrics.append("tvoc")
+    if (
+        "温度" in normalized
+        or "气温" in normalized
+        or "冷不冷" in normalized
+        or "热不热" in normalized
+    ):
+        metrics.append("temperature")
+    if "湿度" in normalized:
+        metrics.append("humidity")
+    if "天气" in normalized:
+        metrics.extend(("weather", "temperature", "humidity", "pm25"))
+    return _ordered_metrics(metrics)
+
+
+def _select_state_entities(
+    entities: tuple[ExposedEntity, ...],
+    metrics: tuple[str, ...],
+) -> tuple[ExposedEntity, ...]:
+    wanted = metrics or STATE_METRIC_ORDER
+    selected = [
+        entity
+        for entity in entities
+        if (metric := _metric_for_entity(entity)) and metric in wanted
+    ]
+    selected.sort(key=lambda entity: _metric_sort_key(_metric_for_entity(entity)))
+    return tuple(selected[:8])
+
+
+def _render_scalar_state_summary(
+    text: str,
+    entities: tuple[ExposedEntity, ...],
+    metrics: tuple[str, ...],
+) -> str:
+    normalized = _normalize_query_text(text)
+    if "空气质量" in normalized or {"pm25", "co2", "eco2", "tvoc"} & set(metrics):
+        subject = "空气质量"
+    elif "天气" in normalized or "weather" in metrics:
+        subject = "天气相关"
+    else:
+        subject = "状态"
+
+    available: list[str] = []
+    unavailable: list[str] = []
+    for entity in entities:
+        metric = _metric_for_entity(entity)
+        label = STATE_METRIC_LABELS.get(metric, entity.name)
+        if _state_is_available(entity.state):
+            available.append(f"{label} {entity.state}{_unit_suffix(entity)}")
+        else:
+            unavailable.append(label)
+
+    if available:
+        speech = f"当前已暴露给助手的{subject}读数：{'，'.join(available)}。"
+        if unavailable:
+            speech += f"{'、'.join(_dedup_names(unavailable))} 当前不可用。"
+        return speech
+    if unavailable:
+        return (
+            f"我能看到已暴露给助手的{subject}传感器，"
+            f"但{'、'.join(_dedup_names(unavailable))}当前不可用。"
+        )
+    return f"我暂时没有看到已暴露给助手的{subject}读数。"
+
+
+def _metric_for_entity(entity: ExposedEntity) -> str:
+    name = _normalize_query_text(entity.name)
+    for metric, patterns in STATE_ENTITY_PATTERNS:
+        if any(pattern in name for pattern in patterns):
+            return metric
+    if entity.domain == "weather" or "天气" in name:
+        return "weather"
+    return ""
+
+
+def _ordered_metrics(metrics: list[str]) -> tuple[str, ...]:
+    seen = set(metrics)
+    return tuple(metric for metric in STATE_METRIC_ORDER if metric in seen)
+
+
+def _metric_sort_key(metric: str) -> int:
+    try:
+        return STATE_METRIC_ORDER.index(metric)
+    except ValueError:
+        return len(STATE_METRIC_ORDER)
+
+
+def _state_is_available(value: str) -> bool:
+    return _clean_state_value(value).lower() not in STATE_UNAVAILABLE_VALUES
+
+
+def _unit_suffix(entity: ExposedEntity) -> str:
+    unit = _clean_state_value(entity.unit_of_measurement)
+    return f" {unit}" if unit else ""
+
+
 def _area_from_common(text: str) -> str:
     for area in sorted(COMMON_AREAS, key=len, reverse=True):
         if area in text:
@@ -666,6 +885,10 @@ def _split_areas(value: str) -> list[str]:
 
 def _compact_spaces(value: str) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def _clean_state_value(value: str) -> str:
+    return _compact_spaces(value).strip("'\"")
 
 
 def _normalize_query_text(text: str) -> str:

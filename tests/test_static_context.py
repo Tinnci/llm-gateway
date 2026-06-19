@@ -8,6 +8,7 @@ from custom_components.llm_gateway.static_context import (
     is_device_inventory_query,
     parse_static_devices,
     render_device_inventory_answer,
+    render_scalar_state_answer,
 )
 
 STATIC_CONTEXT = (
@@ -34,6 +35,43 @@ STATIC_CONTEXT = (
     "- names: 静安天气 PM2.5\n"
     "  domain: sensor\n"
 )
+LIVE_CONTEXT_RESULT = {
+    "success": True,
+    "result": (
+        "Live Context: An overview of the areas and the devices in this smart "
+        "home:\n"
+        "- names: zM1_AD46 PM2.5\n"
+        "  domain: sensor\n"
+        "  state: '10.0'\n"
+        "  areas: 卧室\n"
+        "  attributes:\n"
+        "    unit_of_measurement: μg/m³\n"
+        "- names: zM1_AD46 CO2\n"
+        "  domain: sensor\n"
+        "  state: unknown\n"
+        "  areas: 卧室\n"
+        "  attributes:\n"
+        "    unit_of_measurement: ppm\n"
+        "- names: zM1_AD46 TVOC\n"
+        "  domain: sensor\n"
+        "  state: unavailable\n"
+        "  areas: 卧室\n"
+        "  attributes:\n"
+        "    unit_of_measurement: μg/m³\n"
+        "- names: zM1_AD46 温度\n"
+        "  domain: sensor\n"
+        "  state: '25.5'\n"
+        "  areas: 卧室\n"
+        "  attributes:\n"
+        "    unit_of_measurement: °C\n"
+        "- names: zM1_AD46 湿度\n"
+        "  domain: sensor\n"
+        "  state: '80.2'\n"
+        "  areas: 卧室\n"
+        "  attributes:\n"
+        "    unit_of_measurement: %\n"
+    ),
+}
 
 
 def _content() -> list[conversation.Content]:
@@ -111,3 +149,17 @@ def test_render_inventory_empty_context_does_not_claim_permission_loss() -> None
     answer = render_device_inventory_answer("你能看到哪些设备？", [])
 
     assert answer == "我暂时看不到已暴露给助手的设备列表。"
+
+
+def test_render_scalar_state_answer_uses_live_context_readings() -> None:
+    result = render_scalar_state_answer("查一下今天空气质量", LIVE_CONTEXT_RESULT)
+
+    assert result
+    assert "当前已暴露给助手的空气质量读数" in result.speech
+    assert "PM2.5 10.0 μg/m³" in result.speech
+    assert "温度 25.5 °C" in result.speech
+    assert "湿度 80.2 %" in result.speech
+    assert "CO2" in result.speech
+    assert "TVOC" in result.speech
+    assert "当前不可用" in result.speech
+    assert result.trace_attrs()["llm_final_used"] is False

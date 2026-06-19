@@ -57,7 +57,7 @@ from .search import (
     available_search_tools,
     mark_external_tool_calls,
 )
-from .static_context import render_device_inventory
+from .static_context import render_device_inventory, render_scalar_state_answer
 from .traces import TraceTurn
 from .voice_controls import async_handle_voice_runtime_command
 from .voice_text import markdown_to_spoken_text
@@ -1245,6 +1245,22 @@ class LLMGatewayConversationEntity(
                     and tool_result.tool_name == LIVE_CONTEXT_TOOL_NAME
                     and "error" not in result
                 ):
+                    local_state = render_scalar_state_answer(user_text, result)
+                    if local_state is not None:
+                        self._mark_run(
+                            runtime,
+                            run_id,
+                            "local_state_render",
+                            attrs=local_state.trace_attrs(),
+                        )
+                        async for _tool_result in chat_log.async_add_assistant_content(
+                            conversation.AssistantContent(
+                                agent_id=self.entity_id,
+                                content=local_state.speech,
+                            )
+                        ):
+                            pass
+                        return provider_runs
                     force_final = True
                     self._mark_run(
                         runtime,
