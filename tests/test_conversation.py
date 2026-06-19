@@ -149,6 +149,13 @@ def test_normalize_live_context_generic_metric_name_is_not_exact_entity():
     ) == {"domain": ["sensor"]}
 
 
+def test_normalize_live_context_weather_prefix_name_is_not_exact_entity():
+    assert _normalize_tool_args(
+        LIVE_CONTEXT_TOOL_NAME,
+        {"domain": "sensor", "name": "静安天气"},
+    ) == {"domain": "sensor"}
+
+
 def test_turn_controller_marks_previous_turn_stale():
     controller = TurnController()
 

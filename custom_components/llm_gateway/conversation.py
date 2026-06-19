@@ -228,7 +228,16 @@ def _looks_like_live_context_entity_hint(value: str) -> bool:
 
 
 def _is_generic_live_context_name(value: str) -> bool:
-    return _normalize_live_context_hint(value) in _GENERIC_LIVE_CONTEXT_NAMES
+    normalized = _normalize_live_context_hint(value)
+    if normalized in _GENERIC_LIVE_CONTEXT_NAMES:
+        return True
+    has_specific_metric = any(
+        metric in normalized
+        for metric in ("pm2.5", "pm25", "co2", "tvoc", "eco2", "温度", "湿度")
+    )
+    return not has_specific_metric and (
+        "天气" in normalized or "空气质量" in normalized
+    )
 
 
 def _normalize_live_context_hint(value: str) -> str:
