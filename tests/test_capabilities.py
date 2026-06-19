@@ -72,14 +72,15 @@ def test_location_dependent_query_with_explicit_location_can_search():
     assert decision.metadata["explicit_location"] is True
 
 
-def test_unknown_is_clarification_not_direct_answer():
+def test_unknown_uses_llm_generalization_before_clarification():
     decision = decide_route("咕噜咕噜")
 
     assert decision.task_family == "unknown_or_ambiguous"
     assert decision.task_type == "unknown"
-    assert decision.next_action == "clarify"
-    assert decision.route == "local_clarify"
-    assert "换个说法" in decision.user_visible_prompt
+    assert decision.next_action == "answer_with_llm"
+    assert decision.route == "fast"
+    assert decision.requires_llm
+    assert decision.metadata["planner"] == "llm_route_generalization"
 
 
 def test_literary_knowledge_routes_to_stable_knowledge():
@@ -105,16 +106,17 @@ def test_volume_control_gets_targeted_route_or_clarification():
 
     assert self_volume.task_family == "volume_control"
     assert self_volume.task_type == "volume_control"
-    assert self_volume.next_action == "clarify"
-    assert "我说话的音量" in self_volume.user_visible_prompt
-    assert "播放器" in self_volume.user_visible_prompt
+    assert self_volume.next_action == "execute_local"
+    assert self_volume.route == "local_action"
+    assert not self_volume.requires_llm
 
     media_volume = decide_route("把客厅音箱音量调高")
 
     assert media_volume.task_family == "volume_control"
     assert media_volume.task_type == "volume_control"
-    assert media_volume.next_action == "answer_with_llm"
-    assert "HassCallService" in media_volume.allowed_tools
+    assert media_volume.next_action == "execute_local"
+    assert media_volume.route == "local_action"
+    assert not media_volume.requires_llm
 
 
 def test_home_state_routes_to_local_live_context_without_llm():
@@ -148,8 +150,13 @@ def test_colloquial_home_control_routes_to_control_capability():
 
         assert decision.task_family == "home_control", text
         assert decision.task_type == "home_control"
-        assert decision.route == "fast"
-        assert "HassTurnOff" in decision.allowed_tools
+        if "空调" in text:
+            assert decision.route == "fast"
+            assert decision.requires_llm
+        else:
+            assert decision.route == "local_action"
+            assert decision.next_action == "execute_local"
+            assert not decision.requires_llm
 
 
 def test_bare_lookup_weather_stays_home_state():

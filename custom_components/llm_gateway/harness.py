@@ -8,6 +8,7 @@ from typing import Any
 
 import yaml
 
+from .capabilities import decide_route
 from .policy import should_allow_search
 from .voice_text import markdown_to_spoken_text
 
@@ -34,7 +35,7 @@ def load_yaml_scenarios(path: str | Path) -> list[dict[str, Any]]:
     return [item for item in data if isinstance(item, dict)]
 
 
-def evaluate_scenario(
+def evaluate_scenario(  # noqa: PLR0912 - compact rule list for harness reporting.
     scenario: dict[str, Any],
     actual: dict[str, Any],
 ) -> HarnessResult:
@@ -58,6 +59,23 @@ def evaluate_scenario(
         expected.get("behavior") or scenario.get("expected_behavior") or ""
     )
     risk_level = str(expected.get("risk_level") or scenario.get("risk_level") or "")
+    route_decision = decide_route(user)
+    route_expected = expected.get("route_decision") or expected.get("route")
+    if not isinstance(route_expected, dict):
+        route_expected = {}
+
+    if (
+        route_decision.requires_llm is False
+        and route_decision.next_action == "answer_with_llm"
+    ):
+        violations.append("route_contract_non_llm_answers_with_llm")
+
+    route_actual = route_decision.as_dict()
+    for key, expected_value in route_expected.items():
+        if route_actual.get(str(key)) != expected_value:
+            violations.append(
+                f"route_mismatch:{key}:expected={expected_value}:actual={route_actual.get(str(key))}"
+            )
 
     if expected.get("must_search") is True and not should_allow_search(user):
         violations.append("search_required_but_policy_denied")

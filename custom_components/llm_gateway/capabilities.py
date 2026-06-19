@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Literal
 
+from .capability_executor import local_action_candidate
 from .static_context import classify_inventory_query
 
 TaskFamily = Literal[
@@ -456,10 +457,28 @@ def decide_route(text: str) -> RouteDecision:  # noqa: PLR0911, PLR0912
         )
 
     if _HOME_CONTROL_RE.search(value):
+        candidate = local_action_candidate(value)
+        if candidate is not None and candidate.family == "home_control":
+            return RouteDecision(
+                task_family="home_control",
+                task_type="home_control",
+                confidence=candidate.confidence,
+                allowed_tools=("local_service_call",),
+                forbidden_tools=("search_web",),
+                next_action="execute_local",
+                route="local_action",
+                matched_capability="local_home_control",
+                metadata={
+                    "action": candidate.action,
+                    "domain": candidate.domain,
+                    "area": candidate.area,
+                },
+            )
         return RouteDecision(
             task_family="home_control",
             task_type="home_control",
             confidence=0.72,
+            requires_llm=True,
             allowed_tools=("HassTurnOn", "HassTurnOff", "HassCallService"),
             next_action="answer_with_llm",
             route="fast",
@@ -489,12 +508,12 @@ def _unknown(reason: str) -> RouteDecision:
     return RouteDecision(
         task_family="unknown_or_ambiguous",
         task_type="unknown",
-        confidence=0.2,
-        next_action="clarify",
-        user_visible_prompt="我还不确定你想让我做什么，可以换个说法吗？",
-        route="local_clarify",
+        confidence=0.35,
+        requires_llm=True,
+        next_action="answer_with_llm",
+        route="fast",
         matched_capability="unknown_or_ambiguous",
-        metadata={"reason": reason},
+        metadata={"reason": reason, "planner": "llm_route_generalization"},
     )
 
 
@@ -503,6 +522,27 @@ def _is_literary_knowledge(text: str) -> bool:
 
 
 def _volume_route(text: str) -> RouteDecision:
+    candidate = local_action_candidate(text)
+    if candidate is not None and candidate.family == "volume_control":
+        return RouteDecision(
+            task_family="volume_control",
+            task_type="volume_control",
+            confidence=candidate.confidence,
+            allowed_tools=("local_service_call",),
+            forbidden_tools=("search_web",),
+            next_action="execute_local",
+            route="local_action",
+            matched_capability=(
+                "assistant_volume_control"
+                if candidate.action == "assistant_volume_set"
+                else "media_volume_control"
+            ),
+            metadata={
+                "action": candidate.action,
+                "domain": candidate.domain,
+                "area": candidate.area,
+            },
+        )
     is_assistant = bool(_ASSISTANT_VOLUME_RE.search(text))
     is_media = bool(_MEDIA_VOLUME_RE.search(text))
     if is_assistant and not is_media:
@@ -511,9 +551,7 @@ def _volume_route(text: str) -> RouteDecision:
             task_type="volume_control",
             confidence=0.78,
             next_action="clarify",
-            user_visible_prompt=(
-                "你是要调我说话的音量，还是调整某个播放器的音量？"
-            ),
+            user_visible_prompt=("你是要调我说话的音量，还是调整某个播放器的音量？"),
             route="local_clarify",
             matched_capability="self_or_media_volume_control",
             metadata={"clarification_reason": "assistant_or_media_volume"},
@@ -523,6 +561,7 @@ def _volume_route(text: str) -> RouteDecision:
             task_family="volume_control",
             task_type="volume_control",
             confidence=0.8,
+            requires_llm=True,
             allowed_tools=("HassCallService",),
             next_action="answer_with_llm",
             route="fast",

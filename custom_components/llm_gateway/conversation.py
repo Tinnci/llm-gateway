@@ -18,6 +18,7 @@ from voluptuous_openapi import convert
 
 from .api import LLMGatewayClient, LLMGatewayError, ToolChoice
 from .capabilities import RouteDecision, decide_route
+from .capability_executor import async_try_execute_local_capability
 from .const import (
     CONF_TEMPERATURE,
     CONF_TOP_P,
@@ -566,6 +567,78 @@ class LLMGatewayConversationEntity(
             "first_response",
             attrs=first_response.as_dict(),
         )
+        if (
+            route_decision.next_action == "execute_local"
+            and route_decision.route == "local_action"
+        ):
+            local_capability_result = await async_try_execute_local_capability(
+                self.hass,
+                user_input.text,
+                route_decision,
+            )
+            if local_capability_result is not None and local_capability_result.handled:
+                self._mark_run(
+                    runtime,
+                    run_id,
+                    "local_capability_execute",
+                    status=(
+                        "ok"
+                        if local_capability_result.status == "executed"
+                        else local_capability_result.status
+                    ),
+                    attrs=local_capability_result.trace_attrs(),
+                )
+                async for _tool_result in chat_log.async_add_assistant_content(
+                    conversation.AssistantContent(
+                        agent_id=self.entity_id,
+                        content=local_capability_result.speech,
+                    )
+                ):
+                    pass
+                return await self._async_finalize_turn(
+                    user_input,
+                    chat_log,
+                    started,
+                    _local_route_trace(
+                        "local_action",
+                        "capability_executor",
+                        first_response,
+                        route_decision,
+                    ),
+                    run_id,
+                    turn_token,
+                )
+            self._mark_run(
+                runtime,
+                run_id,
+                "local_capability_execute",
+                status="error",
+                attrs={
+                    **route_decision.as_dict(),
+                    "reason": "executor_not_applicable",
+                    "llm_used": False,
+                },
+            )
+            async for _tool_result in chat_log.async_add_assistant_content(
+                conversation.AssistantContent(
+                    agent_id=self.entity_id,
+                    content="这个操作我还不能本地执行，请换个说法。",
+                )
+            ):
+                pass
+            return await self._async_finalize_turn(
+                user_input,
+                chat_log,
+                started,
+                _local_route_trace(
+                    "local_action",
+                    "capability_executor",
+                    first_response,
+                    route_decision,
+                ),
+                run_id,
+                turn_token,
+            )
         if route_decision.next_action in {"ask_location_permission", "clarify"}:
             prompt = (
                 route_decision.user_visible_prompt

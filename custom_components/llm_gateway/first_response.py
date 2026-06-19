@@ -226,8 +226,7 @@ def stable_fact_answer(text: str) -> str | None:
         return "《春江花月夜》的作者是唐代诗人张若虚。"
     if "李白" in normalized and any(term in normalized for term in _LI_BAI_WORKS_TERMS):
         return (
-            "李白的代表作包括《静夜思》《将进酒》《蜀道难》"
-            "《望庐山瀑布》《行路难》等。"
+            "李白的代表作包括《静夜思》《将进酒》《蜀道难》《望庐山瀑布》《行路难》等。"
         )
     return None
 

@@ -97,14 +97,15 @@ def test_inventory_intent_uses_semantic_slots_not_exact_phrase_list() -> None:
     assert not is_device_inventory_query("静安天气 PM2.5 是多少？")
 
 
-def test_render_inventory_summary_uses_exposed_device_wording() -> None:
+def test_render_inventory_summary_uses_natural_spoken_wording() -> None:
     answer = render_device_inventory_answer("你能看到哪些设备？", _content())
 
     assert answer
-    assert "已暴露给助手的设备" in answer
+    assert "我能看到这些设备" in answer
     assert "客厅灯" in answer
     assert "卧室空调" in answer
     assert "没有权限" not in answer
+    assert "已暴露给助手" not in answer
 
 
 def test_render_inventory_filters_by_area() -> None:
@@ -121,34 +122,37 @@ def test_render_inventory_filters_by_light_domain() -> None:
     answer = render_device_inventory_answer("有哪些灯？", _content())
 
     assert answer
-    assert "已暴露给助手的灯" in answer
+    assert "我能看到的灯" in answer
     assert "客厅灯" in answer
     assert "Yeelight 显示器挂灯" in answer
     assert "卧室空调" not in answer
+    assert "已暴露给助手" not in answer
 
 
 def test_render_inventory_filters_weather_like_context() -> None:
     answer = render_device_inventory_answer("你能看到天气吗？", _content())
 
     assert answer
-    assert "已暴露给助手的天气" in answer
+    assert "我能看到的天气" in answer
     assert "静安天气 PM2.5" in answer
+    assert "已暴露给助手" not in answer
 
 
 def test_render_inventory_lists_control_capabilities() -> None:
     answer = render_device_inventory_answer("你能控制什么？", _content())
 
     assert answer
-    assert "我能控制已暴露给助手的" in answer
+    assert "我能控制" in answer
     assert "灯" in answer
     assert "空调" in answer
     assert "高风险设备仍需要先确认" in answer
+    assert "已暴露给助手" not in answer
 
 
 def test_render_inventory_empty_context_does_not_claim_permission_loss() -> None:
     answer = render_device_inventory_answer("你能看到哪些设备？", [])
 
-    assert answer == "我暂时看不到已暴露给助手的设备列表。"
+    assert answer == "我暂时看不到设备列表。"
 
 
 def test_render_scalar_state_answer_uses_live_context_readings() -> None:

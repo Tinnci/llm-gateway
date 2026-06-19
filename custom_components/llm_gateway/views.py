@@ -199,6 +199,12 @@ SAMPLE_SCENARIOS: list[dict[str, Any]] = [
         },
         "expected": {
             "must_search": False,
+            "route_decision": {
+                "task_family": "home_control",
+                "requires_llm": False,
+                "next_action": "execute_local",
+                "route": "local_action",
+            },
             "spoken_response": {"max_sentences": 2},
         },
     },
@@ -218,6 +224,11 @@ SAMPLE_SCENARIOS: list[dict[str, Any]] = [
         },
         "expected": {
             "must_search": True,
+            "route_decision": {
+                "task_family": "external_current_info",
+                "requires_llm": True,
+                "next_action": "search",
+            },
             "spoken_response": {"max_sentences": 2},
         },
     },
@@ -241,6 +252,11 @@ SAMPLE_SCENARIOS: list[dict[str, Any]] = [
         "expected": {
             "must_search": False,
             "must_not_call_service_without_confirmation": True,
+            "route_decision": {
+                "task_family": "home_control",
+                "requires_user_confirmation": True,
+                "next_action": "ask_confirmation",
+            },
             "spoken_response": {
                 "max_sentences": 2,
                 "must_include": ["确认"],
@@ -266,6 +282,102 @@ SAMPLE_SCENARIOS: list[dict[str, Any]] = [
                     "must_not_mention": ["entity_id"],
                 },
             },
+        },
+    },
+    {
+        "id": "local-home-state",
+        "name": "本地状态查询",
+        "name_i18n": {"en": "Local state query", "zh-Hans": "本地状态查询"},
+        "user": "当前客厅的温度是多少？",
+        "response": "客厅现在 27.8 度。",
+        "expected": {
+            "must_search": False,
+            "route_decision": {
+                "task_family": "home_state",
+                "requires_llm": False,
+                "next_action": "call_tool_then_local_render",
+                "route": "local_live_context",
+            },
+            "spoken_response": {
+                "max_sentences": 1,
+                "must_not_mention": ["已暴露给助手", "GetLiveContext", "policy"],
+            },
+        },
+    },
+    {
+        "id": "stable-literary-knowledge",
+        "name": "文学常识",
+        "name_i18n": {"en": "Literary knowledge", "zh-Hans": "文学常识"},
+        "user": "张若虚有什么样的诗？",
+        "response": "张若虚以《春江花月夜》最有代表性。",
+        "expected": {
+            "must_search": False,
+            "route_decision": {
+                "task_family": "stable_knowledge",
+                "requires_llm": True,
+                "next_action": "answer_with_llm",
+            },
+            "spoken_response": {"max_sentences": 2},
+        },
+    },
+    {
+        "id": "nearby-place-missing-location",
+        "name": "附近地点缺位置",
+        "name_i18n": {
+            "en": "Nearby place without location",
+            "zh-Hans": "附近地点缺位置",
+        },
+        "user": "附近最近的麦当劳在哪里？",
+        "response": "我需要知道你的位置才能查附近地点。要使用当前位置吗？",
+        "expected": {
+            "must_search": False,
+            "route_decision": {
+                "task_family": "location_dependent_query",
+                "requires_location": True,
+                "requires_llm": False,
+                "next_action": "ask_location_permission",
+            },
+            "spoken_response": {"max_questions": 1},
+        },
+    },
+    {
+        "id": "assistant-volume-local",
+        "name": "助手音量本地控制",
+        "name_i18n": {
+            "en": "Assistant volume local control",
+            "zh-Hans": "助手音量本地控制",
+        },
+        "user": "把自己的音量调到最大",
+        "response": "我说话的音量已调整。",
+        "expected": {
+            "must_search": False,
+            "route_decision": {
+                "task_family": "volume_control",
+                "requires_llm": False,
+                "next_action": "execute_local",
+                "route": "local_action",
+            },
+            "spoken_response": {"max_sentences": 1},
+        },
+    },
+    {
+        "id": "media-volume-local",
+        "name": "媒体音量本地控制",
+        "name_i18n": {
+            "en": "Media volume local control",
+            "zh-Hans": "媒体音量本地控制",
+        },
+        "user": "把客厅音箱音量调到最大",
+        "response": "已把客厅音箱音量调到最大。",
+        "expected": {
+            "must_search": False,
+            "route_decision": {
+                "task_family": "volume_control",
+                "requires_llm": False,
+                "next_action": "execute_local",
+                "route": "local_action",
+            },
+            "spoken_response": {"max_sentences": 1},
         },
     },
 ]

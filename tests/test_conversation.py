@@ -465,9 +465,7 @@ async def test_converse_records_search_feedback_trace(
     )
     aioclient_mock.post(
         CHAT_URL,
-        json={
-            "choices": [{"message": {"role": "assistant", "content": "有更新。"}}]
-        },
+        json={"choices": [{"message": {"role": "assistant", "content": "有更新。"}}]},
     )
     agent_id = await _setup_agent(
         hass,
@@ -540,10 +538,11 @@ async def test_device_inventory_query_uses_static_context_renderer(
 
     completion.assert_not_called()
     speech = result.response.speech["plain"]["speech"]
-    assert "已暴露给助手的设备" in speech
+    assert "我能看到这些设备" in speech
     assert "客厅灯" in speech
     assert "卧室空调" in speech
     assert "没有权限" not in speech
+    assert "已暴露给助手" not in speech
     trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
     assert trace["first_response_decision"]["task_type"] == "device_inventory_query"
     assert trace["first_response_audio"]["scheduled"] is False
@@ -640,7 +639,7 @@ async def test_literary_stable_fact_answers_locally_without_model(
     assert not trace["tools"]
 
 
-async def test_unknown_query_clarifies_locally_without_model_final(
+async def test_unknown_query_uses_fast_llm_generalization_before_clarify(
     hass, aioclient_mock, mock_config_entry
 ):
     aioclient_mock.get(
@@ -655,19 +654,31 @@ async def test_unknown_query_clarifies_locally_without_model_final(
         },
     )
 
+    async def fake_completion(**kwargs: object):
+        return SimpleNamespace(
+            message={
+                "role": "assistant",
+                "content": "我没理解这句话，可以换个说法吗？",
+            },
+            provider={"name": "primary", "fallback_used": False},
+            attempts=[],
+        )
+
     with patch(
         "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
+        side_effect=fake_completion,
     ) as completion:
         result = await conversation.async_converse(
             hass, "咕噜咕噜", None, Context(), agent_id=agent_id
         )
 
-    completion.assert_not_called()
+    completion.assert_called_once()
     speech = result.response.speech["plain"]["speech"]
-    assert "换个说法" in speech
+    assert speech == "我没理解这句话，可以换个说法吗？"
     trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
-    assert trace["route"]["kind"] == "local_clarify"
+    assert trace["route"]["kind"] == "fast"
     assert trace["route_decision"]["task_family"] == "unknown_or_ambiguous"
+    assert trace["route_decision"]["metadata"]["planner"] == "llm_route_generalization"
     assert trace["first_response_decision"]["cue"] == "none"
     assert not trace["tools"]
 
@@ -1204,7 +1215,7 @@ async def test_converse_records_failure_feedback_trace(
         side_effect=LLMGatewayConnectionError("timeout"),
     ):
         result = await conversation.async_converse(
-            hass, "打开风扇", None, Context(), agent_id=agent_id
+            hass, "把空调开了", None, Context(), agent_id=agent_id
         )
 
     assert result.response.speech["plain"]["speech"] == GATEWAY_ERROR_SPEECH
@@ -1390,7 +1401,7 @@ async def test_converse_gateway_timeout_returns_spoken_error(
         side_effect=LLMGatewayConnectionError("timeout"),
     ):
         result = await conversation.async_converse(
-            hass, "打开风扇", None, Context(), agent_id=agent_id
+            hass, "把空调开了", None, Context(), agent_id=agent_id
         )
 
     assert result.response.speech["plain"]["speech"] == GATEWAY_ERROR_SPEECH

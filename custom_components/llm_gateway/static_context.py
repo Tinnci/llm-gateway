@@ -330,7 +330,7 @@ class ExposedEntityIndex:
             return None
         if not self.entities:
             return InventoryRenderResult(
-                speech="我暂时看不到已暴露给助手的设备列表。",
+                speech="我暂时看不到设备列表。",
                 spec=spec,
                 entity_count=0,
                 areas=(),
@@ -340,7 +340,7 @@ class ExposedEntityIndex:
 
         entities = self.query(spec)
         if not entities:
-            speech = f"我能看到已暴露给助手的设备，但没有找到{_scope_label(spec)}。"
+            speech = f"我能看到一些设备，但没有找到{_scope_label(spec)}。"
         elif spec.task_type == "capability_query":
             speech = _render_capability_summary(entities)
         elif spec.task_type == "domain_inventory_query":
@@ -619,10 +619,7 @@ def _render_device_summary(entities: tuple[ExposedEntity, ...]) -> str:
     body = "，".join(area_parts)
     if examples:
         body += "，例如" + "、".join(examples)
-    return (
-        f"我能看到已暴露给助手的设备，主要有{body}。"
-        "完整列表可以在 Voice Harness 面板里展开。"
-    )
+    return f"我能看到这些设备：{body}。完整列表可以在面板里展开。"
 
 
 def _render_area_summary(
@@ -631,7 +628,7 @@ def _render_area_summary(
 ) -> str:
     groups = "、".join(_domain_groups(entities))
     examples = "、".join(_entity_names(entities)[:MAX_DEVICE_EXAMPLES])
-    return f"{spec.area}里我能看到已暴露给助手的{groups}，包括{examples}。"
+    return f"{spec.area}里我能看到{groups}，包括{examples}。"
 
 
 def _render_domain_summary(
@@ -640,14 +637,14 @@ def _render_domain_summary(
 ) -> str:
     label = DOMAIN_LABELS.get(spec.domain, spec.domain)
     examples = "、".join(_entity_names(entities)[:MAX_DEVICE_EXAMPLES])
-    return f"我能看到已暴露给助手的{label}包括{examples}。"
+    return f"我能看到的{label}包括{examples}。"
 
 
 def _render_capability_summary(entities: tuple[ExposedEntity, ...]) -> str:
     controllable = tuple(entity for entity in entities if entity.can_control)
     groups = "、".join(_domain_groups(controllable or entities))
     examples = "、".join(_entity_names(controllable or entities)[:5])
-    return f"我能控制已暴露给助手的{groups}，例如{examples}。高风险设备仍需要先确认。"
+    return f"我能控制{groups}，例如{examples}。高风险设备仍需要先确认。"
 
 
 def _render_exposed_context_summary(
@@ -656,7 +653,7 @@ def _render_exposed_context_summary(
 ) -> str:
     if spec.domain == "weather":
         examples = "、".join(_entity_names(entities)[:MAX_DEVICE_EXAMPLES])
-        return f"可以。我能看到已暴露给助手的天气或环境相关实体，包括{examples}。"
+        return f"可以。我能看到天气或环境相关实体，包括{examples}。"
     return _render_device_summary(entities)
 
 
@@ -776,10 +773,7 @@ def _render_scalar_state_summary(
 
     single_entity = entities[0] if len(entities) == 1 else None
     single_metric = _metric_for_entity(single_entity) if single_entity else ""
-    if (
-        single_entity
-        and single_metric in {"temperature", "humidity"}
-    ):
+    if single_entity and single_metric in {"temperature", "humidity"}:
         return _render_single_scalar_state(text, single_entity, single_metric)
 
     available: list[str] = []
