@@ -135,6 +135,20 @@ def test_normalize_live_context_args_removes_tool_name_as_entity_name():
     ) == {"area": "静安"}
 
 
+def test_normalize_live_context_area_entity_hint_to_name():
+    assert _normalize_tool_args(
+        LIVE_CONTEXT_TOOL_NAME,
+        {"area": "静安天气 PM2.5"},
+    ) == {"name": "静安天气 PM2.5"}
+
+
+def test_normalize_live_context_generic_metric_name_is_not_exact_entity():
+    assert _normalize_tool_args(
+        LIVE_CONTEXT_TOOL_NAME,
+        {"domain": ["sensor"], "name": "PM2.5"},
+    ) == {"domain": ["sensor"]}
+
+
 def test_turn_controller_marks_previous_turn_stale():
     controller = TurnController()
 

@@ -82,6 +82,28 @@ VOICE_RESPONSE_CONTRACT = """Voice response contract:
 """
 
 LIVE_CONTEXT_TOOL_NAME = "GetLiveContext"
+_LIVE_CONTEXT_ENTITY_HINT_TERMS = (
+    "天气",
+    "空气质量",
+    "温度",
+    "湿度",
+    "pm2.5",
+    "pm25",
+    "co2",
+    "tvoc",
+    "eco2",
+)
+_GENERIC_LIVE_CONTEXT_NAMES = {
+    "天气",
+    "空气质量",
+    "温度",
+    "湿度",
+    "pm2.5",
+    "pm25",
+    "co2",
+    "tvoc",
+    "eco2",
+}
 WEATHER_CONTEXT_FALLBACK_SPEECH = "暂时没有本地天气数据。"
 HOME_STATE_FALLBACK_SPEECH = "暂时没有本地状态数据。"
 HIGH_RISK_FALLBACK_SPEECH = "这个需要确认。"
@@ -187,12 +209,31 @@ def _parse_tool_calls(raw: list[dict[str, Any]] | None) -> list[llm.ToolInput]:
 def _normalize_tool_args(tool_name: str, args: object) -> dict[str, Any]:
     """Normalize model tool args before HA tool execution."""
     normalized = dict(args) if isinstance(args, dict) else {}
-    if (
-        tool_name == LIVE_CONTEXT_TOOL_NAME
-        and normalized.get("name") == LIVE_CONTEXT_TOOL_NAME
-    ):
-        normalized.pop("name", None)
+    if tool_name == LIVE_CONTEXT_TOOL_NAME:
+        if normalized.get("name") == LIVE_CONTEXT_TOOL_NAME:
+            normalized.pop("name", None)
+        area = normalized.get("area")
+        if isinstance(area, str) and _looks_like_live_context_entity_hint(area):
+            normalized.setdefault("name", area)
+            normalized.pop("area", None)
+        name = normalized.get("name")
+        if isinstance(name, str) and _is_generic_live_context_name(name):
+            normalized.pop("name", None)
     return normalized
+
+
+def _looks_like_live_context_entity_hint(value: str) -> bool:
+    normalized = _normalize_live_context_hint(value)
+    return any(term in normalized for term in _LIVE_CONTEXT_ENTITY_HINT_TERMS)
+
+
+def _is_generic_live_context_name(value: str) -> bool:
+    return _normalize_live_context_hint(value) in _GENERIC_LIVE_CONTEXT_NAMES
+
+
+def _normalize_live_context_hint(value: str) -> str:
+    normalized = value.strip().lower().replace(" ", "").replace("．", ".")
+    return normalized.replace("pm2点5", "pm2.5").replace("pm₂.₅", "pm2.5")
 
 
 def _is_action_tool(tool_name: str) -> bool:
