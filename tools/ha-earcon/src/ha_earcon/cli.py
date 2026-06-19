@@ -19,6 +19,65 @@ from .synth import render_earcon
 app = typer.Typer(no_args_is_help=True)
 console = Console()
 
+DEFAULT_EARCON_META: dict[str, dict[str, Any]] = {
+    "wake": {
+        "semantic_state": "listening",
+        "priority": 90,
+        "can_play_while_listening": True,
+        "quiet_hours_behavior": "attenuate",
+        "trace_event_name": "earcon_wake",
+    },
+    "captured": {
+        "semantic_state": "captured",
+        "priority": 40,
+        "can_play_while_listening": True,
+        "quiet_hours_behavior": "suppress_noncritical",
+        "trace_event_name": "earcon_captured",
+    },
+    "thinking": {
+        "semantic_state": "thinking",
+        "priority": 20,
+        "can_play_while_listening": False,
+        "quiet_hours_behavior": "suppress_noncritical",
+        "trace_event_name": "earcon_thinking",
+    },
+    "search": {
+        "semantic_state": "searching",
+        "priority": 50,
+        "can_play_while_listening": False,
+        "quiet_hours_behavior": "attenuate",
+        "trace_event_name": "earcon_search",
+    },
+    "confirmation": {
+        "semantic_state": "confirming",
+        "priority": 90,
+        "can_play_while_listening": False,
+        "quiet_hours_behavior": "attenuate",
+        "trace_event_name": "earcon_confirmation",
+    },
+    "success": {
+        "semantic_state": "done",
+        "priority": 50,
+        "can_play_while_listening": False,
+        "quiet_hours_behavior": "suppress_noncritical",
+        "trace_event_name": "earcon_success",
+    },
+    "failure": {
+        "semantic_state": "failed",
+        "priority": 80,
+        "can_play_while_listening": False,
+        "quiet_hours_behavior": "attenuate",
+        "trace_event_name": "earcon_failure",
+    },
+    "cancel": {
+        "semantic_state": "cancelled",
+        "priority": 60,
+        "can_play_while_listening": True,
+        "quiet_hours_behavior": "attenuate",
+        "trace_event_name": "earcon_cancel",
+    },
+}
+
 
 @app.command()
 def render(
@@ -57,6 +116,7 @@ def render(
             "duration_ms": duration_ms,
             "lufs": loudness,
             "peak_dbfs": peak,
+            **_earcon_metadata(name, spec),
         }
         console.print(
             f"[green]rendered[/green] {path} "
@@ -64,6 +124,19 @@ def render(
         )
 
     write_manifest(out / "manifest.json", manifest)
+
+
+@app.command("export-ha")
+def export_ha(
+    pack: Path = typer.Argument(..., exists=True, dir_okay=False),
+    target: Path = typer.Option(..., "--target", "-t"),
+) -> None:
+    """Render a pack directly to a Home Assistant static earcon directory."""
+    data = _load_pack(pack)
+    pack_name = str(data.get("name") or pack.stem)
+    out = target / pack_name
+    render(pack=pack, out=out)
+    console.print(f"[green]exported[/green] {pack_name} -> {out}")
 
 
 @app.command()
@@ -152,3 +225,30 @@ def _mono(audio: np.ndarray) -> np.ndarray:
     if audio.ndim == 1:
         return audio.astype(np.float32)
     return audio.mean(axis=1).astype(np.float32)
+
+
+def _earcon_metadata(name: str, spec: dict[str, Any]) -> dict[str, Any]:
+    defaults = DEFAULT_EARCON_META.get(name) or {}
+    return {
+        "name": name,
+        "semantic_state": str(
+            spec.get("semantic_state") or defaults.get("semantic_state") or name
+        ),
+        "priority": int(spec.get("priority") or defaults.get("priority") or 10),
+        "can_play_while_listening": bool(
+            spec.get(
+                "can_play_while_listening",
+                defaults.get("can_play_while_listening", False),
+            )
+        ),
+        "quiet_hours_behavior": str(
+            spec.get("quiet_hours_behavior")
+            or defaults.get("quiet_hours_behavior")
+            or "attenuate"
+        ),
+        "trace_event_name": str(
+            spec.get("trace_event_name")
+            or defaults.get("trace_event_name")
+            or f"earcon_{name}"
+        ),
+    }

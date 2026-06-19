@@ -23,6 +23,7 @@ from custom_components.llm_gateway.router import (
 
 def test_classify_route():
     assert classify_route("打开卧室灯") == "fast"
+    assert classify_route("今天天气。") == "fast"
     assert classify_route("查一下这个空调错误码 E7") == "mid"
     assert classify_route("关关雎鸠，在河之洲，这句话是出自哪里？") == "mid"
     assert classify_route("请深度分析整个控制管线") == "deep"

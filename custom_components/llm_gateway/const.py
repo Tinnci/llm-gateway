@@ -44,7 +44,21 @@ CONF_TRACE_INCLUDE_RAW_MESSAGES = "trace_include_raw_messages"
 CONF_TRACE_MAX_RUNS = "trace_max_runs"
 CONF_TRACE_RETENTION_HOURS = "trace_retention_hours"
 CONF_PROVIDER_PROFILES = "provider_profiles"
+CONF_FIRST_RESPONSE_AUDIO_ENABLED = "first_response_audio_enabled"
+CONF_FIRST_RESPONSE_PLAYBACK_ADAPTER = "first_response_playback_adapter"
+CONF_FIRST_RESPONSE_LOCAL_SERVICE = "first_response_local_service"
+CONF_FIRST_RESPONSE_TTS_ENTITY = "first_response_tts_entity"
+CONF_FIRST_RESPONSE_MEDIA_PLAYER = "first_response_media_player"
 # CONF_PROMPT and CONF_LLM_HASS_API come from homeassistant.const.
+
+FIRST_RESPONSE_ADAPTER_LOCAL = "local"
+FIRST_RESPONSE_ADAPTER_HA_MEDIA_PLAYER = "ha_media_player"
+FIRST_RESPONSE_ADAPTER_AUTO = "auto"
+FIRST_RESPONSE_PLAYBACK_ADAPTERS = (
+    FIRST_RESPONSE_ADAPTER_LOCAL,
+    FIRST_RESPONSE_ADAPTER_HA_MEDIA_PLAYER,
+    FIRST_RESPONSE_ADAPTER_AUTO,
+)
 
 ROUTING_MODE_AUTO = "auto"
 ROUTING_MODE_FAST = "fast"
@@ -80,7 +94,7 @@ MAX_TRACE_RUNS = 200
 MAX_TRACE_RETENTION_HOURS = 168
 
 # Safety bound on tool-call round trips per user turn.
-MAX_TOOL_ITERATIONS = 6
+MAX_TOOL_ITERATIONS = 3
 
 # Network timeouts (seconds).
 TIMEOUT_MODELS = 15
@@ -88,4 +102,5 @@ TIMEOUT_CHAT = 30
 
 GATEWAY_ERROR_SPEECH = "模型服务暂时没有响应，请稍后再试。"
 TOOL_LOOP_ERROR_SPEECH = "设备操作没有完成，请换一种说法再试。"
+TOOL_LOOP_GUARD_SPEECH = "工具调用没有收敛，我先停在这里，请换一种说法再试。"
 DEEP_TASK_ACK_SPEECH = "我会继续分析，完成后发到 Home Assistant 通知里。"

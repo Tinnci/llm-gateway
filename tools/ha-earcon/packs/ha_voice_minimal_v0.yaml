@@ -7,6 +7,11 @@ earcons:
   wake:
     type: tone_sequence
     purpose: Wake word accepted; assistant is entering the voice path.
+    semantic_state: listening
+    priority: 90
+    can_play_while_listening: true
+    quiet_hours_behavior: attenuate
+    trace_event_name: earcon_wake
     peak: 0.24
     harmonics:
       - multiple: 2
@@ -51,9 +56,34 @@ earcons:
       attack_ms: 5
       release_ms: 24
 
+  captured:
+    type: tone_sequence
+    purpose: Speech capture ended and the assistant is processing.
+    semantic_state: captured
+    priority: 40
+    can_play_while_listening: true
+    quiet_hours_behavior: suppress_noncritical
+    trace_event_name: earcon_captured
+    peak: 0.20
+    tones:
+      - freq: 740
+        ms: 42
+      - silence_ms: 18
+      - start_freq: 690
+        end_freq: 520
+        ms: 88
+    envelope:
+      attack_ms: 5
+      release_ms: 24
+
   success:
     type: tone_sequence
     purpose: Low-risk command completed.
+    semantic_state: done
+    priority: 50
+    can_play_while_listening: false
+    quiet_hours_behavior: suppress_noncritical
+    trace_event_name: earcon_success
     peak: 0.22
     harmonics:
       - multiple: 2
@@ -71,6 +101,11 @@ earcons:
   failure:
     type: tone_sequence
     purpose: Request failed or the assistant cannot continue safely.
+    semantic_state: failed
+    priority: 80
+    can_play_while_listening: false
+    quiet_hours_behavior: attenuate
+    trace_event_name: earcon_failure
     peak: 0.21
     tones:
       - freq: 440.0
@@ -85,6 +120,11 @@ earcons:
   confirmation:
     type: tone_sequence
     purpose: High-risk action needs explicit user confirmation.
+    semantic_state: confirming
+    priority: 90
+    can_play_while_listening: false
+    quiet_hours_behavior: attenuate
+    trace_event_name: earcon_confirmation
     peak: 0.20
     tones:
       - freq: 392.0
@@ -113,6 +153,11 @@ earcons:
   search:
     type: tone_sequence
     purpose: Web search is being used for current external information.
+    semantic_state: searching
+    priority: 50
+    can_play_while_listening: false
+    quiet_hours_behavior: attenuate
+    trace_event_name: earcon_search
     peak: 0.20
     harmonics:
       - multiple: 2
@@ -146,6 +191,48 @@ earcons:
     envelope:
       attack_ms: 6
       release_ms: 26
+
+  thinking:
+    type: tone_sequence
+    purpose: Assistant is still working after the first response deadline.
+    semantic_state: thinking
+    priority: 20
+    can_play_while_listening: false
+    quiet_hours_behavior: suppress_noncritical
+    trace_event_name: earcon_thinking
+    peak: 0.12
+    tones:
+      - freq: 523.25
+        ms: 34
+        amp: 0.10
+      - silence_ms: 92
+      - freq: 659.25
+        ms: 40
+        amp: 0.10
+      - silence_ms: 174
+    envelope:
+      attack_ms: 6
+      release_ms: 26
+
+  cancel:
+    type: tone_sequence
+    purpose: The current assistant turn was cancelled or dismissed.
+    semantic_state: cancelled
+    priority: 60
+    can_play_while_listening: true
+    quiet_hours_behavior: attenuate
+    trace_event_name: earcon_cancel
+    peak: 0.18
+    tones:
+      - start_freq: 660
+        end_freq: 440
+        ms: 96
+      - silence_ms: 20
+      - freq: 392
+        ms: 36
+    envelope:
+      attack_ms: 6
+      release_ms: 28
 
   provider_fallback:
     type: tone_sequence

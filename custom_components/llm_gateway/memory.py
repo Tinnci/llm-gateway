@@ -16,6 +16,16 @@ if TYPE_CHECKING:
 SESSION_TTL = timedelta(minutes=10)
 RAW_TURN_LIMIT = 6
 SUMMARY_TURN_THRESHOLD = 8
+UNSTABLE_FAILURE_MARKERS = (
+    "没有权限",
+    "无法查看",
+    "没有实时天气信息",
+    "没有 PM2.5 数据",
+    "暂时没有本地天气数据",
+    "暂时没有本地状态数据",
+    "设备操作没有完成",
+    "模型服务暂时没有响应",
+)
 
 
 @dataclass(slots=True)
@@ -85,8 +95,7 @@ class VoiceMemory:
                 parts.append(f"本轮会话摘要：{session.summary}")
             if session.turns:
                 recent = "\n".join(
-                    f"用户：{turn.user}\n助手：{turn.assistant}"
-                    for turn in session.turns[-RAW_TURN_LIMIT:]
+                    _turn_context_line(turn) for turn in session.turns[-RAW_TURN_LIMIT:]
                 )
                 parts.append("最近上下文：\n" + recent)
 
@@ -151,6 +160,18 @@ def _session_from_dict(data: dict[str, Any]) -> SessionMemory:
         summary=str(data.get("summary", "")),
         updated_at=str(data.get("updated_at", "")),
     )
+
+
+def _turn_context_line(turn: MemoryTurn) -> str:
+    assistant = str(turn.assistant or "").strip()
+    if _is_unstable_failure(assistant):
+        assistant = "上一轮回答失败，不能当作事实引用。"
+    return f"用户：{turn.user}\n助手：{assistant}"
+
+
+def _is_unstable_failure(text: str) -> bool:
+    normalized = str(text or "")
+    return any(marker in normalized for marker in UNSTABLE_FAILURE_MARKERS)
 
 
 def _session_to_dict(session: SessionMemory) -> dict[str, Any]:

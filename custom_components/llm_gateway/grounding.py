@@ -24,9 +24,12 @@ _JSON_OBJECT_RE = re.compile(r"\{.*\}", flags=re.DOTALL)
 _SOURCE_QUESTION_RE = re.compile(r"(出处|出自哪里|出自哪|来源|典故|原文)")
 _DIRECT_SOURCE_RE = re.compile(r"出自《([^》]{1,80})》")
 _WORK_IN_PARENT_RE = re.compile(r"《([^》]{1,30})》[^。；\n]{0,30}是《([^》]{1,80})》")
+_TERM_EXPLANATION_TITLES = ("尔雅", "禽经", "汉语大字典")
+_COMMENTARY_TITLES = ("毛诗故训传", "毛传", "郑笺")
 _MAX_EVIDENCE_RESULTS = 4
 _MAX_EVIDENCE_CHARS = 900
 _MAX_VERIFIER_RAW_EXCERPT = 240
+_MAX_EVIDENCE_ITEMS = 12
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +40,7 @@ class GroundingResult:
     text: str
     candidates: list[str] = field(default_factory=list)
     canonical_answers: list[str] = field(default_factory=list)
+    evidence: list[dict[str, Any]] = field(default_factory=list)
     repairs: list[dict[str, str]] = field(default_factory=list)
     confidence: float | None = None
     reason: str = ""
@@ -53,6 +57,7 @@ class GroundingResult:
             "status": self.status,
             "candidates": self.candidates,
             "canonical_answers": self.canonical_answers,
+            "evidence": self.evidence,
             "repairs": self.repairs,
             "confidence": self.confidence,
             "reason": self.reason,
@@ -73,6 +78,7 @@ def initial_grounding_result(
 
     candidates = source_title_candidates_from_results(search_results)
     canonical_answers = source_canonical_answers_from_results(search_results)
+    evidence = source_evidence_from_results(search_results, final_text=assistant_text)
     if not search_results:
         return GroundingResult(
             status="not_required",
@@ -88,6 +94,10 @@ def initial_grounding_result(
                 text=answer,
                 candidates=candidates,
                 canonical_answers=canonical_answers,
+                evidence=source_evidence_from_results(
+                    search_results,
+                    final_text=answer,
+                ),
                 repairs=[{"from": assistant_text, "to": answer}],
                 confidence=0.92,
                 reason="single_canonical_evidence_answer",
@@ -99,6 +109,7 @@ def initial_grounding_result(
             status="no_evidence",
             text=assistant_text,
             candidates=candidates,
+            evidence=evidence,
             reason="no_canonical_source_answer",
             verifier={"mode": "cheap_evidence"},
         )
@@ -108,6 +119,7 @@ def initial_grounding_result(
         text=assistant_text,
         candidates=candidates,
         canonical_answers=canonical_answers,
+        evidence=evidence,
         verifier={"mode": "cheap_evidence"},
     )
 
@@ -276,6 +288,62 @@ def source_canonical_answers_from_results(
     return answers
 
 
+def source_evidence_from_results(
+    search_results: list[dict[str, Any]],
+    *,
+    final_text: str = "",
+) -> list[dict[str, Any]]:
+    """Return typed evidence records for trace/debug UI."""
+    evidence: list[dict[str, Any]] = []
+    for result_index, result in enumerate(search_results, start=1):
+        provider = str(result.get("provider") or "search")
+        for item_index, item in enumerate(result.get("results") or [], start=1):
+            if not isinstance(item, dict):
+                continue
+            text = f"{item.get('title') or ''}\n{item.get('content') or ''}"
+            source_id = str(
+                item.get("url") or f"{provider}:{result_index}:{item_index}"
+            )
+            source = {"source_id": source_id, "title": str(item.get("title") or "")}
+            for answer in _canonical_answers_from_text(text):
+                _append_evidence(
+                    evidence,
+                    evidence_type="quote_origin",
+                    source=source,
+                    text=answer,
+                    final_text=final_text,
+                )
+            for title in _TERM_EXPLANATION_TITLES:
+                if title in text:
+                    _append_evidence(
+                        evidence,
+                        evidence_type="term_explanation_source",
+                        source=source,
+                        text=f"《{title}》",
+                        final_text=final_text,
+                    )
+            for title in _COMMENTARY_TITLES:
+                if title in text:
+                    _append_evidence(
+                        evidence,
+                        evidence_type="commentary_source",
+                        source=source,
+                        text=f"《{title}》",
+                        final_text=final_text,
+                    )
+            for candidate in _polluted_related_titles(text):
+                _append_evidence(
+                    evidence,
+                    evidence_type="polluted_related_item",
+                    source=source,
+                    text=f"《{candidate}》",
+                    final_text=final_text,
+                )
+            if len(evidence) >= _MAX_EVIDENCE_ITEMS:
+                return evidence[:_MAX_EVIDENCE_ITEMS]
+    return evidence[:_MAX_EVIDENCE_ITEMS]
+
+
 def _evidence_for_prompt(search_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     evidence: list[dict[str, Any]] = []
     for result in search_results:
@@ -312,10 +380,15 @@ def _raw_excerpt(content: str) -> str:
 
 
 def _append_canonical_answers_from_text(answers: list[str], text: str) -> None:
+    for answer in _canonical_answers_from_text(text):
+        _append_candidate(answers, answer)
+
+
+def _canonical_answers_from_text(text: str) -> list[str]:
+    answers: list[str] = []
     normalized = _normalized(text)
     for match in _DIRECT_SOURCE_RE.findall(text):
         _append_candidate(answers, f"《{match}》")
-
     for child, parent in _WORK_IN_PARENT_RE.findall(text):
         if child and parent and child not in parent:
             _append_candidate(answers, f"《{parent}·{child}》")
@@ -324,6 +397,44 @@ def _append_canonical_answers_from_text(answers: list[str], text: str) -> None:
         if "国风" in normalized:
             _append_candidate(answers, "《诗经·国风·周南·关雎》")
         _append_candidate(answers, "《诗经·周南·关雎》")
+    return answers
+
+
+def _polluted_related_titles(text: str) -> list[str]:
+    if not any(marker in text for marker in ("相关", "星图", "推荐", "词条")):
+        return []
+    titles: list[str] = []
+    canonical = set(_canonical_answers_from_text(text))
+    ignored = {*_TERM_EXPLANATION_TITLES, *_COMMENTARY_TITLES}
+    for title in _CHINESE_TITLE_RE.findall(text):
+        wrapped = f"《{title}》"
+        if wrapped in canonical or title in ignored:
+            continue
+        _append_candidate(titles, title)
+    return titles
+
+
+def _append_evidence(
+    evidence: list[dict[str, Any]],
+    *,
+    evidence_type: str,
+    source: dict[str, str],
+    text: str,
+    final_text: str,
+) -> None:
+    evidence_id = f"ev-{len(evidence) + 1}"
+    normalized_text = _normalized(text)
+    included = bool(final_text and normalized_text in _normalized(final_text))
+    evidence.append(
+        {
+            "evidence_id": evidence_id,
+            "source_id": source.get("source_id", "")[:500],
+            "evidence_type": evidence_type,
+            "title": source.get("title", "")[:220],
+            "text": text[:240],
+            "included_in_final": included,
+        }
+    )
 
 
 def _source_answer_sentence(answer: str) -> str:

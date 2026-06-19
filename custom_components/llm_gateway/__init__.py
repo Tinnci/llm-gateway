@@ -10,6 +10,8 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import LLMGatewayAuthError, LLMGatewayClient, LLMGatewayError
 from .const import CONF_BASE_URL, DEFAULT_BASE_URL
+from .feedback import VoiceFeedbackStore
+from .first_response_audio import FirstResponsePlayer
 from .memory import VoiceMemory
 from .panel import async_setup_panel
 from .providers import ProviderSelector
@@ -53,12 +55,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: LLMGatewayConfigEntry) -
     await memory.async_load()
     trace_store = TraceStore(hass, entry.entry_id)
     await trace_store.async_load()
+    feedback = VoiceFeedbackStore()
+    first_response_player = FirstResponsePlayer(hass, feedback, lambda: entry.options)
     provider_selector = ProviderSelector()
     entry.runtime_data = LLMGatewayRuntimeData(
         client=client,
         session=session,
         memory=memory,
         trace_store=trace_store,
+        feedback=feedback,
+        first_response_player=first_response_player,
         provider_selector=provider_selector,
         voice_runs=VoiceRunRecorder(),
         deep_tasks=DeepTaskManager(

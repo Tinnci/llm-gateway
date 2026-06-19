@@ -2,25 +2,32 @@
 
 /**
  * @typedef {"auto" | "fast" | "mid" | "deep"} RouteKind
+ * @typedef {"local" | "ha_media_player" | "auto"} FirstResponsePlaybackAdapter
  * @typedef {{ fast: string, mid: string, deep: string }} TierTextMap
  * @typedef {{ fast: number, mid: number, deep: number }} TierNumberMap
  * @typedef {{ kind: RouteKind, model: string, max_tokens: number, timeout_s: number, async_deep_task: boolean }} RouteStatus
- * @typedef {{ routing_mode: RouteKind, models: TierTextMap, max_tokens: TierNumberMap, timeouts: TierNumberMap }} HarnessOptions
+ * @typedef {{ enabled: boolean, adapter?: FirstResponsePlaybackAdapter, local_service?: string, tts_entity?: string, media_player_entity?: string }} FirstResponseAudioOptions
+ * @typedef {{ service?: string, available?: boolean, preferred?: boolean }} LocalServiceCandidate
+ * @typedef {{ entity_id?: string, state?: string, name?: string, usable?: boolean, preferred?: boolean }} AudioEntityCandidate
+ * @typedef {{ enabled?: boolean, adapter?: FirstResponsePlaybackAdapter, configured?: Record<string, any>, route?: Record<string, any>, can_play?: boolean, services?: Record<string, boolean>, candidates?: { local_services?: LocalServiceCandidate[], tts?: AudioEntityCandidate[], media_player?: AudioEntityCandidate[] } }} FirstResponseAudioStatus
+ * @typedef {{ quiet_hours?: { start_hour?: number, end_hour?: number, current_local_hour?: number, active?: boolean } }} FeedbackPolicyStatus
+ * @typedef {{ routing_mode: RouteKind, models: TierTextMap, max_tokens: TierNumberMap, timeouts: TierNumberMap, first_response_audio?: FirstResponseAudioOptions }} HarnessOptions
  * @typedef {{ enabled: boolean, include_raw_messages: boolean, max_runs: number, retention_hours: number }} TraceOptions
  * @typedef {{ provider?: string, model?: string, status?: string, latency_ms?: number, error?: string, retryable?: boolean, iteration?: number }} ProviderAttempt
  * @typedef {{ name?: string, base_url?: string, models?: Partial<TierTextMap>, has_api_key?: boolean, soft_timeouts?: Partial<TierNumberMap>, max_tokens?: Partial<TierNumberMap> }} ProviderProfile
  * @typedef {{ primary?: ProviderProfile, fallbacks?: ProviderProfile[], fallback_enabled?: boolean, config_error?: string }} ProviderStatus
  * @typedef {{ provider?: string, route?: string, failures?: number, cooldown_remaining_s?: number, last_error?: string }} ProviderHealth
- * @typedef {{ entry_id: string, title: string, state: string, base_url?: string, options: HarnessOptions, routes: RouteStatus[], trace: TraceOptions, traces?: { records?: Array<Record<string, any>>, storage?: Record<string, any> }, voice_runs?: Array<Record<string, any>>, memory?: any, search?: { providers?: string[] }, model_providers?: ProviderStatus, provider_health?: ProviderHealth[] }} HarnessEntry
- * @typedef {{ routing_modes: RouteKind[], max_tokens: { min: number, max: number }, timeouts: { min: number, max: number }, trace_max_runs: { min: number, max: number }, trace_retention_hours: { min: number, max: number } }} EditableSchema
+ * @typedef {{ latest_display?: Record<string, any> | null, display_events?: Array<Record<string, any>>, earcon_events?: Array<Record<string, any>> }} FeedbackStatus
+ * @typedef {{ entry_id: string, title: string, state: string, base_url?: string, options: HarnessOptions, routes: RouteStatus[], trace: TraceOptions, traces?: { records?: Array<Record<string, any>>, storage?: Record<string, any> }, voice_runs?: Array<Record<string, any>>, feedback?: FeedbackStatus, feedback_policy?: FeedbackPolicyStatus, first_response_audio?: FirstResponseAudioStatus, memory?: any, search?: { providers?: string[] }, model_providers?: ProviderStatus, provider_health?: ProviderHealth[] }} HarnessEntry
+ * @typedef {{ routing_modes: RouteKind[], max_tokens: { min: number, max: number }, timeouts: { min: number, max: number }, trace_max_runs: { min: number, max: number }, trace_retention_hours: { min: number, max: number }, first_response_playback_adapters?: FirstResponsePlaybackAdapter[] }} EditableSchema
  * @typedef {{ id: string, risk?: string, title?: string, title_i18n?: Record<string, string>, spoken?: string, spoken_i18n?: Record<string, string>, rules?: string[] }} PromptPolicy
  * @typedef {{ id: string, name?: string, name_i18n?: Record<string, string>, user?: string, user_i18n?: Record<string, string>, response?: string, response_i18n?: Record<string, string>, expected?: Record<string, unknown>, expected_i18n?: Record<string, Record<string, unknown>> }} SampleScenario
- * @typedef {{ path?: string, url?: string, duration_ms?: number, lufs?: number, peak_dbfs?: number, purpose?: string, purpose_i18n?: Record<string, string> }} EarconFile
+ * @typedef {{ path?: string, url?: string, duration_ms?: number, lufs?: number, peak_dbfs?: number, purpose?: string, purpose_i18n?: Record<string, string>, semantic_state?: string, priority?: number, can_play_while_listening?: boolean, quiet_hours_behavior?: string, trace_event_name?: string }} EarconFile
  * @typedef {{ pack?: string, sample_rate?: number, target_lufs?: number, true_peak_dbfs?: number, files?: Record<string, EarconFile> }} EarconPack
  * @typedef {{ entity_id: string, state: string, available: boolean, name?: string, unit?: string, attributes?: Record<string, unknown> }} SatelliteEntityState
  * @typedef {{ states?: Record<string, SatelliteEntityState>, services?: Record<string, boolean> }} SatelliteStatus
  * @typedef {{ entries: HarnessEntry[], editable: EditableSchema, satellite?: SatelliteStatus, earcons?: EarconPack, prompt_policies?: PromptPolicy[], sample_scenarios?: SampleScenario[] }} HarnessStatus
- * @typedef {{ entry_id: string, options: { routing_mode: RouteKind, models: TierTextMap, max_tokens: TierNumberMap, timeouts: TierNumberMap, trace: TraceOptions } }} OptionsUpdateRequest
+ * @typedef {{ entry_id: string, options: { routing_mode: RouteKind, models: TierTextMap, max_tokens: TierNumberMap, timeouts: TierNumberMap, trace: TraceOptions, first_response_audio?: FirstResponseAudioOptions } }} OptionsUpdateRequest
  * @typedef {{ user: string, response: string, expected: string }} ScenarioDraft
  */
 
@@ -51,6 +58,7 @@ const DEFAULT_EDITABLE = {
   timeouts: { min: 5, max: 300 },
   trace_max_runs: { min: 1, max: 200 },
   trace_retention_hours: { min: 1, max: 168 },
+  first_response_playback_adapters: ["local", "ha_media_player", "auto"],
 };
 
 const I18N = {
@@ -81,6 +89,14 @@ const I18N = {
     "runs.trace_enabled": "Traces on",
     "runs.live": "Recent live runs",
     "runs.live_empty": "No live run snapshots yet.",
+    "runs.live_status": "Live status",
+    "runs.no_live_status": "No live display status yet.",
+    "runs.earcons": "Earcons",
+    "runs.no_earcons": "No earcon events.",
+    "runs.display_status": "Display status",
+    "runs.no_display_status": "No display status events.",
+    "runs.privacy": "Privacy",
+    "runs.actions_available": "Actions",
     "runs.raw_enabled": "raw compressed",
     "runs.raw_disabled": "summary only",
     "runs.retention": "{count} runs · {hours}h",
@@ -89,6 +105,60 @@ const I18N = {
     "runs.tools": "{count} tool events",
     "runs.provider": "Provider",
     "runs.provider_attempts": "Provider attempts",
+    "runs.detail": "Run detail",
+    "runs.input": "Input",
+    "runs.route": "Route",
+    "runs.first_response": "First response",
+    "runs.first_response_audio": "First response audio",
+    "runs.final_speech": "Final speech",
+    "runs.debug_flags": "Debug flags",
+    "runs.search": "Search",
+    "runs.deep_model": "Deep model",
+    "runs.deep_verifier": "Deep verifier",
+    "runs.high_risk": "High risk",
+    "runs.final_modified": "Final modified",
+    "runs.polluted_evidence": "Polluted evidence",
+    "runs.verifier_mode": "Verifier mode",
+    "runs.critical_path": "Critical path",
+    "runs.no_critical_path": "No timeline spans recorded.",
+    "runs.blocking": "Blocking",
+    "runs.non_blocking": "Non-blocking",
+    "runs.first_response_detail": "First response decision",
+    "runs.search_debug": "Search debug",
+    "runs.no_search_debug": "No search debug data.",
+    "runs.search_gate": "Search gate",
+    "runs.inventory": "Inventory / static context",
+    "runs.inventory_scope": "Scope",
+    "runs.inventory_execution": "Execution",
+    "runs.inventory_entities": "Exposed entities",
+    "runs.weather_path": "Weather / local context",
+    "runs.tool_iterations": "Tool calls by iteration",
+    "runs.no_tool_iterations": "No tool iteration data.",
+    "runs.duplicate_suppressions": "Duplicate tool suppressions",
+    "runs.no_duplicate_suppressions": "No duplicate tool suppressions.",
+    "runs.active_stage": "Active stage",
+    "runs.running_duration": "Running duration",
+    "runs.completion": "Completion",
+    "runs.search_gate_reason": "Gate",
+    "runs.search_queries": "Queries",
+    "runs.search_providers": "Providers",
+    "runs.search_results": "Results",
+    "runs.actions": "Actions / HA state",
+    "runs.no_actions": "No HA action tool calls.",
+    "runs.timing": "Timing",
+    "runs.reason": "Reason",
+    "runs.within_target": "within target",
+    "runs.missed_target": "missed target",
+    "runs.timeout": "timeout",
+    "runs.cache_hit": "cache hit",
+    "runs.polluted_result": "polluted result",
+    "runs.unintended_state_change": "unintended state change",
+    "runs.errors": "Errors",
+    "runs.no_errors": "No recorded errors.",
+    "runs.tool_events": "Tool events",
+    "runs.no_tools": "No tool events.",
+    "runs.evidence": "Evidence",
+    "runs.no_evidence": "No typed evidence.",
     "runs.grounding": "Grounding verifier",
     "runs.grounding_candidates": "Evidence candidates",
     "runs.grounding_canonical": "Canonical answers",
@@ -107,6 +177,17 @@ const I18N = {
     "settings.models": "Models",
     "settings.budgets": "Budgets",
     "settings.traces": "Diagnostic traces",
+    "settings.first_response_audio": "First response audio",
+    "settings.first_response_audio_enabled": "Play first response audio",
+    "settings.first_response_adapter": "Playback adapter",
+    "settings.first_response_local_service": "Local display-agent service",
+    "settings.first_response_local_service_hint": "Preferred: rest_command.kukui_voice_feedback. Leave empty for auto-detection.",
+    "settings.first_response_tts_entity": "HA fallback TTS entity",
+    "settings.first_response_media_player": "HA fallback media_player",
+    "settings.audio_route": "Active route",
+    "settings.audio_candidates": "Candidates",
+    "settings.local_adapter_missing": "Local playback adapter missing. Add a display-agent service before expecting tablet-speaker audio.",
+    "settings.ha_fallback_notice": "HA media_player fallback is explicit; it is not tablet-local playback.",
     "settings.model": "{tier} model",
     "settings.max_tokens": "{tier} max tokens",
     "settings.timeout": "{tier} timeout",
@@ -181,6 +262,9 @@ const I18N = {
     "mode.fast": "Fast",
     "mode.mid": "Mid",
     "mode.deep": "Deep",
+    "adapter.local": "Local display-agent",
+    "adapter.ha_media_player": "HA media_player fallback",
+    "adapter.auto": "Local, then fallback",
     "tier.fast": "Fast",
     "tier.mid": "Mid",
     "tier.deep": "Deep",
@@ -198,6 +282,13 @@ const I18N = {
     "grounding.status.repaired": "Repaired",
     "grounding.status.unsupported": "Unsupported",
     "grounding.status.verifier_error": "Verifier error",
+    "verifier.blocking": "blocking",
+    "verifier.audit_only": "audit only",
+    "verifier.disabled": "disabled",
+    "evidence.quote_origin": "quote origin",
+    "evidence.term_explanation_source": "term explanation",
+    "evidence.commentary_source": "commentary",
+    "evidence.polluted_related_item": "related item",
     "rule.max_one_sentence": "One sentence",
     "rule.no_tool_details": "No tool details",
     "rule.no_entity_id": "No entity ids",
@@ -278,6 +369,14 @@ const I18N = {
     "runs.trace_enabled": "诊断记录已开启",
     "runs.live": "最近实时运行",
     "runs.live_empty": "还没有实时运行快照。",
+    "runs.live_status": "实时状态",
+    "runs.no_live_status": "还没有锁屏/悬浮状态。",
+    "runs.earcons": "提示音事件",
+    "runs.no_earcons": "没有提示音事件。",
+    "runs.display_status": "显示状态",
+    "runs.no_display_status": "没有显示状态事件。",
+    "runs.privacy": "隐私",
+    "runs.actions_available": "动作",
     "runs.raw_enabled": "原始内容已压缩",
     "runs.raw_disabled": "仅摘要",
     "runs.retention": "{count} 条 · {hours} 小时",
@@ -286,6 +385,60 @@ const I18N = {
     "runs.tools": "{count} 个工具事件",
     "runs.provider": "模型 provider",
     "runs.provider_attempts": "Provider 尝试",
+    "runs.detail": "运行详情",
+    "runs.input": "输入",
+    "runs.route": "路由",
+    "runs.first_response": "首反馈",
+    "runs.first_response_audio": "首反馈音频",
+    "runs.final_speech": "最终语音",
+    "runs.debug_flags": "调试标记",
+    "runs.search": "搜索",
+    "runs.deep_model": "深模型",
+    "runs.deep_verifier": "Deep 校验",
+    "runs.high_risk": "高风险",
+    "runs.final_modified": "最终被改写",
+    "runs.polluted_evidence": "污染证据",
+    "runs.verifier_mode": "校验模式",
+    "runs.critical_path": "关键路径",
+    "runs.no_critical_path": "没有记录时间线 span。",
+    "runs.blocking": "阻塞",
+    "runs.non_blocking": "非阻塞",
+    "runs.first_response_detail": "首反馈决策",
+    "runs.search_debug": "搜索调试",
+    "runs.no_search_debug": "没有搜索调试数据。",
+    "runs.search_gate": "搜索门控",
+    "runs.inventory": "设备清单 / 静态上下文",
+    "runs.inventory_scope": "范围",
+    "runs.inventory_execution": "执行",
+    "runs.inventory_entities": "已暴露实体",
+    "runs.weather_path": "天气 / 本地上下文",
+    "runs.tool_iterations": "按轮次的工具调用",
+    "runs.no_tool_iterations": "没有工具轮次数据。",
+    "runs.duplicate_suppressions": "重复工具抑制",
+    "runs.no_duplicate_suppressions": "没有重复工具抑制。",
+    "runs.active_stage": "活跃阶段",
+    "runs.running_duration": "运行时长",
+    "runs.completion": "完成状态",
+    "runs.search_gate_reason": "搜索门控",
+    "runs.search_queries": "查询",
+    "runs.search_providers": "Provider",
+    "runs.search_results": "结果",
+    "runs.actions": "动作 / HA 状态",
+    "runs.no_actions": "没有 HA 动作工具调用。",
+    "runs.timing": "时间",
+    "runs.reason": "原因",
+    "runs.within_target": "目标内",
+    "runs.missed_target": "超出目标",
+    "runs.timeout": "超时",
+    "runs.cache_hit": "命中缓存",
+    "runs.polluted_result": "污染结果",
+    "runs.unintended_state_change": "非预期状态变化",
+    "runs.errors": "错误",
+    "runs.no_errors": "没有记录到错误。",
+    "runs.tool_events": "工具事件",
+    "runs.no_tools": "没有工具事件。",
+    "runs.evidence": "证据",
+    "runs.no_evidence": "没有 typed evidence。",
     "runs.grounding": "证据校验",
     "runs.grounding_candidates": "证据候选",
     "runs.grounding_canonical": "标准答案",
@@ -304,6 +457,17 @@ const I18N = {
     "settings.models": "模型",
     "settings.budgets": "预算",
     "settings.traces": "诊断记录",
+    "settings.first_response_audio": "首反馈音频",
+    "settings.first_response_audio_enabled": "播放首反馈音频",
+    "settings.first_response_adapter": "播放 adapter",
+    "settings.first_response_local_service": "本地 display-agent 服务",
+    "settings.first_response_local_service_hint": "推荐：rest_command.kukui_voice_feedback。留空则自动检测。",
+    "settings.first_response_tts_entity": "HA fallback TTS 实体",
+    "settings.first_response_media_player": "HA fallback media_player",
+    "settings.audio_route": "当前播放路由",
+    "settings.audio_candidates": "候选项",
+    "settings.local_adapter_missing": "缺少本地播放 adapter。需要先接 display-agent 服务，平板本机扬声器才会出声。",
+    "settings.ha_fallback_notice": "HA media_player 只是显式 fallback，不是平板本机播放。",
     "settings.model": "{tier} 模型",
     "settings.max_tokens": "{tier} 最大令牌",
     "settings.timeout": "{tier} 超时",
@@ -378,6 +542,9 @@ const I18N = {
     "mode.fast": "快速",
     "mode.mid": "均衡",
     "mode.deep": "深度",
+    "adapter.local": "本地 display-agent",
+    "adapter.ha_media_player": "HA media_player fallback",
+    "adapter.auto": "本地优先，失败再 fallback",
     "tier.fast": "快速",
     "tier.mid": "均衡",
     "tier.deep": "深度",
@@ -395,6 +562,13 @@ const I18N = {
     "grounding.status.repaired": "已修正",
     "grounding.status.unsupported": "未被证据支持",
     "grounding.status.verifier_error": "校验器错误",
+    "verifier.blocking": "阻塞",
+    "verifier.audit_only": "旁路审计",
+    "verifier.disabled": "未启用",
+    "evidence.quote_origin": "出处证据",
+    "evidence.term_explanation_source": "词义解释来源",
+    "evidence.commentary_source": "注释来源",
+    "evidence.polluted_related_item": "相关项污染",
     "rule.max_one_sentence": "一句话内",
     "rule.no_tool_details": "不说工具细节",
     "rule.no_entity_id": "不说 entity_id",
@@ -767,6 +941,13 @@ class VoiceHarnessPanel extends HTMLElement {
           max_runs: numberValue("trace_max_runs"),
           retention_hours: numberValue("trace_retention_hours"),
         },
+        first_response_audio: {
+          enabled: data.get("first_response_audio_enabled") === "on",
+          adapter: this._firstResponseAdapter(data.get("first_response_adapter")),
+          local_service: String(data.get("first_response_local_service") || "").trim(),
+          tts_entity: String(data.get("first_response_tts_entity") || "").trim(),
+          media_player_entity: String(data.get("first_response_media_player") || "").trim(),
+        },
       },
     });
   }
@@ -883,9 +1064,31 @@ class VoiceHarnessPanel extends HTMLElement {
               ${(entry.routes || []).map((route) => this._routeCard(route)).join("")}
             </div>
             ${this._providerPanel(entry)}
+            ${this._liveStatusBanner(entry)}
             ${this._renderTracePanel(entry)}
           </article>
         `).join("")}
+      </div>
+    `;
+  }
+
+  _liveStatusBanner(entry) {
+    const event = entry.feedback?.latest_display;
+    if (!event) {
+      return `<div class="empty mini">${escapeHtml(this._t("runs.no_live_status"))}</div>`;
+    }
+    return `
+      <div class="liveStatus ${escapeHtml(event.state || "")}">
+        <div>
+          <strong>${escapeHtml(this._t("runs.live_status"))}: ${escapeHtml(event.title || event.state || "")}</strong>
+          <span>${escapeHtml(event.short_text || "")}</span>
+          <span>${escapeHtml(event.turn_id || "")}</span>
+        </div>
+        <div class="summaryChips">
+          <span class="chip muted">${escapeHtml(event.progress || "none")}</span>
+          <span class="chip muted">${escapeHtml(this._t("runs.privacy"))}: ${escapeHtml(event.privacy_level || "")}</span>
+          ${(event.action_buttons || []).length ? `<span class="chip warning">${escapeHtml(this._t("runs.actions_available"))}: ${escapeHtml((event.action_buttons || []).join(", "))}</span>` : ""}
+        </div>
       </div>
     `;
   }
@@ -911,6 +1114,13 @@ class VoiceHarnessPanel extends HTMLElement {
     const traceRunsRange = editable.trace_max_runs || { min: 1, max: 200 };
     const traceHoursRange = editable.trace_retention_hours || { min: 1, max: 168 };
     const routingModes = editable.routing_modes || ["auto", "fast", "mid", "deep"];
+    const audioOptions = options.first_response_audio || {};
+    const audioStatus = entry.first_response_audio || {};
+    const playbackAdapters = editable.first_response_playback_adapters || ["local", "ha_media_player", "auto"];
+    const formId = safeId(entry.entry_id);
+    const localServices = audioStatus.candidates?.local_services || [];
+    const ttsCandidates = audioStatus.candidates?.tts || [];
+    const mediaCandidates = audioStatus.candidates?.media_player || [];
     return `
       <form class="surface settingsForm" data-form="settings" data-entry-id="${escapeHtml(entry.entry_id)}">
         <div class="sectionHead">
@@ -962,6 +1172,57 @@ class VoiceHarnessPanel extends HTMLElement {
           </div>
         </fieldset>
         <fieldset>
+          <legend>${escapeHtml(this._t("settings.first_response_audio"))}</legend>
+          <label class="checkRow">
+            <input name="first_response_audio_enabled" type="checkbox" ${audioOptions.enabled !== false ? "checked" : ""}>
+            <span>${escapeHtml(this._t("settings.first_response_audio_enabled"))}</span>
+          </label>
+          <label>
+            <span>${escapeHtml(this._t("settings.first_response_adapter"))}</span>
+            <select name="first_response_adapter">
+              ${playbackAdapters.map((adapter) => `
+                <option value="${escapeHtml(adapter)}" ${this._firstResponseAdapter(audioOptions.adapter) === adapter ? "selected" : ""}>
+                  ${escapeHtml(this._adapterLabel(adapter))}
+                </option>
+              `).join("")}
+            </select>
+          </label>
+          ${this._audioRoutePanel(audioStatus, entry.feedback_policy || {})}
+          <label>
+            <span>${escapeHtml(this._t("settings.first_response_local_service"))}</span>
+            <input
+              name="first_response_local_service"
+              value="${escapeHtml(audioOptions.local_service || "")}"
+              list="local-services-${formId}"
+              autocomplete="off"
+              placeholder="rest_command.kukui_voice_feedback"
+              maxlength="256"
+            >
+            <small>${escapeHtml(this._t("settings.first_response_local_service_hint"))}</small>
+          </label>
+          <datalist id="local-services-${formId}">
+            ${localServices.map((item) => `<option value="${escapeHtml(item.service || "")}"></option>`).join("")}
+          </datalist>
+          <div class="settingsNote">${escapeHtml(this._t("settings.ha_fallback_notice"))}</div>
+          <div class="settingsTriples two">
+            <label>
+              <span>${escapeHtml(this._t("settings.first_response_tts_entity"))}</span>
+              <input name="first_response_tts_entity" value="${escapeHtml(audioOptions.tts_entity || "")}" list="tts-candidates-${formId}" autocomplete="off" maxlength="256">
+            </label>
+            <label>
+              <span>${escapeHtml(this._t("settings.first_response_media_player"))}</span>
+              <input name="first_response_media_player" value="${escapeHtml(audioOptions.media_player_entity || "")}" list="media-player-candidates-${formId}" autocomplete="off" maxlength="256">
+            </label>
+          </div>
+          <datalist id="tts-candidates-${formId}">
+            ${ttsCandidates.map((item) => `<option value="${escapeHtml(item.entity_id || "")}"></option>`).join("")}
+          </datalist>
+          <datalist id="media-player-candidates-${formId}">
+            ${mediaCandidates.map((item) => `<option value="${escapeHtml(item.entity_id || "")}"></option>`).join("")}
+          </datalist>
+          ${this._audioCandidatePanel(audioStatus)}
+        </fieldset>
+        <fieldset>
           <legend>${escapeHtml(this._t("settings.traces"))}</legend>
           <label class="checkRow">
             <input name="diagnostic_traces" type="checkbox" ${trace.enabled ? "checked" : ""}>
@@ -983,6 +1244,70 @@ class VoiceHarnessPanel extends HTMLElement {
           </div>
         </fieldset>
       </form>
+    `;
+  }
+
+  _audioRoutePanel(audioStatus, feedbackPolicy) {
+    const route = audioStatus.route || {};
+    const adapter = route.adapter || audioStatus.adapter || "local";
+    const canPlay = Boolean(audioStatus.enabled !== false && audioStatus.can_play);
+    const quiet = feedbackPolicy.quiet_hours || {};
+    const routeTone = canPlay ? "ok" : "bad";
+    const missingLocal = adapter === "local" && !canPlay;
+    return `
+      <div class="audioRoute">
+        <div class="sectionHead compact">
+          <div>
+            <strong>${escapeHtml(this._t("settings.audio_route"))}</strong>
+            <span>${escapeHtml(this._adapterLabel(adapter))}</span>
+          </div>
+          <span class="chip ${routeTone}">${escapeHtml(canPlay ? "ready" : "missing")}</span>
+        </div>
+        <div class="summaryChips">
+          <span class="chip muted">backend: ${escapeHtml(route.backend || "none")}</span>
+          <span class="chip muted">reason: ${escapeHtml(route.reason || "")}</span>
+          ${route.local_service ? `<span class="chip ok">${escapeHtml(route.local_service)}</span>` : ""}
+          ${quiet.active ? `<span class="chip warning">quiet hours · ${Number(quiet.current_local_hour ?? 0)}:00</span>` : `<span class="chip muted">local hour · ${Number(quiet.current_local_hour ?? 0)}:00</span>`}
+        </div>
+        ${missingLocal ? `<div class="banner error">${escapeHtml(this._t("settings.local_adapter_missing"))}</div>` : ""}
+      </div>
+    `;
+  }
+
+  _audioCandidatePanel(audioStatus) {
+    const candidates = audioStatus.candidates || {};
+    return `
+      <details class="jsonBlock">
+        <summary>${escapeHtml(this._t("settings.audio_candidates"))}</summary>
+        <div class="candidateGrid">
+          ${this._audioCandidateList("Local services", candidates.local_services || [], "service")}
+          ${this._audioCandidateList("TTS", candidates.tts || [], "entity_id")}
+          ${this._audioCandidateList("media_player", candidates.media_player || [], "entity_id")}
+        </div>
+      </details>
+    `;
+  }
+
+  _audioCandidateList(title, items, key) {
+    if (!items.length) {
+      return `
+        <div class="candidateList">
+          <strong>${escapeHtml(title)}</strong>
+          <span class="meta">-</span>
+        </div>
+      `;
+    }
+    return `
+      <div class="candidateList">
+        <strong>${escapeHtml(title)}</strong>
+        ${items.slice(0, 8).map((item) => `
+          <div class="candidateItem">
+            <span>${escapeHtml(item[key] || "")}</span>
+            <span class="chip ${item.available || item.usable ? "ok" : "muted"}">${escapeHtml(item.available || item.usable ? "usable" : "off")}</span>
+            ${item.preferred ? `<span class="chip warning">preferred</span>` : ""}
+          </div>
+        `).join("")}
+      </div>
     `;
   }
 
@@ -1127,14 +1452,19 @@ class VoiceHarnessPanel extends HTMLElement {
 
   _liveRunCard(run) {
     const timeline = Array.isArray(run.events) ? run.events : [];
+    const duration = Number(run.running_duration_ms || 0);
+    const lastStage = run.last_active_stage || (timeline.length ? timeline[timeline.length - 1].stage : "");
+    const isRunning = run.status === "running";
     return `
       <details class="traceCard">
         <summary>
           <div>
             <strong>${escapeHtml(this._formatTime(Number(run.created_at || 0) * 1000))}</strong>
             <span>${escapeHtml(run.conversation_id || run.id || "")}</span>
+            <span>${escapeHtml(run.user_text || "")}</span>
+            <span>${escapeHtml(`${this._t("runs.active_stage")}: ${lastStage || "-"}`)}</span>
           </div>
-          <span class="chip ${run.status === "error" ? "bad" : "ok"}">${escapeHtml(run.status || "")}</span>
+          <span class="chip ${run.status === "error" ? "bad" : (isRunning ? "warning" : "ok")}">${escapeHtml(run.status || "")}</span>
         </summary>
         <div class="traceBody">
           <div class="traceText">
@@ -1144,7 +1474,8 @@ class VoiceHarnessPanel extends HTMLElement {
           <div class="meterRow">
             <span>${escapeHtml(this._routeLabel(run.route))}</span>
             <span>${escapeHtml(run.provider || "")}</span>
-            <span>${Number(run.latency_ms || 0)} ms</span>
+            <span>${escapeHtml(this._t("runs.active_stage"))}: ${escapeHtml(lastStage || "-")}</span>
+            <span>${escapeHtml(this._t(isRunning ? "runs.running_duration" : "runs.completion"))}: ${duration} ms</span>
           </div>
           <div class="attemptList timelineList">
             ${timeline.map((event) => `
@@ -1165,17 +1496,82 @@ class VoiceHarnessPanel extends HTMLElement {
     const route = record.route || {};
     const provider = route.provider || {};
     const attempts = Array.isArray(route.provider_attempts) ? route.provider_attempts : [];
-    const timeline = Array.isArray(record.timeline) ? record.timeline : [];
+    const timeline = Array.isArray(record.timeline_spans) && record.timeline_spans.length
+      ? record.timeline_spans
+      : (Array.isArray(record.timeline) ? record.timeline.map((event) => ({
+          stage: event.stage,
+          start_ms: event.t_ms,
+          duration_ms: 0,
+          status: event.status,
+          attrs: event.attrs,
+        })) : []);
+    const flags = record.debug_flags || {};
+    const tools = Array.isArray(record.tools) ? record.tools : [];
+    const errors = Array.isArray(record.errors) ? record.errors : [];
+    const input = record.input || {};
+    const firstResponse = record.first_response_decision || {};
+    const searchGate = record.search_gate || {};
+    const completion = record.completion || {};
+    const speech = record.speech || {};
     return `
       <details class="traceCard">
         <summary>
           <div>
             <strong>${escapeHtml(this._formatTime(record.created_at))}</strong>
-            <span>${escapeHtml(record.conversation_id || this._t("runs.no_conversation"))}</span>
+            <span>${escapeHtml(record.user_text || "")}</span>
+            <span>${escapeHtml(record.first_response_text || firstResponse.spoken_hint || firstResponse.task_type || "")}</span>
+            <span>${escapeHtml(record.final_speech_text || record.assistant_text || "")}</span>
+            <span>${escapeHtml(`${this._routeLabel(route.kind)} · ${route.model || ""} · ${Number(record.latency_ms || 0)} ms`)}</span>
+            <span>${escapeHtml(`${firstResponse.task_type || ""} · ${searchGate.decision || ""}`)}</span>
           </div>
-          <span class="chip ${record.status === "error" ? "bad" : "ok"}">${escapeHtml(this._traceStatusLabel(record.status))}</span>
+          <div class="summaryChips">
+            ${this._runFlagChips(record)}
+            <span class="chip ${record.status === "error" ? "bad" : "ok"}">${escapeHtml(this._traceStatusLabel(record.status))}</span>
+          </div>
         </summary>
         <div class="traceBody">
+          <h3>${escapeHtml(this._t("runs.detail"))}</h3>
+          <div class="runFlags">
+            ${this._flagChip(this._t("runs.search"), Boolean(flags.search), Boolean(flags.search) ? "warning" : "muted")}
+            ${this._flagChip(this._t("runs.deep_model"), Boolean(flags.deep_route), Boolean(flags.deep_route) ? "warning" : "muted")}
+            ${this._flagChip(this._t("runs.deep_verifier"), Boolean(flags.deep_verifier_waited), Boolean(flags.deep_verifier_waited) ? "bad" : "muted")}
+            ${this._flagChip(this._t("runs.high_risk"), Boolean(flags.high_risk), Boolean(flags.high_risk) ? "bad" : "muted")}
+            ${this._flagChip(this._t("runs.final_modified"), Boolean(flags.final_modified_by_grounding), Boolean(flags.final_modified_by_grounding) ? "warning" : "muted")}
+            ${this._flagChip(this._t("runs.polluted_evidence"), Boolean(flags.polluted_evidence_present), Boolean(flags.polluted_evidence_used) ? "bad" : (flags.polluted_evidence_present ? "warning" : "muted"))}
+            <span class="chip muted">${escapeHtml(this._t("runs.verifier_mode"))}: ${escapeHtml(this._verifierModeLabel(record.verifier_mode))}</span>
+          </div>
+          <div class="detailGrid">
+            ${this._detailItem(this._t("runs.input"), [
+              input.text || record.user_text || "",
+              input.conversation_id || record.conversation_id || "",
+            ])}
+            ${this._detailItem(this._t("runs.route"), [
+              `${this._routeLabel(route.kind)} · ${route.model || ""}`,
+              provider.name ? `${this._t("runs.provider")}: ${provider.name}` : "",
+            ])}
+            ${this._detailItem(this._t("runs.first_response"), [
+              firstResponse.task_type || "",
+              record.first_response_text || firstResponse.spoken_hint || "",
+              firstResponse.reason || "",
+              firstResponse.spoken_hint || "",
+            ])}
+            ${this._detailItem(this._t("runs.search_gate"), [
+              searchGate.decision || "",
+              searchGate.reason || "",
+              searchGate.searched === true ? "searched=true" : "searched=false",
+            ])}
+            ${this._detailItem(this._t("runs.completion"), [
+              completion.complete === false ? "running" : (completion.status || record.status || ""),
+              completion.last_active_stage ? `${this._t("runs.active_stage")}: ${completion.last_active_stage}` : "",
+              completion.running_duration_ms ? `${this._t("runs.running_duration")}: ${Number(completion.running_duration_ms)} ms` : "",
+            ])}
+            ${this._detailItem(this._t("runs.final_speech"), [
+              speech.final || record.final_speech_text || record.assistant_text || "",
+              `${Number(record.latency_ms || 0)} ms`,
+            ])}
+          </div>
+          ${this._firstResponsePanel(firstResponse, record.first_response_audio || {})}
+          ${this._inventoryPanel(record)}
           <div class="traceText">
             <strong>${escapeHtml(this._t("runs.user"))}</strong>
             <p>${escapeHtml(record.user_text || "")}</p>
@@ -1190,7 +1586,18 @@ class VoiceHarnessPanel extends HTMLElement {
             <span>${escapeHtml(this._t("runs.tools", { count: (record.tools || []).length }))}</span>
             ${rawMeta.compressed_bytes ? `<span>${rawMeta.compressed_bytes}/${rawMeta.uncompressed_bytes} B</span>` : ""}
           </div>
+          ${this._weatherPathPanel(record)}
+          ${this._toolIterationsPanel(record)}
+          ${this._duplicateSuppressionsPanel(record)}
+          ${this._criticalPathPanel(record)}
+          ${this._searchDebugPanel(record)}
+          ${this._actionsPanel(record)}
+          ${this._earconEventsPanel(record)}
+          ${this._displayStatusPanel(record)}
+          ${this._errorsPanel(errors)}
+          ${this._toolEventsPanel(tools)}
           ${this._groundingPanel(record)}
+          ${this._evidencePanel(record)}
           ${attempts.length ? `
             <h3>${escapeHtml(this._t("runs.provider_attempts"))}</h3>
             <div class="attemptList">
@@ -1210,15 +1617,474 @@ class VoiceHarnessPanel extends HTMLElement {
               ${timeline.map((event) => `
                 <div class="attempt ${event.status === "error" ? "bad" : "ok"}">
                   <strong>${escapeHtml(event.stage || "")}</strong>
-                  <span>${Number(event.t_ms || 0)} ms</span>
+                  <span>${Number(event.start_ms ?? event.t_ms ?? 0)} ms</span>
+                  <span>${Number(event.duration_ms || 0)} ms</span>
                   ${event.attrs ? `<span>${escapeHtml(JSON.stringify(event.attrs))}</span>` : ""}
                 </div>
               `).join("")}
             </div>
           ` : ""}
-          <h3>${escapeHtml(this._t("runs.raw_payload"))}</h3>
-          ${record.raw_payload ? `<pre>${escapeHtml(JSON.stringify(record.raw_payload, null, 2))}</pre>` : `<div class="empty mini">${escapeHtml(this._t("runs.no_raw"))}</div>`}
+          ${record.raw_payload ? this._jsonDetails(this._t("runs.raw_payload"), record.raw_payload) : `<div class="empty mini">${escapeHtml(this._t("runs.no_raw"))}</div>`}
         </div>
+      </details>
+    `;
+  }
+
+  _runFlagChips(record) {
+    const flags = record.debug_flags || {};
+    return [
+      this._flagChip("S", Boolean(flags.search), Boolean(flags.search) ? "warning" : "muted", this._t("runs.search")),
+      this._flagChip("D", Boolean(flags.deep_route), Boolean(flags.deep_route) ? "warning" : "muted", this._t("runs.deep_model")),
+      this._flagChip("V", Boolean(flags.deep_verifier_waited), Boolean(flags.deep_verifier_waited) ? "bad" : "muted", this._t("runs.deep_verifier")),
+      this._flagChip("R", Boolean(flags.high_risk), Boolean(flags.high_risk) ? "bad" : "muted", this._t("runs.high_risk")),
+      this._flagChip("G", Boolean(flags.final_modified_by_grounding), Boolean(flags.final_modified_by_grounding) ? "warning" : "muted", this._t("runs.final_modified")),
+      this._flagChip("E", Boolean(flags.polluted_evidence_present), Boolean(flags.polluted_evidence_used) ? "bad" : (flags.polluted_evidence_present ? "warning" : "muted"), this._t("runs.polluted_evidence")),
+    ].join("");
+  }
+
+  _flagChip(label, enabled, tone = "muted", title = "") {
+    const state = enabled ? this._t("common.enabled") : this._t("common.disabled");
+    return `<span class="chip ${tone}" title="${escapeHtml(title || label)}">${escapeHtml(label)}: ${escapeHtml(state)}</span>`;
+  }
+
+  _detailItem(label, lines) {
+    const visible = (Array.isArray(lines) ? lines : []).filter((line) => String(line || "").trim());
+    return `
+      <div class="detailItem">
+        <strong>${escapeHtml(label)}</strong>
+        ${visible.map((line) => `<span>${escapeHtml(line)}</span>`).join("") || `<span class="meta">-</span>`}
+      </div>
+    `;
+  }
+
+  _firstResponsePanel(decision, audio = {}) {
+    const keys = [...Object.keys(decision || {}), ...Object.keys(audio || {})];
+    if (!keys.length) {
+      return `<div class="empty mini">${escapeHtml(this._t("runs.first_response_detail"))}: -</div>`;
+    }
+    const deadline = Number(decision.deadline_ms || 0);
+    const triggered = Number(decision.triggered_ms || decision.actual_ms || 0);
+    const inTarget = deadline > 0 && triggered > 0 ? triggered <= deadline : null;
+    return `
+      <div class="debugSection">
+        <h3>${escapeHtml(this._t("runs.first_response_detail"))}</h3>
+        <div class="detailGrid">
+          ${this._detailItem(this._t("runs.first_response"), [
+            decision.task_type || "",
+            decision.cue || "",
+            decision.spoken_hint || decision.text || decision.earcon || "",
+          ])}
+          ${this._detailItem(this._t("runs.timing"), [
+            deadline ? `${deadline} ms deadline` : "",
+            triggered ? `${triggered} ms actual` : "",
+            inTarget === null ? "" : this._t(inTarget ? "runs.within_target" : "runs.missed_target"),
+          ])}
+          ${this._detailItem(this._t("runs.reason"), [
+            decision.reason || "",
+            decision.selection_reason || "",
+          ])}
+          ${this._detailItem(this._t("runs.first_response_audio"), [
+            audio.scheduled ? "scheduled" : "not scheduled",
+            audio.played ? `played · ${Number(audio.played_at_ms || 0)} ms` : "not played",
+            audio.source || "",
+            audio.backend || "",
+            audio.tts_entity ? `tts=${audio.tts_entity}` : "",
+            audio.media_player_entity ? `media=${audio.media_player_entity}` : "",
+            audio.selection_reason || "",
+            audio.suppressed_reason || "",
+          ])}
+        </div>
+        ${this._jsonDetails(this._t("runs.first_response_detail"), decision)}
+        ${this._jsonDetails(this._t("runs.first_response_audio"), audio)}
+      </div>
+    `;
+  }
+
+  _inventoryPanel(record) {
+    const attrs = this._inventoryAttrs(record);
+    if (!attrs) {
+      return "";
+    }
+    const areas = Array.isArray(attrs.areas) ? attrs.areas : [];
+    const domains = Array.isArray(attrs.domains) ? attrs.domains : [];
+    const entities = Array.isArray(attrs.entities) ? attrs.entities : [];
+    const tools = Array.isArray(attrs.tools_used) ? attrs.tools_used : [];
+    return `
+      <div class="debugSection">
+        <h3>${escapeHtml(this._t("runs.inventory"))}</h3>
+        <div class="detailGrid">
+          ${this._detailItem(this._t("runs.route"), [
+            attrs.task_type || "",
+            attrs.source || "",
+          ])}
+          ${this._detailItem(this._t("runs.inventory_scope"), [
+            attrs.area ? `area=${attrs.area}` : "",
+            attrs.domain ? `domain=${attrs.domain}` : "",
+            attrs.capability ? `capability=${attrs.capability}` : "",
+            `entities=${Number(attrs.entity_count || entities.length || 0)}`,
+          ])}
+          ${this._detailItem(this._t("runs.inventory_execution"), [
+            `llm_used=${Boolean(attrs.llm_used)}`,
+            `tools_used=${tools.length ? tools.join(", ") : "[]"}`,
+          ])}
+          ${this._detailItem("Areas / domains", [
+            areas.length ? areas.join(", ") : "",
+            domains.length ? domains.join(", ") : "",
+          ])}
+        </div>
+        ${entities.length ? `
+          <details class="jsonDetails">
+            <summary>${escapeHtml(this._t("runs.inventory_entities"))}</summary>
+            <div class="attemptList compact">
+              ${entities.map((entity) => `
+                <div class="attempt compactAttempt">
+                  <strong>${escapeHtml(entity.name || "")}</strong>
+                  <span>${escapeHtml(entity.domain || "")}</span>
+                  <span>${escapeHtml(Array.isArray(entity.areas) ? entity.areas.join(", ") : "")}</span>
+                  <span>${escapeHtml(entity.can_control ? "control" : "read")}</span>
+                </div>
+              `).join("")}
+            </div>
+          </details>
+        ` : ""}
+        ${this._jsonDetails(this._t("runs.inventory"), attrs)}
+      </div>
+    `;
+  }
+
+  _inventoryAttrs(record) {
+    const rawTimeline = Array.isArray(record.timeline) ? record.timeline : [];
+    const rawEvent = rawTimeline.find((event) => event?.stage === "local_inventory_render");
+    if (rawEvent?.attrs && typeof rawEvent.attrs === "object") {
+      return rawEvent.attrs;
+    }
+    const spans = Array.isArray(record.timeline_spans) ? record.timeline_spans : [];
+    const span = spans.find((event) => event?.stage === "local_inventory_render");
+    return span?.attrs && typeof span.attrs === "object" ? span.attrs : null;
+  }
+
+  _weatherPathPanel(record) {
+    const path = record.weather_context_path || {};
+    if (!path.active) {
+      return "";
+    }
+    return `
+      <div class="debugSection">
+        <h3>${escapeHtml(this._t("runs.weather_path"))}</h3>
+        <div class="detailGrid">
+          ${this._detailItem(this._t("runs.weather_path"), [
+            path.path || "",
+            `task_type=${path.task_type || ""}`,
+          ])}
+          ${this._detailItem("Local", [
+            `local_state_cache=${Boolean(path.local_state_cache)}`,
+            `weather_entity=${Boolean(path.weather_entity)}`,
+          ])}
+          ${this._detailItem("Live context", [
+            `GetLiveContext calls=${Number(path.get_live_context_calls || 0)}`,
+            `results=${Number(path.get_live_context_results || 0)}`,
+          ])}
+          ${this._detailItem("Fallback", [
+            `search_fallback=${Boolean(path.search_fallback)}`,
+            path.duplicate_live_context_suppressed ? "duplicate_live_context_suppressed=true" : "",
+          ])}
+        </div>
+        ${this._jsonDetails(this._t("runs.weather_path"), path)}
+      </div>
+    `;
+  }
+
+  _toolIterationsPanel(record) {
+    const iterations = Array.isArray(record.tool_calls_by_iteration)
+      ? record.tool_calls_by_iteration
+      : [];
+    if (!iterations.length) {
+      return `<div class="empty mini">${escapeHtml(this._t("runs.no_tool_iterations"))}</div>`;
+    }
+    return `
+      <div class="debugSection">
+        <h3>${escapeHtml(this._t("runs.tool_iterations"))}</h3>
+        <div class="attemptList">
+          ${iterations.map((item) => {
+            const calls = Array.isArray(item.calls) ? item.calls : [];
+            const results = Array.isArray(item.results) ? item.results : [];
+            const suppressions = Array.isArray(item.suppressions) ? item.suppressions : [];
+            const tone = suppressions.length ? "warning" : "ok";
+            return `
+              <div class="attempt ${tone}">
+                <strong>#${Number(item.iteration || 0)}</strong>
+                <span>${escapeHtml(calls.join(", ") || "-")}</span>
+                <span>${escapeHtml(results.map((result) => `${result.name}:${result.status || "ok"}`).join(", ") || "-")}</span>
+                <span>${escapeHtml(suppressions.map((entry) => `${entry.name}:${entry.reason}`).join(", ") || item.forced_final_reason || "")}</span>
+              </div>
+            `;
+          }).join("")}
+        </div>
+        ${this._jsonDetails(this._t("runs.tool_iterations"), iterations)}
+      </div>
+    `;
+  }
+
+  _duplicateSuppressionsPanel(record) {
+    const suppressions = Array.isArray(record.duplicate_tool_suppressions)
+      ? record.duplicate_tool_suppressions
+      : [];
+    if (!suppressions.length) {
+      return `<div class="empty mini">${escapeHtml(this._t("runs.no_duplicate_suppressions"))}</div>`;
+    }
+    return `
+      <div class="debugSection">
+        <h3>${escapeHtml(this._t("runs.duplicate_suppressions"))}</h3>
+        <div class="attemptList">
+          ${suppressions.map((item) => `
+            <div class="attempt warning">
+              <strong>${escapeHtml(item.name || "")}</strong>
+              <span>#${Number(item.iteration || 0)}</span>
+              <span>${Number(item.start_ms || 0)} ms</span>
+              <span>${escapeHtml(item.reason || "")}</span>
+            </div>
+          `).join("")}
+        </div>
+        ${this._jsonDetails(this._t("runs.duplicate_suppressions"), suppressions)}
+      </div>
+    `;
+  }
+
+  _criticalPathPanel(record) {
+    const path = Array.isArray(record.critical_path) ? record.critical_path : [];
+    if (!path.length) {
+      return `<div class="empty mini">${escapeHtml(this._t("runs.no_critical_path"))}</div>`;
+    }
+    return `
+      <div class="debugSection">
+        <h3>${escapeHtml(this._t("runs.critical_path"))}</h3>
+        <div class="attemptList timelineList">
+          ${path.map((span) => {
+            const blocking = Boolean(span.blocking);
+            const tone = span.status === "error" ? "bad" : (blocking ? "warning" : "muted");
+            return `
+              <div class="attempt ${tone}">
+                <strong>${escapeHtml(span.stage || "")}</strong>
+                <span>${Number(span.start_ms || 0)} ms</span>
+                <span>${Number(span.duration_ms || 0)} ms</span>
+                <span>${escapeHtml(blocking ? this._t("runs.blocking") : this._t("runs.non_blocking"))}</span>
+              </div>
+            `;
+          }).join("")}
+        </div>
+        ${this._jsonDetails(this._t("runs.critical_path"), path)}
+      </div>
+    `;
+  }
+
+  _searchDebugPanel(record) {
+    const debug = record.search_debug || {};
+    if (!Object.keys(debug).length) {
+      return `<div class="empty mini">${escapeHtml(this._t("runs.no_search_debug"))}</div>`;
+    }
+    const queries = Array.isArray(debug.queries) ? debug.queries : [];
+    const providers = Array.isArray(debug.providers) ? debug.providers : [];
+    const results = Array.isArray(debug.results) ? debug.results : [];
+    return `
+      <div class="debugSection">
+        <h3>${escapeHtml(this._t("runs.search_debug"))}</h3>
+        <div class="detailGrid">
+          ${this._detailItem(this._t("runs.search_gate_reason"), [
+            debug.searched ? this._t("common.enabled") : this._t("common.disabled"),
+            debug.gate_reason || "",
+          ])}
+          ${this._detailItem("Latency", [
+            `${Number(debug.latency_ms || 0)} ms`,
+            `${Number(debug.result_count || 0)} results`,
+            `${Number(debug.evidence_extracted || 0)} evidence`,
+          ])}
+          ${this._detailItem(this._t("runs.debug_flags"), [
+            debug.timeout ? this._t("runs.timeout") : "",
+            debug.cache_hit ? this._t("runs.cache_hit") : "",
+            debug.polluted_result ? this._t("runs.polluted_result") : "",
+          ])}
+        </div>
+        ${queries.length ? `
+          <div class="ruleList compact">
+            <strong>${escapeHtml(this._t("runs.search_queries"))}</strong>
+            ${queries.map((query) => `<span>${escapeHtml(query)}</span>`).join("")}
+          </div>
+        ` : ""}
+        ${providers.length ? `
+          <div class="attemptList compact">
+            <strong>${escapeHtml(this._t("runs.search_providers"))}</strong>
+            ${providers.map((provider) => `
+              <div class="attempt compactAttempt ${provider.status === "error" ? "bad" : "ok"}">
+                <span>${escapeHtml(provider.provider || "")}</span>
+                <span>${escapeHtml(provider.error || provider.status || "ok")}</span>
+              </div>
+            `).join("")}
+          </div>
+        ` : ""}
+        ${results.length ? `
+          <div class="attemptList">
+            <strong>${escapeHtml(this._t("runs.search_results"))}</strong>
+            ${results.map((result) => `
+              <div class="attempt searchResult">
+                <strong>${escapeHtml(result.title || "")}</strong>
+                <span>${escapeHtml(result.url || "")}</span>
+                <span>${escapeHtml(result.content || "")}</span>
+              </div>
+            `).join("")}
+          </div>
+        ` : ""}
+        ${this._jsonDetails(this._t("runs.search_debug"), debug)}
+      </div>
+    `;
+  }
+
+  _actionsPanel(record) {
+    const actions = Array.isArray(record.actions) ? record.actions : [];
+    if (!actions.length) {
+      return `<div class="empty mini">${escapeHtml(this._t("runs.no_actions"))}</div>`;
+    }
+    return `
+      <div class="debugSection">
+        <h3>${escapeHtml(this._t("runs.actions"))}</h3>
+        <div class="attemptList">
+          ${actions.map((action) => {
+            const tone = action.status === "error" || action.policy === "blocked"
+              ? "bad"
+              : (action.risk === "high" ? "warning" : "ok");
+            return `
+              <div class="attempt ${tone}">
+                <strong>${escapeHtml(action.tool || "")}</strong>
+                <span>${escapeHtml([action.area, action.domain, action.entity].filter(Boolean).join(" · "))}</span>
+                <span>${escapeHtml(`${action.policy || ""} · ${action.risk || ""} · ${action.status || "ok"}`)}</span>
+                <span>${escapeHtml(action.error || (action.unintended_state_change ? this._t("runs.unintended_state_change") : ""))}</span>
+              </div>
+            `;
+          }).join("")}
+        </div>
+        ${this._jsonDetails(this._t("runs.actions"), actions)}
+      </div>
+    `;
+  }
+
+  _earconEventsPanel(record) {
+    const earcons = Array.isArray(record.earcons) ? record.earcons : [];
+    if (!earcons.length) {
+      return `<div class="empty mini">${escapeHtml(this._t("runs.no_earcons"))}</div>`;
+    }
+    return `
+      <div class="debugSection">
+        <h3>${escapeHtml(this._t("runs.earcons"))}</h3>
+        <div class="attemptList">
+          ${earcons.map((event) => `
+            <div class="attempt ${event.suppressed_reason ? "muted" : "ok"}">
+              <strong>${escapeHtml(event.earcon_name || "")}</strong>
+              <span>${Number(event.scheduled_at_ms || 0)} ms → ${event.played_at_ms === null ? "-" : Number(event.played_at_ms || 0) + " ms"}</span>
+              <span>${escapeHtml(`${event.volume_profile || ""} · ${event.duration_ms || 0} ms`)}</span>
+              <span>${escapeHtml(event.suppressed_reason || event.trace_event_name || "")}</span>
+            </div>
+          `).join("")}
+        </div>
+        ${this._jsonDetails(this._t("runs.earcons"), earcons)}
+      </div>
+    `;
+  }
+
+  _displayStatusPanel(record) {
+    const events = Array.isArray(record.display_status?.events)
+      ? record.display_status.events
+      : [];
+    if (!events.length) {
+      return `<div class="empty mini">${escapeHtml(this._t("runs.no_display_status"))}</div>`;
+    }
+    return `
+      <div class="debugSection">
+        <h3>${escapeHtml(this._t("runs.display_status"))}</h3>
+        <div class="attemptList">
+          ${events.map((event) => `
+            <div class="attempt ${event.state === "failed" ? "bad" : (event.state === "confirming" ? "warning" : "ok")}">
+              <strong>${escapeHtml(event.state || "")}</strong>
+              <span>${escapeHtml(event.title || "")}</span>
+              <span>${escapeHtml(event.short_text || "")}</span>
+              <span>${escapeHtml((event.action_buttons || []).join(", ") || event.deep_link || "")}</span>
+            </div>
+          `).join("")}
+        </div>
+        ${this._jsonDetails(this._t("runs.display_status"), events)}
+      </div>
+    `;
+  }
+
+  _errorsPanel(errors) {
+    if (!errors.length) {
+      return `<div class="empty mini">${escapeHtml(this._t("runs.no_errors"))}</div>`;
+    }
+    return `
+      <div class="debugSection">
+        <h3>${escapeHtml(this._t("runs.errors"))}</h3>
+        <div class="attemptList">
+          ${errors.map((error) => `
+            <div class="attempt bad">
+              <strong>${escapeHtml(error.type || "")}</strong>
+              <span>${escapeHtml(error.stage || "")}</span>
+              <span>${escapeHtml(error.message || "")}</span>
+            </div>
+          `).join("")}
+        </div>
+      </div>
+    `;
+  }
+
+  _toolEventsPanel(tools) {
+    if (!tools.length) {
+      return `<div class="empty mini">${escapeHtml(this._t("runs.no_tools"))}</div>`;
+    }
+    return `
+      <div class="debugSection">
+        <h3>${escapeHtml(this._t("runs.tool_events"))}</h3>
+        <div class="attemptList">
+          ${tools.map((tool) => `
+            <div class="attempt ${tool.status === "error" || tool.error ? "bad" : "ok"}">
+              <strong>${escapeHtml(tool.name || "")}</strong>
+              <span>${escapeHtml(tool.phase || "")}${tool.external ? " · external" : ""}</span>
+              <span>${escapeHtml(tool.status || "ok")}</span>
+              <span>${escapeHtml(tool.error || tool.tool_call_id || "")}</span>
+            </div>
+          `).join("")}
+        </div>
+        ${this._jsonDetails(this._t("runs.tool_events"), tools)}
+      </div>
+    `;
+  }
+
+  _evidencePanel(record) {
+    const grounding = record.grounding || record.raw_payload?.grounding || {};
+    const evidence = Array.isArray(grounding.evidence) ? grounding.evidence : [];
+    if (!evidence.length) {
+      return `<div class="empty mini">${escapeHtml(this._t("runs.no_evidence"))}</div>`;
+    }
+    return `
+      <div class="debugSection">
+        <h3>${escapeHtml(this._t("runs.evidence"))}</h3>
+        <div class="evidenceTable">
+          ${evidence.map((item) => `
+            <div class="evidenceRow ${item.included_in_final ? "included" : ""}">
+              <span>${escapeHtml(item.evidence_id || "")}</span>
+              <span>${escapeHtml(this._evidenceTypeLabel(item.evidence_type))}</span>
+              <span>${escapeHtml(item.text || "")}</span>
+              <span>${escapeHtml(item.included_in_final ? this._t("common.enabled") : this._t("common.disabled"))}</span>
+            </div>
+          `).join("")}
+        </div>
+        ${this._jsonDetails(this._t("runs.evidence"), evidence)}
+      </div>
+    `;
+  }
+
+  _jsonDetails(label, value) {
+    return `
+      <details class="jsonDetails">
+        <summary>${escapeHtml(label)}</summary>
+        <pre>${escapeHtml(JSON.stringify(value, null, 2))}</pre>
       </details>
     `;
   }
@@ -1436,6 +2302,10 @@ class VoiceHarnessPanel extends HTMLElement {
               <span>${escapeHtml(file.duration_ms)} ms</span>
               <span>${escapeHtml(file.lufs)} LUFS</span>
               <span>${escapeHtml(this._t("earcon.peak", { peak: file.peak_dbfs }))}</span>
+              <span>${escapeHtml(file.semantic_state || "")}</span>
+              <span>P${escapeHtml(file.priority || "")}</span>
+              <span>${escapeHtml(file.can_play_while_listening ? "mic-safe" : "mic-muted")}</span>
+              <span>${escapeHtml(file.quiet_hours_behavior || "")}</span>
             </div>
           </article>
         `).join("") || `<div class="empty">${escapeHtml(this._t("earcon.empty"))}</div>`}
@@ -1597,6 +2467,11 @@ class VoiceHarnessPanel extends HTMLElement {
     return this._lookup(`mode.${mode}`, mode);
   }
 
+  _adapterLabel(value) {
+    const adapter = String(value || "local");
+    return this._lookup(`adapter.${adapter}`, adapter);
+  }
+
   /** @returns {RouteKind} */
   _routeKind(value) {
     const candidate = String(value || "auto");
@@ -1608,6 +2483,19 @@ class VoiceHarnessPanel extends HTMLElement {
         return candidate;
       default:
         return "auto";
+    }
+  }
+
+  /** @returns {FirstResponsePlaybackAdapter} */
+  _firstResponseAdapter(value) {
+    const candidate = String(value || "local");
+    switch (candidate) {
+      case "ha_media_player":
+      case "auto":
+      case "local":
+        return candidate;
+      default:
+        return "local";
     }
   }
 
@@ -1639,6 +2527,16 @@ class VoiceHarnessPanel extends HTMLElement {
   _groundingStatusLabel(value) {
     const status = String(value || "not_required");
     return this._lookup(`grounding.status.${status}`, status);
+  }
+
+  _verifierModeLabel(value) {
+    const mode = String(value || "disabled");
+    return this._lookup(`verifier.${mode}`, mode);
+  }
+
+  _evidenceTypeLabel(value) {
+    const type = String(value || "");
+    return this._lookup(`evidence.${type}`, type);
   }
 
   _groundingTone(value) {
@@ -1682,6 +2580,10 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function safeId(value) {
+  return String(value ?? "default").replace(/[^a-zA-Z0-9_-]/g, "-");
 }
 
 const styles = `
@@ -1885,6 +2787,73 @@ const styles = `
     color: var(--secondary-text-color);
     font-size: 13px;
     line-height: 1.45;
+  }
+
+  small {
+    color: var(--secondary-text-color);
+    font-size: 12px;
+    line-height: 1.35;
+  }
+
+  .audioRoute {
+    border: 1px solid var(--divider-color);
+    border-radius: 8px;
+    display: grid;
+    gap: 8px;
+    padding: 10px;
+    background: var(--primary-background-color);
+  }
+
+  .sectionHead.compact {
+    margin-bottom: 0;
+    min-height: 32px;
+  }
+
+  .sectionHead.compact div {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+  }
+
+  .sectionHead.compact span:not(.chip) {
+    color: var(--secondary-text-color);
+    font-size: 12px;
+  }
+
+  .candidateGrid {
+    border-top: 1px solid var(--divider-color);
+    display: grid;
+    gap: 10px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    padding: 10px;
+  }
+
+  .candidateList {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .candidateList strong {
+    font-size: 12px;
+  }
+
+  .candidateItem {
+    align-items: center;
+    border: 1px solid var(--divider-color);
+    border-radius: 8px;
+    display: flex;
+    gap: 6px;
+    min-height: 34px;
+    min-width: 0;
+    padding: 6px 8px;
+  }
+
+  .candidateItem > span:first-child {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .satellitePanel {
@@ -2110,6 +3079,40 @@ const styles = `
     gap: 12px;
   }
 
+  .liveStatus {
+    margin-top: 12px;
+    min-height: 64px;
+    border: 1px solid var(--divider-color);
+    border-radius: 8px;
+    padding: 10px 12px;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    background: color-mix(in srgb, var(--primary-color) 8%, var(--card-background-color));
+  }
+
+  .liveStatus.confirming {
+    border-color: color-mix(in srgb, var(--warning-color) 44%, var(--divider-color));
+  }
+
+  .liveStatus.failed {
+    border-color: color-mix(in srgb, var(--error-color) 38%, var(--divider-color));
+  }
+
+  .liveStatus div:first-child {
+    min-width: 0;
+    display: grid;
+    gap: 4px;
+  }
+
+  .liveStatus span {
+    min-width: 0;
+    color: var(--secondary-text-color);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+  }
+
   .traceList {
     display: grid;
     gap: 10px;
@@ -2136,6 +3139,13 @@ const styles = `
     min-width: 0;
     display: grid;
     gap: 2px;
+  }
+
+  .summaryChips {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 6px;
   }
 
   .traceCard summary span {
@@ -2166,6 +3176,98 @@ const styles = `
   .traceText p {
     line-height: 1.45;
     overflow-wrap: anywhere;
+  }
+
+  .runFlags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .detailGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 10px;
+  }
+
+  .detailItem {
+    min-height: 72px;
+    display: grid;
+    align-content: start;
+    gap: 4px;
+    border: 1px solid var(--divider-color);
+    border-radius: 8px;
+    padding: 10px;
+    background: var(--card-background-color);
+  }
+
+  .detailItem strong {
+    color: var(--secondary-text-color);
+    font-size: 12px;
+    text-transform: uppercase;
+  }
+
+  .detailItem span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    font-size: 13px;
+  }
+
+  .debugSection {
+    display: grid;
+    gap: 8px;
+  }
+
+  .debugSection h3 {
+    margin: 0;
+  }
+
+  .evidenceTable {
+    display: grid;
+    gap: 6px;
+  }
+
+  .evidenceRow {
+    min-height: 34px;
+    display: grid;
+    grid-template-columns: 64px minmax(120px, 0.8fr) minmax(180px, 1.4fr) 80px;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid var(--divider-color);
+    border-radius: 8px;
+    padding: 8px 10px;
+    background: var(--card-background-color);
+  }
+
+  .evidenceRow.included {
+    border-color: color-mix(in srgb, var(--success-color) 38%, var(--divider-color));
+  }
+
+  .evidenceRow span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 12px;
+  }
+
+  .jsonDetails {
+    border: 1px solid var(--divider-color);
+    border-radius: 8px;
+    background: var(--card-background-color);
+  }
+
+  .jsonDetails summary {
+    cursor: pointer;
+    padding: 8px 10px;
+    color: var(--secondary-text-color);
+    font-size: 12px;
+    text-transform: uppercase;
+  }
+
+  .jsonDetails pre {
+    margin: 0;
+    border-top: 1px solid var(--divider-color);
+    border-radius: 0;
   }
 
   .groundingBox {
@@ -2231,8 +3333,20 @@ const styles = `
     border-color: color-mix(in srgb, var(--success-color) 38%, var(--divider-color));
   }
 
+  .attempt.warning {
+    border-color: color-mix(in srgb, var(--warning-color) 44%, var(--divider-color));
+  }
+
   .attempt.bad {
     border-color: color-mix(in srgb, var(--error-color) 38%, var(--divider-color));
+  }
+
+  .attempt.muted {
+    opacity: 0.72;
+  }
+
+  .attempt.searchResult {
+    grid-template-columns: minmax(120px, 0.8fr) minmax(140px, 0.9fr) minmax(180px, 1.3fr);
   }
 
   .attempt strong,
@@ -2476,6 +3590,10 @@ const styles = `
 
     .settingsTriples,
     .settingsTriples.two {
+      grid-template-columns: 1fr;
+    }
+
+    .candidateGrid {
       grid-template-columns: 1fr;
     }
 

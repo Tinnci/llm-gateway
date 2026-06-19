@@ -19,6 +19,8 @@ if TYPE_CHECKING:
     import aiohttp
     from homeassistant.core import HomeAssistant
 
+    from .feedback import VoiceFeedbackStore
+    from .first_response_audio import FirstResponsePlayer
     from .memory import VoiceMemory
     from .router import ModelRoute
     from .traces import TraceStore
@@ -49,6 +51,8 @@ class LLMGatewayRuntimeData:
     memory: VoiceMemory
     deep_tasks: DeepTaskManager
     trace_store: TraceStore
+    feedback: VoiceFeedbackStore
+    first_response_player: FirstResponsePlayer
     provider_selector: ProviderSelector
     voice_runs: VoiceRunRecorder
 

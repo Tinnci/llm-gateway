@@ -26,6 +26,11 @@ from .const import (
     RECOMMENDED_TEMPERATURE,
     RECOMMENDED_TOP_P,
     TOOL_LOOP_ERROR_SPEECH,
+    TOOL_LOOP_GUARD_SPEECH,
+)
+from .feedback import (
+    VoiceFeedbackPolicy,
+    feedback_trace_attrs,
 )
 from .first_response import (
     FirstResponseDecision,
@@ -49,6 +54,7 @@ from .search import (
     available_search_tools,
     mark_external_tool_calls,
 )
+from .static_context import render_device_inventory
 from .traces import TraceTurn
 from .voice_controls import async_handle_voice_runtime_command
 from .voice_text import markdown_to_spoken_text
@@ -71,6 +77,24 @@ VOICE_RESPONSE_CONTRACT = """Voice response contract:
   explicitly asks to search. Stable facts may be answered without web search.
 - Keep the spoken answer concise; put long details in the Home Assistant panel.
 """
+
+LIVE_CONTEXT_TOOL_NAME = "GetLiveContext"
+WEATHER_CONTEXT_FALLBACK_SPEECH = "暂时没有本地天气数据。"
+HOME_STATE_FALLBACK_SPEECH = "暂时没有本地状态数据。"
+HIGH_RISK_FALLBACK_SPEECH = "这个需要确认。"
+SAME_TOOL_SAME_ARGS_LIMIT = 1
+FORCED_FINAL_CONTRACT = """Tool loop guard:
+Use the tool results already present in this conversation and provide the final
+spoken answer now. Do not call any more tools. If the available local/live
+context is insufficient, say that briefly instead of searching or retrying.
+"""
+INVENTORY_TASK_TYPES = {
+    "device_inventory_query",
+    "area_inventory_query",
+    "domain_inventory_query",
+    "capability_query",
+    "exposed_context_query",
+}
 
 
 async def async_setup_entry(
@@ -146,14 +170,26 @@ def _parse_tool_calls(raw: list[dict[str, Any]] | None) -> list[llm.ToolInput]:
         except ValueError:
             LOGGER.warning("Could not parse tool arguments: %s", arguments)
             args = {}
+        tool_name = function.get("name", "")
         calls.append(
             llm.ToolInput(
                 id=call.get("id") or ulid.ulid_now(),
-                tool_name=function.get("name", ""),
-                tool_args=args,
+                tool_name=tool_name,
+                tool_args=_normalize_tool_args(tool_name, args),
             )
         )
     return mark_external_tool_calls(calls)
+
+
+def _normalize_tool_args(tool_name: str, args: object) -> dict[str, Any]:
+    """Normalize model tool args before HA tool execution."""
+    normalized = dict(args) if isinstance(args, dict) else {}
+    if (
+        tool_name == LIVE_CONTEXT_TOOL_NAME
+        and normalized.get("name") == LIVE_CONTEXT_TOOL_NAME
+    ):
+        normalized.pop("name", None)
+    return normalized
 
 
 def _is_action_tool(tool_name: str) -> bool:
@@ -166,11 +202,14 @@ def _tool_choice_for_turn(
     tools: list[dict[str, Any]] | None,
     *,
     force_tool_call: bool,
+    force_live_context: bool = False,
     require_grounding: bool = True,
 ) -> ToolChoice | None:
     """Return a narrow tool choice for turns that need deterministic grounding."""
     if force_tool_call:
         return "required"
+    if force_live_context and _has_tool(tools, LIVE_CONTEXT_TOOL_NAME):
+        return {"type": "function", "function": {"name": LIVE_CONTEXT_TOOL_NAME}}
     if (
         require_grounding
         and should_force_search_in_voice_path(user_text)
@@ -186,6 +225,53 @@ def _has_tool(tools: list[dict[str, Any]] | None, tool_name: str) -> bool:
         if function.get("name") == tool_name:
             return True
     return False
+
+
+def _tool_call_fingerprint(tool_call: llm.ToolInput) -> tuple[str, str]:
+    """Return a stable per-turn fingerprint for duplicate tool suppression."""
+    if tool_call.tool_name == LIVE_CONTEXT_TOOL_NAME:
+        return (tool_call.tool_name, "*")
+    return (
+        tool_call.tool_name,
+        json.dumps(
+            tool_call.tool_args,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ),
+    )
+
+
+def _duplicate_tool_reason(
+    tool_call: llm.ToolInput,
+    tool_counts: dict[tuple[str, str], int],
+) -> str | None:
+    """Return a trace reason if this tool call should be suppressed."""
+    if _is_action_tool(tool_call.tool_name):
+        return None
+    if (
+        tool_counts.get(_tool_call_fingerprint(tool_call), 0)
+        < SAME_TOOL_SAME_ARGS_LIMIT
+    ):
+        return None
+    if tool_call.tool_name == LIVE_CONTEXT_TOOL_NAME:
+        return "duplicate_live_context"
+    if tool_call.tool_name == SEARCH_TOOL_NAME:
+        return "duplicate_search"
+    return "duplicate_tool"
+
+
+def _record_tool_calls(
+    tool_calls: list[llm.ToolInput],
+    tool_counts: dict[tuple[str, str], int],
+) -> None:
+    """Record executed non-action tool calls for per-turn duplicate detection."""
+    for tool_call in tool_calls:
+        if _is_action_tool(tool_call.tool_name):
+            continue
+        fingerprint = _tool_call_fingerprint(tool_call)
+        tool_counts[fingerprint] = tool_counts.get(fingerprint, 0) + 1
 
 
 def _extra_body_from_options(options: dict[str, Any]) -> dict[str, Any] | None:
@@ -245,6 +331,12 @@ class LLMGatewayConversationEntity(
             conversation_id=user_input.conversation_id,
             user_text=user_input.text,
         )
+        self._mark_run(
+            runtime,
+            run_id,
+            "speech_captured",
+            attrs={"short_text": "已听到。"},
+        )
         try:
             await chat_log.async_provide_llm_data(
                 user_input.as_llm_context(DOMAIN),
@@ -253,7 +345,8 @@ class LLMGatewayConversationEntity(
                 user_input.extra_system_prompt,
             )
         except conversation.ConverseError as err:
-            runtime.voice_runs.mark(
+            self._mark_run(
+                runtime,
                 run_id,
                 "llm_data",
                 status="error",
@@ -265,17 +358,14 @@ class LLMGatewayConversationEntity(
                 latency_ms=int((time.monotonic() - started) * 1000),
             )
             return err.as_conversation_result()
-        chat_log.content.insert(
-            1,
-            conversation.SystemContent(content=VOICE_RESPONSE_CONTRACT),
-        )
-        runtime.voice_runs.mark(run_id, "llm_data")
+        _insert_system_once(chat_log.content, VOICE_RESPONSE_CONTRACT, index=1)
+        self._mark_run(runtime, run_id, "llm_data")
 
         local_control_speech = await async_handle_voice_runtime_command(
             self.hass, user_input.text
         )
         if local_control_speech is not None:
-            runtime.voice_runs.mark(run_id, "local_control")
+            self._mark_run(runtime, run_id, "local_control")
             async for _tool_result in chat_log.async_add_assistant_content(
                 conversation.AssistantContent(
                     agent_id=self.entity_id,
@@ -298,13 +388,48 @@ class LLMGatewayConversationEntity(
             )
 
         first_response = decide_first_response(user_input.text)
-        runtime.voice_runs.mark(
+        self._mark_run(
+            runtime,
             run_id,
             "first_response",
             attrs=first_response.as_dict(),
         )
+        if first_response.task_type in INVENTORY_TASK_TYPES:
+            inventory = render_device_inventory(
+                user_input.text,
+                chat_log.content,
+            )
+            if inventory:
+                self._mark_run(
+                    runtime,
+                    run_id,
+                    "local_inventory_render",
+                    attrs=inventory.trace_attrs(),
+                )
+                async for _tool_result in chat_log.async_add_assistant_content(
+                    conversation.AssistantContent(
+                        agent_id=self.entity_id,
+                        content=inventory.speech,
+                    )
+                ):
+                    pass
+                return await self._async_finalize_turn(
+                    user_input,
+                    chat_log,
+                    started,
+                    {
+                        "kind": "local_static_context",
+                        "model": "device_inventory_renderer",
+                        "max_tokens": 0,
+                        "timeout_s": 0,
+                        "async_deep_task": False,
+                        "first_response": first_response.as_dict(),
+                    },
+                    run_id,
+                )
         if local_answer := stable_fact_answer(user_input.text):
-            runtime.voice_runs.mark(
+            self._mark_run(
+                runtime,
                 run_id,
                 "local_stable_answer",
                 attrs={"source": "quote_origin_cache"},
@@ -332,7 +457,8 @@ class LLMGatewayConversationEntity(
             )
 
         route = select_model_route(user_input.text, options)
-        runtime.voice_runs.mark(
+        self._mark_run(
+            runtime,
             run_id,
             "route_selected",
             attrs={
@@ -358,7 +484,8 @@ class LLMGatewayConversationEntity(
                 route.model,
                 len(messages),
             )
-            runtime.voice_runs.mark(
+            self._mark_run(
+                runtime,
                 run_id,
                 "deep_task_submitted",
                 attrs={"task_id": task_id, "model": route.model},
@@ -409,6 +536,22 @@ class LLMGatewayConversationEntity(
         runtime = self.entry.runtime_data
         result = conversation.async_get_result_from_chat_log(user_input, chat_log)
         raw_spoken = result.response.speech.get("plain", {}).get("speech", "")
+        first_response = decide_first_response(user_input.text)
+        if not raw_spoken.strip():
+            fallback_spoken = _empty_response_fallback(first_response)
+            if fallback_spoken:
+                raw_spoken = fallback_spoken
+                result.response.async_set_speech(raw_spoken)
+                self._mark_run(
+                    runtime,
+                    run_id,
+                    "fallback_final",
+                    attrs={
+                        "reason": "empty_response",
+                        "task_type": first_response.task_type,
+                    },
+                )
+
         grounding = await _async_grounding_for_turn(
             runtime,
             options,
@@ -418,9 +561,10 @@ class LLMGatewayConversationEntity(
         )
         grounded_spoken = grounding.text
         if grounding.status != "not_required":
-            runtime.voice_runs.mark(
+            self._mark_run(
+                runtime,
                 run_id,
-                "grounding_verifier",
+                "cheap_grounding",
                 status="error"
                 if grounding.status
                 in {"no_answer", "no_evidence", "unsupported", "verifier_error"}
@@ -429,7 +573,7 @@ class LLMGatewayConversationEntity(
             )
         if grounded_spoken:
             result.response.async_set_speech(markdown_to_spoken_text(grounded_spoken))
-            runtime.voice_runs.mark(run_id, "tts_cleaned")
+            self._mark_run(runtime, run_id, "tts_cleaned")
         assistant_text = result.response.speech.get("plain", {}).get("speech", "")
         await runtime.memory.async_record_turn(
             user_input.conversation_id,
@@ -438,6 +582,7 @@ class LLMGatewayConversationEntity(
         )
         latency_ms = int((time.monotonic() - started) * 1000)
         status = _trace_status(assistant_text)
+        self._final_feedback(runtime, run_id, status, latency_ms, assistant_text)
         timeline = runtime.voice_runs.finish(
             run_id,
             status=status,
@@ -464,6 +609,10 @@ class LLMGatewayConversationEntity(
                     },
                     "route": route_trace,
                     "timeline": timeline,
+                    "tool_events": _tool_events_from_content(
+                        chat_log.content,
+                        user_input.text,
+                    ),
                     "messages": _content_to_messages(chat_log.content),
                     "speech": {
                         "raw": raw_spoken,
@@ -472,10 +621,80 @@ class LLMGatewayConversationEntity(
                         "tts_cleaned": bool(raw_spoken),
                     },
                     "grounding": grounding.as_dict(),
+                    "earcon_events": runtime.feedback.earcons_for_turn(run_id),
+                    "display_status_events": runtime.feedback.display_events_for_turn(
+                        run_id
+                    ),
+                    "first_response_audio_events": (
+                        runtime.feedback.first_response_audio_for_turn(run_id)
+                    ),
                 },
+                run_id=run_id,
             ),
         )
         return result
+
+    def _mark_run(
+        self,
+        runtime: LLMGatewayRuntimeData,
+        run_id: str,
+        stage: str,
+        *,
+        status: str = "ok",
+        attrs: dict[str, Any] | None = None,
+    ) -> None:
+        """Record a timeline event and deterministic feedback side effects."""
+        event = runtime.voice_runs.mark(run_id, stage, status=status, attrs=attrs)
+        if event is None:
+            return
+        event_attrs = event.get("attrs") if isinstance(event.get("attrs"), dict) else {}
+        if stage == "first_response" and (
+            event_attrs.get("spoken_hint") or event_attrs.get("audio_suppressed_reason")
+        ):
+            runtime.first_response_player.schedule(
+                turn_id=run_id,
+                t_ms=int(event.get("t_ms") or 0),
+                attrs=event_attrs,
+                marker=runtime.voice_runs.mark,
+            )
+        earcon, display = VoiceFeedbackPolicy(runtime.feedback).pipeline_event(
+            turn_id=run_id,
+            stage=stage,
+            t_ms=int(event.get("t_ms") or 0),
+            status=str(event.get("status") or status),
+            attrs=event_attrs,
+        )
+        if earcon or display:
+            runtime.voice_runs.mark(
+                run_id,
+                "feedback",
+                attrs=feedback_trace_attrs(earcon, display),
+            )
+
+    def _final_feedback(
+        self,
+        runtime: LLMGatewayRuntimeData,
+        run_id: str,
+        status: str,
+        latency_ms: int,
+        assistant_text: str,
+    ) -> None:
+        """Emit final display feedback after the spoken result is known."""
+        display = VoiceFeedbackPolicy(runtime.feedback).final_status(
+            turn_id=run_id,
+            status=status,
+            t_ms=latency_ms,
+            short_text=assistant_text,
+        )
+        runtime.voice_runs.mark(
+            run_id,
+            "display_status",
+            attrs={
+                "display_state": display.get("state"),
+                "short_text": display.get("short_text"),
+                "deep_link": display.get("deep_link"),
+            },
+        )
 
     def _inject_memory_context(
         self,
@@ -486,11 +705,9 @@ class LLMGatewayConversationEntity(
         """Append compact local memory into the model context."""
         memory_context = runtime.memory.build_context(conversation_id)
         if memory_context:
-            chat_log.content.insert(
-                1, conversation.SystemContent(content=memory_context)
-            )
+            _insert_system_once(chat_log.content, memory_context, index=1)
 
-    async def _async_run_chat_log(  # noqa: PLR0912
+    async def _async_run_chat_log(  # noqa: PLR0912, PLR0915
         self,
         chat_log: conversation.ChatLog,
         route: ModelRoute,
@@ -515,32 +732,52 @@ class LLMGatewayConversationEntity(
             tools = [*(tools or []), *search_tools]
 
         force_tool_call = False
+        force_final = False
+        forced_final_contract_added = False
+        tool_counts: dict[tuple[str, str], int] = {}
         for iteration in range(1, MAX_TOOL_ITERATIONS + 1):
+            if force_final and not forced_final_contract_added:
+                chat_log.content.append(
+                    conversation.SystemContent(content=FORCED_FINAL_CONTRACT)
+                )
+                forced_final_contract_added = True
+            effective_tools = None if force_final else tools
             messages = _content_to_messages(chat_log.content)
             LOGGER.info(
                 "Conversation model turn iteration=%d route=%s model=%s "
-                "messages=%d tools=%d",
+                "messages=%d tools=%d forced_final=%s",
                 iteration,
                 route.kind,
                 route.model,
                 len(messages),
-                len(tools or []),
+                len(effective_tools or []),
+                force_final,
             )
-            runtime.voice_runs.mark(
+            self._mark_run(
+                runtime,
                 run_id,
                 "llm_iteration_start",
                 attrs={
                     "iteration": iteration,
                     "route": route.kind,
                     "model": route.model,
+                    "forced_final": force_final,
                 },
             )
             try:
-                tool_choice = _tool_choice_for_turn(
-                    user_text,
-                    tools,
-                    force_tool_call=force_tool_call,
-                    require_grounding=iteration == 1,
+                tool_choice = (
+                    "none"
+                    if force_final
+                    else _tool_choice_for_turn(
+                        user_text,
+                        effective_tools,
+                        force_tool_call=force_tool_call,
+                        force_live_context=(
+                            first_response.task_type == "weather_query"
+                            and iteration == 1
+                        ),
+                        require_grounding=iteration == 1,
+                    )
                 )
                 fallback_result = await async_chat_completion_with_fallback(
                     session=runtime.session,
@@ -548,7 +785,7 @@ class LLMGatewayConversationEntity(
                     route=route,
                     options=options,
                     messages=messages,
-                    tools=tools,
+                    tools=effective_tools,
                     tool_choice=tool_choice,
                     temperature=options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE),
                     top_p=options.get(CONF_TOP_P, RECOMMENDED_TOP_P),
@@ -556,7 +793,8 @@ class LLMGatewayConversationEntity(
                     processing_cue_delay_s=first_response.processing_cue_delay_s,
                 )
                 message = fallback_result.message
-                runtime.voice_runs.mark(
+                self._mark_run(
+                    runtime,
                     run_id,
                     "provider_complete",
                     attrs={
@@ -575,7 +813,8 @@ class LLMGatewayConversationEntity(
                 )
             except LLMGatewayError as err:
                 LOGGER.error("Error talking to the gateway: %s", err)
-                runtime.voice_runs.mark(
+                self._mark_run(
+                    runtime,
                     run_id,
                     "provider_error",
                     status="error",
@@ -597,12 +836,35 @@ class LLMGatewayConversationEntity(
                 tool_calls=_parse_tool_calls(message.get("tool_calls")) or None,
             )
             if content.tool_calls:
+                if force_final:
+                    for tool_call in content.tool_calls:
+                        self._mark_run(
+                            runtime,
+                            run_id,
+                            "tool_call_suppressed",
+                            status="error",
+                            attrs={
+                                "iteration": iteration,
+                                "name": tool_call.tool_name,
+                                "reason": "forced_final_tool_call",
+                            },
+                        )
+                    async for _tool_result in chat_log.async_add_assistant_content(
+                        conversation.AssistantContent(
+                            agent_id=self.entity_id,
+                            content=content.content or TOOL_LOOP_GUARD_SPEECH,
+                        )
+                    ):
+                        pass
+                    return provider_runs
+
                 LOGGER.info(
                     "Assistant tool calls iteration=%d names=%s",
                     iteration,
                     ",".join(call.tool_name for call in content.tool_calls),
                 )
-                runtime.voice_runs.mark(
+                self._mark_run(
+                    runtime,
                     run_id,
                     "tool_call",
                     attrs={
@@ -610,9 +872,51 @@ class LLMGatewayConversationEntity(
                         "names": [call.tool_name for call in content.tool_calls],
                     },
                 )
+                suppressed = [
+                    (tool_call, reason)
+                    for tool_call in content.tool_calls
+                    if (reason := _duplicate_tool_reason(tool_call, tool_counts))
+                    is not None
+                ]
+                if suppressed:
+                    for tool_call, reason in suppressed:
+                        self._mark_run(
+                            runtime,
+                            run_id,
+                            "tool_call_suppressed",
+                            status="error",
+                            attrs={
+                                "iteration": iteration,
+                                "name": tool_call.tool_name,
+                                "reason": reason,
+                            },
+                        )
+                    if content.content:
+                        async for _tool_result in chat_log.async_add_assistant_content(
+                            conversation.AssistantContent(
+                                agent_id=self.entity_id,
+                                content=content.content,
+                            )
+                        ):
+                            pass
+                        return provider_runs
+                    force_final = True
+                    self._mark_run(
+                        runtime,
+                        run_id,
+                        "forced_final",
+                        attrs={"reason": suppressed[0][1], "iteration": iteration},
+                    )
+                    continue
+
                 policy_block = self._policy_block(content.tool_calls, user_text)
                 if policy_block:
-                    runtime.voice_runs.mark(run_id, "tool_policy_block", status="error")
+                    self._mark_run(
+                        runtime,
+                        run_id,
+                        "tool_policy_block",
+                        status="error",
+                    )
                     async for _tool_result in chat_log.async_add_assistant_content(
                         conversation.AssistantContent(
                             agent_id=self.entity_id,
@@ -621,6 +925,7 @@ class LLMGatewayConversationEntity(
                     ):
                         pass
                     return provider_runs
+                _record_tool_calls(content.tool_calls, tool_counts)
             async for tool_result in chat_log.async_add_assistant_content(content):
                 result = tool_result.tool_result
                 if _is_action_tool(tool_result.tool_name):
@@ -632,12 +937,28 @@ class LLMGatewayConversationEntity(
                     "error" not in result,
                     result.get("error", "none"),
                 )
-                runtime.voice_runs.mark(
+                self._mark_run(
+                    runtime,
                     run_id,
                     "tool_result",
                     status="error" if "error" in result else "ok",
                     attrs={"name": tool_result.tool_name, "iteration": iteration},
                 )
+                if (
+                    first_response.task_type == "weather_query"
+                    and tool_result.tool_name == LIVE_CONTEXT_TOOL_NAME
+                    and "error" not in result
+                ):
+                    force_final = True
+                    self._mark_run(
+                        runtime,
+                        run_id,
+                        "forced_final",
+                        attrs={
+                            "reason": "weather_live_context_ready",
+                            "iteration": iteration,
+                        },
+                    )
 
             for tool_call in content.tool_calls or []:
                 if not tool_call.external:
@@ -647,11 +968,12 @@ class LLMGatewayConversationEntity(
                     options,
                     tool_call,
                 )
-                runtime.voice_runs.mark(
+                self._mark_run(
+                    runtime,
                     run_id,
                     "search_result",
                     status="error" if "error" in result else "ok",
-                    attrs={"name": tool_call.tool_name},
+                    attrs={"name": tool_call.tool_name, "iteration": iteration},
                 )
                 chat_log.async_add_assistant_content_without_tools(
                     conversation.ToolResultContent(
@@ -719,11 +1041,26 @@ def _route_trace(
 
 def _trace_status(assistant_text: str) -> str:
     """Classify the completed turn for trace filtering."""
-    if assistant_text in {GATEWAY_ERROR_SPEECH, TOOL_LOOP_ERROR_SPEECH}:
+    if assistant_text in {
+        GATEWAY_ERROR_SPEECH,
+        TOOL_LOOP_ERROR_SPEECH,
+        TOOL_LOOP_GUARD_SPEECH,
+    }:
         return "error"
     if assistant_text == DEEP_TASK_ACK_SPEECH:
         return "queued"
     return "complete"
+
+
+def _empty_response_fallback(first_response: FirstResponseDecision) -> str:
+    """Return a short safe fallback for task types that must not go silent."""
+    if first_response.task_type == "weather_query":
+        return WEATHER_CONTEXT_FALLBACK_SPEECH
+    if first_response.task_type == "home_state":
+        return HOME_STATE_FALLBACK_SPEECH
+    if first_response.task_type == "high_risk":
+        return first_response.spoken_hint or HIGH_RISK_FALLBACK_SPEECH
+    return ""
 
 
 async def _async_grounding_for_turn(
@@ -734,7 +1071,9 @@ async def _async_grounding_for_turn(
     content: list[conversation.Content],
 ) -> GroundingResult:
     """Run cheap source grounding on the voice critical path."""
-    search_results = _search_results_from_content(content)
+    search_results = _search_results_from_content(
+        _current_turn_content(content, user_text)
+    )
     return initial_grounding_result(user_text, assistant_text, search_results)
 
 
@@ -749,3 +1088,63 @@ def _search_results_from_content(
         if isinstance(result, dict):
             results.append(result)
     return results
+
+
+def _tool_events_from_content(
+    content: list[conversation.Content],
+    user_text: str = "",
+) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for item in _current_turn_content(content, user_text):
+        if item.role == "assistant":
+            events.extend(
+                [
+                    {
+                        "phase": "call",
+                        "tool_call_id": call.id,
+                        "name": call.tool_name,
+                        "external": bool(getattr(call, "external", False)),
+                        "args": call.tool_args,
+                    }
+                    for call in item.tool_calls or []
+                ]
+            )
+        elif item.role == "tool_result":
+            result = item.tool_result if isinstance(item.tool_result, dict) else {}
+            events.append(
+                {
+                    "phase": "result",
+                    "tool_call_id": item.tool_call_id,
+                    "name": item.tool_name,
+                    "status": "error" if "error" in result else "ok",
+                    "error": str(result.get("error") or ""),
+                    "result": result,
+                }
+            )
+    return events
+
+
+def _current_turn_content(
+    content: list[conversation.Content],
+    user_text: str,
+) -> list[conversation.Content]:
+    """Return chat-log content belonging to the current user turn."""
+    if not user_text:
+        return content
+    for index in range(len(content) - 1, -1, -1):
+        item = content[index]
+        if item.role == "user" and item.content == user_text:
+            return content[index:]
+    return content
+
+
+def _insert_system_once(
+    content: list[conversation.Content],
+    text: str,
+    *,
+    index: int,
+) -> None:
+    """Insert a system prompt only if the same text is not already present."""
+    if any(item.role == "system" and item.content == text for item in content):
+        return
+    content.insert(index, conversation.SystemContent(content=text))

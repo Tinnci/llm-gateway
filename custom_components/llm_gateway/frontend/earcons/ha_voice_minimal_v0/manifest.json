@@ -1,81 +1,186 @@
 {
   "files": {
-    "clarification": {
-      "duration_ms": 138.0,
+    "cancel": {
+      "can_play_while_listening": true,
+      "duration_ms": 152.0,
       "lufs": -24.0,
-      "path": "clarification.wav",
-      "peak_dbfs": -16.1,
-      "purpose": "The assistant needs one missing detail before acting."
+      "name": "cancel",
+      "path": "cancel.wav",
+      "peak_dbfs": -15.2,
+      "priority": 60,
+      "purpose": "The current assistant turn was cancelled or dismissed.",
+      "quiet_hours_behavior": "attenuate",
+      "semantic_state": "cancelled",
+      "trace_event_name": "earcon_cancel"
     },
-    "confirmation": {
-      "duration_ms": 170.0,
-      "lufs": -24.0,
-      "path": "confirmation.wav",
-      "peak_dbfs": -15.9,
-      "purpose": "High-risk action needs explicit user confirmation."
-    },
-    "deep_task": {
-      "duration_ms": 234.0,
-      "lufs": -24.0,
-      "path": "deep_task.wav",
-      "peak_dbfs": -17.2,
-      "purpose": "Long reasoning has been handed off to a background task."
-    },
-    "failure": {
-      "duration_ms": 246.0,
-      "lufs": -24.0,
-      "path": "failure.wav",
-      "peak_dbfs": -17.5,
-      "purpose": "Request failed or the assistant cannot continue safely."
-    },
-    "listening_end": {
+    "captured": {
+      "can_play_while_listening": true,
       "duration_ms": 148.0,
       "lufs": -24.0,
+      "name": "captured",
+      "path": "captured.wav",
+      "peak_dbfs": -16.5,
+      "priority": 40,
+      "purpose": "Speech capture ended and the assistant is processing.",
+      "quiet_hours_behavior": "suppress_noncritical",
+      "semantic_state": "captured",
+      "trace_event_name": "earcon_captured"
+    },
+    "clarification": {
+      "can_play_while_listening": false,
+      "duration_ms": 138.0,
+      "lufs": -24.0,
+      "name": "clarification",
+      "path": "clarification.wav",
+      "peak_dbfs": -16.1,
+      "priority": 10,
+      "purpose": "The assistant needs one missing detail before acting.",
+      "quiet_hours_behavior": "attenuate",
+      "semantic_state": "clarification",
+      "trace_event_name": "earcon_clarification"
+    },
+    "confirmation": {
+      "can_play_while_listening": false,
+      "duration_ms": 170.0,
+      "lufs": -24.0,
+      "name": "confirmation",
+      "path": "confirmation.wav",
+      "peak_dbfs": -15.9,
+      "priority": 90,
+      "purpose": "High-risk action needs explicit user confirmation.",
+      "quiet_hours_behavior": "attenuate",
+      "semantic_state": "confirming",
+      "trace_event_name": "earcon_confirmation"
+    },
+    "deep_task": {
+      "can_play_while_listening": false,
+      "duration_ms": 234.0,
+      "lufs": -24.0,
+      "name": "deep_task",
+      "path": "deep_task.wav",
+      "peak_dbfs": -17.2,
+      "priority": 10,
+      "purpose": "Long reasoning has been handed off to a background task.",
+      "quiet_hours_behavior": "attenuate",
+      "semantic_state": "deep_task",
+      "trace_event_name": "earcon_deep_task"
+    },
+    "failure": {
+      "can_play_while_listening": false,
+      "duration_ms": 246.0,
+      "lufs": -24.0,
+      "name": "failure",
+      "path": "failure.wav",
+      "peak_dbfs": -17.5,
+      "priority": 80,
+      "purpose": "Request failed or the assistant cannot continue safely.",
+      "quiet_hours_behavior": "attenuate",
+      "semantic_state": "failed",
+      "trace_event_name": "earcon_failure"
+    },
+    "listening_end": {
+      "can_play_while_listening": false,
+      "duration_ms": 148.0,
+      "lufs": -24.0,
+      "name": "listening_end",
       "path": "listening_end.wav",
       "peak_dbfs": -16.5,
-      "purpose": "Speech capture ended and the assistant is processing."
+      "priority": 10,
+      "purpose": "Speech capture ended and the assistant is processing.",
+      "quiet_hours_behavior": "attenuate",
+      "semantic_state": "listening_end",
+      "trace_event_name": "earcon_listening_end"
     },
     "listening_start": {
+      "can_play_while_listening": false,
       "duration_ms": 155.0,
       "lufs": -24.0,
+      "name": "listening_start",
       "path": "listening_start.wav",
       "peak_dbfs": -16.4,
-      "purpose": "Microphone is open and the user can speak."
+      "priority": 10,
+      "purpose": "Microphone is open and the user can speak.",
+      "quiet_hours_behavior": "attenuate",
+      "semantic_state": "listening_start",
+      "trace_event_name": "earcon_listening_start"
     },
     "processing_loop": {
+      "can_play_while_listening": false,
       "duration_ms": 340.0,
       "lufs": -24.0,
+      "name": "processing_loop",
       "path": "processing_loop.wav",
       "peak_dbfs": -12.0,
-      "purpose": "Assistant is still waiting on a slow provider; play quietly as a loop after the soft latency threshold."
+      "priority": 10,
+      "purpose": "Assistant is still waiting on a slow provider; play quietly as a loop after the soft latency threshold.",
+      "quiet_hours_behavior": "attenuate",
+      "semantic_state": "processing_loop",
+      "trace_event_name": "earcon_processing_loop"
     },
     "provider_fallback": {
+      "can_play_while_listening": false,
       "duration_ms": 190.0,
       "lufs": -24.0,
+      "name": "provider_fallback",
       "path": "provider_fallback.wav",
       "peak_dbfs": -17.2,
-      "purpose": "Primary model provider was too slow or failed; the request is moving to a fallback provider."
+      "priority": 10,
+      "purpose": "Primary model provider was too slow or failed; the request is moving to a fallback provider.",
+      "quiet_hours_behavior": "attenuate",
+      "semantic_state": "provider_fallback",
+      "trace_event_name": "earcon_provider_fallback"
     },
     "search": {
+      "can_play_while_listening": false,
       "duration_ms": 194.0,
       "lufs": -24.0,
+      "name": "search",
       "path": "search.wav",
       "peak_dbfs": -16.5,
-      "purpose": "Web search is being used for current external information."
+      "priority": 50,
+      "purpose": "Web search is being used for current external information.",
+      "quiet_hours_behavior": "attenuate",
+      "semantic_state": "searching",
+      "trace_event_name": "earcon_search"
     },
     "success": {
+      "can_play_while_listening": false,
       "duration_ms": 136.0,
       "lufs": -24.0,
+      "name": "success",
       "path": "success.wav",
       "peak_dbfs": -17.2,
-      "purpose": "Low-risk command completed."
+      "priority": 50,
+      "purpose": "Low-risk command completed.",
+      "quiet_hours_behavior": "suppress_noncritical",
+      "semantic_state": "done",
+      "trace_event_name": "earcon_success"
+    },
+    "thinking": {
+      "can_play_while_listening": false,
+      "duration_ms": 340.0,
+      "lufs": -24.0,
+      "name": "thinking",
+      "path": "thinking.wav",
+      "peak_dbfs": -12.0,
+      "priority": 20,
+      "purpose": "Assistant is still working after the first response deadline.",
+      "quiet_hours_behavior": "suppress_noncritical",
+      "semantic_state": "thinking",
+      "trace_event_name": "earcon_thinking"
     },
     "wake": {
+      "can_play_while_listening": true,
       "duration_ms": 150.0,
       "lufs": -24.0,
+      "name": "wake",
       "path": "wake.wav",
       "peak_dbfs": -16.9,
-      "purpose": "Wake word accepted; assistant is entering the voice path."
+      "priority": 90,
+      "purpose": "Wake word accepted; assistant is entering the voice path.",
+      "quiet_hours_behavior": "attenuate",
+      "semantic_state": "listening",
+      "trace_event_name": "earcon_wake"
     }
   },
   "pack": "ha_voice_minimal_v0",

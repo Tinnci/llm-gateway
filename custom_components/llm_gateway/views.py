@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.http.decorators import require_admin
 from homeassistant.helpers.http import HomeAssistantView
+from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_CHAT_MODEL,
@@ -19,6 +20,11 @@ from .const import (
     CONF_FAST_CHAT_TIMEOUT,
     CONF_FAST_MAX_TOKENS,
     CONF_FAST_MODEL,
+    CONF_FIRST_RESPONSE_AUDIO_ENABLED,
+    CONF_FIRST_RESPONSE_LOCAL_SERVICE,
+    CONF_FIRST_RESPONSE_MEDIA_PLAYER,
+    CONF_FIRST_RESPONSE_PLAYBACK_ADAPTER,
+    CONF_FIRST_RESPONSE_TTS_ENTITY,
     CONF_MAX_TOKENS,
     CONF_MID_CHAT_TIMEOUT,
     CONF_MID_MAX_TOKENS,
@@ -29,6 +35,7 @@ from .const import (
     CONF_TRACE_MAX_RUNS,
     CONF_TRACE_RETENTION_HOURS,
     DOMAIN,
+    FIRST_RESPONSE_PLAYBACK_ADAPTERS,
     MAX_CHAT_TIMEOUT,
     MAX_CONFIGURED_TOKENS,
     MAX_TRACE_RETENTION_HOURS,
@@ -47,6 +54,8 @@ from .const import (
     ROUTING_MODE_AUTO,
     ROUTING_MODES,
 )
+from .feedback import QUIET_HOURS_END, QUIET_HOURS_START
+from .first_response_audio import first_response_audio_status
 from .harness import evaluate_scenario
 from .policy import should_allow_search
 from .providers import normalize_provider_profiles_json, provider_profiles_from_options
@@ -265,6 +274,8 @@ SAMPLE_SCENARIOS: list[dict[str, Any]] = [
 def async_register_views(hass: HomeAssistant) -> None:
     """Register Voice Harness API views."""
     hass.http.register_view(HarnessStatusView)
+    hass.http.register_view(HarnessRunsView)
+    hass.http.register_view(HarnessRunDetailView)
     hass.http.register_view(HarnessEvaluateView)
     hass.http.register_view(HarnessOptionsView)
 
@@ -291,7 +302,7 @@ class HarnessStatusView(HomeAssistantView):
                     "url_path": "voice-harness",
                     "api_base": API_BASE,
                 },
-                "entries": [_entry_status(entry) for entry in _entries(hass)],
+                "entries": [_entry_status(hass, entry) for entry in _entries(hass)],
                 "satellite": _satellite_status(hass),
                 "editable": _editable_schema(),
                 "earcons": await hass.async_add_executor_job(_earcon_pack_status),
@@ -299,6 +310,58 @@ class HarnessStatusView(HomeAssistantView):
                 "sample_scenarios": SAMPLE_SCENARIOS,
             }
         )
+
+
+class HarnessRunsView(HomeAssistantView):
+    """Return recent Voice Harness runs."""
+
+    name = f"api:{DOMAIN}:harness:runs"
+    url = f"{API_BASE}/harness/runs"
+
+    @require_admin
+    async def get(self, request: web.Request) -> web.Response:
+        """Handle recent run list requests."""
+        hass: HomeAssistant = request.app["hass"]
+        entry = _select_entry(hass, request.query.get("entry_id"))
+        if entry is None:
+            return self.json_message(
+                "No LLM Gateway config entry found",
+                HTTPStatus.NOT_FOUND,
+                "entry_not_found",
+            )
+        runtime = getattr(entry, "runtime_data", None)
+        if runtime is None:
+            return self.json({"records": []})
+        limit = _bounded_query_int(request.query.get("limit"), default=30, maximum=200)
+        return self.json({"records": runtime.trace_store.list_runs(limit=limit)})
+
+
+class HarnessRunDetailView(HomeAssistantView):
+    """Return one Voice Harness run detail."""
+
+    name = f"api:{DOMAIN}:harness:run_detail"
+    url = f"{API_BASE}/harness/runs/{{run_id}}"
+
+    @require_admin
+    async def get(self, request: web.Request, run_id: str) -> web.Response:
+        """Handle run detail requests."""
+        hass: HomeAssistant = request.app["hass"]
+        entry = _select_entry(hass, request.query.get("entry_id"))
+        if entry is None:
+            return self.json_message(
+                "No LLM Gateway config entry found",
+                HTTPStatus.NOT_FOUND,
+                "entry_not_found",
+            )
+        runtime = getattr(entry, "runtime_data", None)
+        record = runtime.trace_store.get_run(run_id) if runtime else None
+        if record is None:
+            return self.json_message(
+                "Voice run not found",
+                HTTPStatus.NOT_FOUND,
+                "run_not_found",
+            )
+        return self.json({"record": record})
 
 
 class HarnessEvaluateView(HomeAssistantView):
@@ -420,7 +483,7 @@ class HarnessOptionsView(HomeAssistantView):
             new_options[CONF_CHAT_MODEL] = updates[CONF_FAST_MODEL]
         hass.config_entries.async_update_entry(entry, options=new_options)
 
-        return self.json({"entry": _entry_status(entry)})
+        return self.json({"entry": _entry_status(hass, entry)})
 
 
 def _entries(hass: HomeAssistant) -> list[ConfigEntry]:
@@ -437,8 +500,17 @@ def _select_entry(hass: HomeAssistant, entry_id: object) -> ConfigEntry | None:
     return entries[0] if entries else None
 
 
-def _entry_status(entry: ConfigEntry) -> dict[str, Any]:
+def _bounded_query_int(value: object, *, default: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(1, min(maximum, parsed))
+
+
+def _entry_status(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
     runtime = getattr(entry, "runtime_data", None)
+    feedback = getattr(runtime, "feedback", None) if runtime else None
     state = getattr(entry, "state", None)
     options = entry.options
     return {
@@ -447,6 +519,8 @@ def _entry_status(entry: ConfigEntry) -> dict[str, Any]:
         "state": getattr(state, "value", str(state)),
         "base_url": entry.data.get("base_url"),
         "options": _options_status(options),
+        "first_response_audio": first_response_audio_status(hass, options),
+        "feedback_policy": _feedback_policy_status(),
         "routes": [
             _route_status(select_model_route(text, options))
             for text in (
@@ -473,6 +547,11 @@ def _entry_status(entry: ConfigEntry) -> dict[str, Any]:
             else {"records": [], "storage": {"encoding": "json+zlib+base64"}}
         ),
         "voice_runs": runtime.voice_runs.snapshot() if runtime else [],
+        "feedback": (
+            feedback.snapshot()
+            if feedback
+            else {"latest_display": None, "display_events": [], "earcon_events": []}
+        ),
         "deep_tasks": runtime.deep_tasks.snapshot() if runtime else [],
     }
 
@@ -596,6 +675,18 @@ def _options_status(options: dict[str, Any]) -> dict[str, Any]:
         "provider_profiles_configured": bool(
             str(options.get(CONF_PROVIDER_PROFILES) or "").strip()
         ),
+        "first_response_audio": {
+            "enabled": options.get(CONF_FIRST_RESPONSE_AUDIO_ENABLED, True)
+            is not False,
+            "adapter": str(
+                options.get(CONF_FIRST_RESPONSE_PLAYBACK_ADAPTER) or "local"
+            ),
+            "local_service": str(options.get(CONF_FIRST_RESPONSE_LOCAL_SERVICE) or ""),
+            "tts_entity": str(options.get(CONF_FIRST_RESPONSE_TTS_ENTITY) or ""),
+            "media_player_entity": str(
+                options.get(CONF_FIRST_RESPONSE_MEDIA_PLAYER) or ""
+            ),
+        },
     }
 
 
@@ -606,6 +697,8 @@ def _editable_schema() -> dict[str, Any]:
         "timeouts": {"min": 5, "max": MAX_CHAT_TIMEOUT},
         "trace_max_runs": {"min": 1, "max": MAX_TRACE_RUNS},
         "trace_retention_hours": {"min": 1, "max": MAX_TRACE_RETENTION_HOURS},
+        "entity_id": {"max_length": MAX_MODEL_ID_LENGTH},
+        "first_response_playback_adapters": list(FIRST_RESPONSE_PLAYBACK_ADAPTERS),
     }
 
 
@@ -709,6 +802,34 @@ def _validate_editable_options(payload: dict[str, Any]) -> dict[str, Any]:  # no
             }
         )
 
+    first_response_audio = payload.get("first_response_audio")
+    if first_response_audio is not None:
+        if not isinstance(first_response_audio, dict):
+            raise ValueError("first_response_audio must be an object")
+        updates[CONF_FIRST_RESPONSE_AUDIO_ENABLED] = bool(
+            first_response_audio.get("enabled")
+        )
+        adapter = str(first_response_audio.get("adapter") or "local").strip()
+        if adapter not in FIRST_RESPONSE_PLAYBACK_ADAPTERS:
+            raise ValueError("first_response_audio.adapter is not supported")
+        updates[CONF_FIRST_RESPONSE_PLAYBACK_ADAPTER] = adapter
+        updates[CONF_FIRST_RESPONSE_LOCAL_SERVICE] = _optional_service_id(
+            first_response_audio.get("local_service"),
+            "first_response_audio.local_service",
+            allowed_domains={"rest_command", "script"},
+        )
+        updates[CONF_FIRST_RESPONSE_TTS_ENTITY] = _optional_entity_id(
+            first_response_audio.get("tts_entity"),
+            "first_response_audio.tts_entity",
+            expected_domain="tts",
+        )
+        updates[CONF_FIRST_RESPONSE_MEDIA_PLAYER] = _optional_entity_id(
+            first_response_audio.get("media_player_entity")
+            or first_response_audio.get("media_player"),
+            "first_response_audio.media_player_entity",
+            expected_domain="media_player",
+        )
+
     provider_profiles = payload.get("provider_profiles")
     if provider_profiles is not None:
         if not isinstance(provider_profiles, str):
@@ -739,6 +860,54 @@ def _bounded_int(value: object, field: str, *, minimum: int, maximum: int) -> in
     if parsed < minimum or parsed > maximum:
         raise ValueError(f"{field} must be between {minimum} and {maximum}")
     return parsed
+
+
+def _optional_entity_id(
+    value: object,
+    field: str,
+    *,
+    expected_domain: str,
+) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if len(text) > MAX_MODEL_ID_LENGTH:
+        raise ValueError(f"{field} is too long")
+    if "." not in text or text.split(".", 1)[0] != expected_domain:
+        raise ValueError(f"{field} must be a {expected_domain} entity_id")
+    return text
+
+
+def _optional_service_id(
+    value: object,
+    field: str,
+    *,
+    allowed_domains: set[str],
+) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if len(text) > MAX_MODEL_ID_LENGTH:
+        raise ValueError(f"{field} is too long")
+    if "." not in text or text.split(".", 1)[0] not in allowed_domains:
+        domains = ", ".join(sorted(allowed_domains))
+        raise ValueError(f"{field} must be one of these service domains: {domains}")
+    return text
+
+
+def _feedback_policy_status() -> dict[str, Any]:
+    current_hour = dt_util.now().hour
+    quiet_hours_active = (
+        current_hour >= QUIET_HOURS_START or current_hour < QUIET_HOURS_END
+    )
+    return {
+        "quiet_hours": {
+            "start_hour": QUIET_HOURS_START,
+            "end_hour": QUIET_HOURS_END,
+            "current_local_hour": current_hour,
+            "active": quiet_hours_active,
+        }
+    }
 
 
 def _trace_status(options: dict[str, Any]) -> dict[str, Any]:

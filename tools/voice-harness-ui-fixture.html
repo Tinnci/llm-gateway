@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="zh-Hans">
+  <head>
+    <meta charset="utf-8" />
+    <title>Voice Harness UI Fixture</title>
+    <style>
+      :root {
+        --primary-text-color: #111827;
+        --secondary-text-color: #4b5563;
+        --primary-background-color: #f8fafc;
+        --card-background-color: #ffffff;
+        --divider-color: #d1d5db;
+        --primary-color: #2563eb;
+        --text-primary-color: #ffffff;
+        --success-color: #15803d;
+        --warning-color: #b45309;
+        --error-color: #b91c1c;
+      }
+      body {
+        margin: 0;
+        background: var(--primary-background-color);
+        font-family: system-ui, sans-serif;
+      }
+    </style>
+  </head>
+  <body>
+    <voice-harness-panel></voice-harness-panel>
+    <script src="../custom_components/llm_gateway/frontend/voice-harness-panel.js"></script>
+    <script>
+      const fixture = {
+        domain: "llm_gateway",
+        panel: {
+          title: "Voice Harness",
+          title_i18n: { en: "Voice Harness", "zh-Hans": "语音测试台" },
+          url_path: "voice-harness",
+          api_base: "/api/llm_gateway",
+        },
+        editable: {
+          routing_modes: ["auto", "fast", "mid", "deep"],
+          max_tokens: { min: 1, max: 16384 },
+          timeouts: { min: 5, max: 300 },
+          trace_max_runs: { min: 1, max: 200 },
+          trace_retention_hours: { min: 1, max: 168 },
+        },
+        earcons: {
+          pack: "ha_voice_minimal_v0",
+          sample_rate: 16000,
+          target_lufs: -24,
+          true_peak_dbfs: -3,
+          files: {
+            search: {
+              path: "search.wav",
+              url: "/api/llm_gateway/static/earcons/ha_voice_minimal_v0/search.wav",
+              duration_ms: 194,
+              lufs: -24,
+              peak_dbfs: -16.5,
+              semantic_state: "searching",
+              priority: 50,
+              can_play_while_listening: false,
+              quiet_hours_behavior: "attenuate",
+              trace_event_name: "earcon_search",
+            },
+          },
+        },
+        satellite: { states: {}, services: {} },
+        prompt_policies: [],
+        sample_scenarios: [],
+        entries: [
+          {
+            entry_id: "entry-ui-fixture",
+            title: "LLM Gateway",
+            state: "loaded",
+            base_url: "https://example.test/v1",
+            options: {
+              routing_mode: "auto",
+              models: { fast: "fast-model", mid: "mid-model", deep: "deep-model" },
+              max_tokens: { fast: 512, mid: 2048, deep: 4096 },
+              timeouts: { fast: 30, mid: 90, deep: 180 },
+              trace: {
+                enabled: true,
+                include_raw_messages: true,
+                max_runs: 30,
+                retention_hours: 24,
+              },
+            },
+            routes: [
+              {
+                kind: "fast",
+                model: "fast-model",
+                max_tokens: 512,
+                timeout_s: 30,
+                async_deep_task: false,
+              },
+            ],
+            search: { enabled: true, providers: ["tavily"] },
+            model_providers: {
+              primary: { name: "primary", base_url: "https://example.test/v1" },
+              fallbacks: [],
+            },
+            provider_health: [],
+            memory: { facts: [], sessions: [] },
+            voice_runs: [],
+            feedback: {
+              latest_display: {
+                id: "display-ui",
+                turn_id: "turn-ui-search",
+                state: "searching",
+                title: "Searching",
+                short_text: "我查一下。",
+                privacy_level: "private",
+                progress: "indeterminate",
+                action_buttons: ["cancel", "open_panel"],
+                expires_at: "2026-06-19T00:00:45+00:00",
+                source: "voice_gateway",
+                deep_link: "/voice-harness/runs/turn-ui-search",
+                created_at: "2026-06-19T00:00:00+00:00",
+              },
+              display_events: [],
+              earcon_events: [],
+            },
+            trace: {
+              enabled: true,
+              include_raw_messages: true,
+              max_runs: 30,
+              retention_hours: 24,
+            },
+            traces: {
+              storage: {
+                encoding: "json+zlib+base64",
+                records: 1,
+                compressed_bytes: 1200,
+              },
+              records: [
+                {
+                  id: "turn-ui-search",
+                  run_id: "turn-ui-search",
+                  created_at: "2026-06-19T00:00:00+00:00",
+                  conversation_id: "conv-ui",
+                  user_text: "查一下今天空气质量",
+                  assistant_text: "空气质量良好。",
+                  final_speech_text: "空气质量良好。",
+                  input: {
+                    text: "查一下今天空气质量",
+                    conversation_id: "conv-ui",
+                    language: "zh-CN",
+                  },
+                  route: {
+                    kind: "mid",
+                    model: "mid-model",
+                    provider_attempts: [],
+                    provider: { name: "primary" },
+                  },
+                  latency_ms: 2160,
+                  status: "complete",
+                  debug_flags: {
+                    search: true,
+                    deep_route: false,
+                    high_risk: false,
+                    deep_verifier_waited: false,
+                    final_modified_by_grounding: false,
+                    polluted_evidence_present: false,
+                  },
+                  first_response_decision: {
+                    task_type: "search_needed",
+                    cue: "search",
+                    spoken_hint: "我查一下。",
+                    deadline_ms: 300,
+                    triggered_ms: 120,
+                  },
+                  speech: { final: "空气质量良好。", tts_cleaned: true },
+                  timeline_spans: [
+                    { stage: "received", start_ms: 0, duration_ms: 120, status: "ok", attrs: {} },
+                    { stage: "first_response", start_ms: 120, duration_ms: 900, status: "ok", attrs: { cue: "search" } },
+                    { stage: "search_result", start_ms: 1020, duration_ms: 800, status: "ok", attrs: { name: "search_web" } },
+                  ],
+                  critical_path: [
+                    { stage: "received", start_ms: 0, duration_ms: 120, status: "ok", blocking: true },
+                    { stage: "search_result", start_ms: 1020, duration_ms: 800, status: "ok", blocking: true },
+                  ],
+                  search_debug: {
+                    searched: true,
+                    gate_reason: "tool_call",
+                    queries: ["今天空气质量"],
+                    providers: [{ provider: "tavily", status: "ok", error: "" }],
+                    latency_ms: 800,
+                    result_count: 1,
+                    evidence_extracted: 0,
+                    results: [{ title: "空气质量", url: "https://example.test", content: "良好" }],
+                  },
+                  tools: [
+                    { name: "search_web", phase: "call", status: "ok", external: true },
+                  ],
+                  grounding: { status: "not_required", evidence: [] },
+                  verifier_mode: "disabled",
+                  actions: [],
+                  errors: [],
+                  earcons: [
+                    { earcon_name: "captured", scheduled_at_ms: 0, played_at_ms: 0, duration_ms: 148, volume_profile: "normal", trace_event_name: "earcon_captured" },
+                    { earcon_name: "search", scheduled_at_ms: 120, played_at_ms: 120, duration_ms: 194, volume_profile: "normal", trace_event_name: "earcon_search" },
+                  ],
+                  display_status: {
+                    latest: {
+                      state: "done",
+                      title: "Done",
+                      short_text: "空气质量良好。",
+                      action_buttons: [],
+                      deep_link: "/voice-harness/runs/turn-ui-search",
+                    },
+                    events: [
+                      { state: "captured", title: "Captured", short_text: "已听到。", action_buttons: [] },
+                      { state: "searching", title: "Searching", short_text: "我查一下。", action_buttons: ["cancel", "open_panel"] },
+                      { state: "done", title: "Done", short_text: "空气质量良好。", action_buttons: [] },
+                    ],
+                  },
+                },
+              ],
+            },
+            deep_tasks: [],
+          },
+        ],
+      };
+
+      const panel = document.querySelector("voice-harness-panel");
+      panel.hass = {
+        locale: { language: "zh-Hans" },
+        selectedLanguage: "zh-Hans",
+        callApi(method, path) {
+          if (method === "GET" && path === "llm_gateway/harness/status") {
+            return Promise.resolve(fixture);
+          }
+          return Promise.reject(new Error(`unexpected API call: ${method} ${path}`));
+        },
+      };
+      setInterval(() => {
+        const root = panel.shadowRoot;
+        if (!root) {
+          return;
+        }
+        root.querySelectorAll("details").forEach((details) => {
+          details.open = true;
+        });
+      }, 100);
+    </script>
+  </body>
+</html>

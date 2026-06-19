@@ -7,6 +7,7 @@ from custom_components.llm_gateway.grounding import (
     initial_grounding_result,
     parse_grounding_verifier_response,
     source_canonical_answers_from_results,
+    source_evidence_from_results,
 )
 
 
@@ -143,3 +144,32 @@ def test_source_canonical_answers_ignore_polluted_related_titles():
     )
 
     assert answers == ["《诗经·周南·关雎》"]
+
+
+def test_source_evidence_classifies_polluted_sources():
+    evidence = source_evidence_from_results(
+        [
+            {
+                "provider": "mock",
+                "results": [
+                    {
+                        "title": "周南·关雎_百科",
+                        "url": "https://example.test/guanju",
+                        "content": (
+                            "《关雎》是《诗经·周南》第一篇。"
+                            "《尔雅》《禽经》解释雎鸠这种鸟。"
+                            "相关星图包括《已凉》《高唐赋》《四愁诗》。"
+                        ),
+                    }
+                ],
+            }
+        ],
+        final_text="这句诗出自《诗经·周南·关雎》。",
+    )
+
+    by_text = {item["text"]: item for item in evidence}
+    assert by_text["《诗经·周南·关雎》"]["evidence_type"] == "quote_origin"
+    assert by_text["《诗经·周南·关雎》"]["included_in_final"]
+    assert by_text["《尔雅》"]["evidence_type"] == "term_explanation_source"
+    assert by_text["《禽经》"]["evidence_type"] == "term_explanation_source"
+    assert by_text["《已凉》"]["evidence_type"] == "polluted_related_item"

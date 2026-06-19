@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from homeassistant.components import conversation
+from homeassistant.const import CONF_LLM_HASS_API
 from homeassistant.core import Context
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import llm
@@ -14,25 +15,65 @@ from custom_components.llm_gateway.api import LLMGatewayConnectionError
 from custom_components.llm_gateway.const import (
     CONF_DIAGNOSTIC_TRACES,
     CONF_PROVIDER_PROFILES,
+    CONF_SEARCH_ENABLED,
+    CONF_TAVILY_API_KEY,
     CONF_TRACE_INCLUDE_RAW_MESSAGES,
     DEEP_TASK_ACK_SPEECH,
     DEFAULT_BASE_URL,
     GATEWAY_ERROR_SPEECH,
 )
 from custom_components.llm_gateway.conversation import (
+    LIVE_CONTEXT_TOOL_NAME,
     VOICE_RESPONSE_CONTRACT,
     _async_grounding_for_turn,
     _content_to_messages,
+    _duplicate_tool_reason,
     _extra_body_from_options,
     _is_action_tool,
+    _normalize_tool_args,
     _parse_tool_calls,
+    _record_tool_calls,
     _tool_choice_for_turn,
+    _tool_events_from_content,
 )
 
 MODELS_URL = f"{DEFAULT_BASE_URL}/models"
 CHAT_URL = f"{DEFAULT_BASE_URL}/chat/completions"
 FALLBACK_BASE_URL = "https://fallback.test/v1"
 FALLBACK_CHAT_URL = f"{FALLBACK_BASE_URL}/chat/completions"
+STATIC_CONTEXT = (
+    "Static Context: An overview of the areas and the devices in this smart "
+    "home:\n"
+    "- names: Homepod mini\n"
+    "  domain: media_player\n"
+    "  areas: 客厅\n"
+    "- names: 客厅灯\n"
+    "  domain: light\n"
+    "  areas: 客厅\n"
+    "- names: Yeelight 显示器挂灯 灯\n"
+    "  domain: light\n"
+    "  areas: 卧室\n"
+    "- names: 卧室空调\n"
+    "  domain: climate\n"
+    "  areas: 卧室\n"
+    "- names: 静安天气 PM2.5\n"
+    "  domain: sensor\n"
+)
+
+
+async def _setup_agent(hass, mock_config_entry, options=None) -> str:
+    mock_config_entry.add_to_hass(hass)
+    if options:
+        hass.config_entries.async_update_entry(
+            mock_config_entry,
+            options={**mock_config_entry.options, **options},
+        )
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    ent_reg = er.async_get(hass)
+    entities = er.async_entries_for_config_entry(ent_reg, mock_config_entry.entry_id)
+    return entities[0].entity_id
 
 
 def test_content_to_messages_roundtrip():
@@ -86,10 +127,58 @@ def test_parse_tool_calls_bad_args_generates_id():
     assert calls[0].id  # an id was generated
 
 
+def test_normalize_live_context_args_removes_tool_name_as_entity_name():
+    assert _normalize_tool_args(
+        LIVE_CONTEXT_TOOL_NAME,
+        {"name": LIVE_CONTEXT_TOOL_NAME, "area": "静安"},
+    ) == {"area": "静安"}
+
+
+def test_tool_events_are_limited_to_current_turn():
+    content = [
+        conversation.UserContent(content="今天天气。"),
+        conversation.AssistantContent(
+            agent_id="a",
+            content=None,
+            tool_calls=[
+                llm.ToolInput(
+                    id="old-live",
+                    tool_name=LIVE_CONTEXT_TOOL_NAME,
+                    tool_args={},
+                )
+            ],
+        ),
+        conversation.ToolResultContent(
+            agent_id="a",
+            tool_call_id="old-live",
+            tool_name=LIVE_CONTEXT_TOOL_NAME,
+            tool_result={"error": "old failure"},
+        ),
+        conversation.UserContent(content="你能看到哪些设备？"),
+        conversation.AssistantContent(agent_id="a", content="我能看到设备。"),
+    ]
+
+    assert _tool_events_from_content(content, "你能看到哪些设备？") == []
+
+
 def test_action_tool_detection():
     assert _is_action_tool("HassTurnOn")
     assert _is_action_tool("HassLightSet")
     assert not _is_action_tool("GetLiveContext")
+
+
+def test_duplicate_tool_guard_suppresses_live_context_once_recorded():
+    counts = {}
+    call = llm.ToolInput(
+        id="live-1",
+        tool_name=LIVE_CONTEXT_TOOL_NAME,
+        tool_args={},
+    )
+
+    assert _duplicate_tool_reason(call, counts) is None
+    _record_tool_calls([call], counts)
+
+    assert _duplicate_tool_reason(call, counts) == "duplicate_live_context"
 
 
 def test_tool_choice_for_turn_does_not_force_search_for_stable_source_questions():
@@ -111,6 +200,32 @@ def test_tool_choice_for_turn_forces_search_for_current_questions():
         tools,
         force_tool_call=False,
     ) == {"type": "function", "function": {"name": "search_web"}}
+
+
+def test_tool_choice_for_turn_does_not_force_search_for_weather_local_state():
+    tools = [{"type": "function", "function": {"name": "search_web"}}]
+    assert (
+        _tool_choice_for_turn(
+            "今天天气。",
+            tools,
+            force_tool_call=False,
+        )
+        is None
+    )
+
+
+def test_tool_choice_for_turn_forces_live_context_for_weather_when_available():
+    tools = [
+        {"type": "function", "function": {"name": LIVE_CONTEXT_TOOL_NAME}},
+        {"type": "function", "function": {"name": "search_web"}},
+    ]
+
+    assert _tool_choice_for_turn(
+        "今天天气。",
+        tools,
+        force_tool_call=False,
+        force_live_context=True,
+    ) == {"type": "function", "function": {"name": LIVE_CONTEXT_TOOL_NAME}}
 
 
 def test_tool_choice_for_turn_preserves_action_retry():
@@ -238,6 +353,579 @@ async def test_converse_plain(hass, aioclient_mock, mock_config_entry):
         message["role"] == "system" and message["content"] == VOICE_RESPONSE_CONTRACT
         for message in request_json["messages"]
     )
+
+
+async def test_converse_records_search_feedback_trace(
+    hass, aioclient_mock, mock_config_entry
+):
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    aioclient_mock.post(
+        CHAT_URL,
+        json={
+            "choices": [{"message": {"role": "assistant", "content": "空气质量良好。"}}]
+        },
+    )
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
+        },
+    )
+
+    result = await conversation.async_converse(
+        hass, "查一下今天空气质量", None, Context(), agent_id=agent_id
+    )
+
+    assert result.response.speech["plain"]["speech"] == "空气质量良好。"
+    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+    assert [event["earcon_name"] for event in trace["earcons"]] == [
+        "captured",
+        "search",
+    ]
+    assert any(
+        event["state"] == "searching" for event in trace["display_status"]["events"]
+    )
+    assert trace["display_status"]["latest"]["state"] == "done"
+    assert trace["first_response_audio"]["scheduled"] is True
+    assert trace["first_response_audio"]["played"] is False
+    assert trace["first_response_audio"]["suppressed_reason"].startswith(
+        "playback_unavailable"
+    )
+
+
+async def test_device_inventory_query_uses_static_context_renderer(
+    hass, aioclient_mock, mock_config_entry
+):
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
+        },
+    )
+
+    async def provide_static_context(
+        self,
+        *_args: object,
+        **_kwargs: object,
+    ) -> None:
+        self.content.append(conversation.SystemContent(content=STATIC_CONTEXT))
+
+    with (
+        patch(
+            "homeassistant.components.conversation.ChatLog.async_provide_llm_data",
+            provide_static_context,
+        ),
+        patch(
+            "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
+        ) as completion,
+    ):
+        result = await conversation.async_converse(
+            hass, "你能看到哪些设备？", None, Context(), agent_id=agent_id
+        )
+
+    completion.assert_not_called()
+    speech = result.response.speech["plain"]["speech"]
+    assert "已暴露给助手的设备" in speech
+    assert "客厅灯" in speech
+    assert "卧室空调" in speech
+    assert "没有权限" not in speech
+    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+    assert trace["first_response_decision"]["task_type"] == "device_inventory_query"
+    assert trace["first_response_audio"]["scheduled"] is False
+    assert trace["first_response_audio"]["suppressed_reason"] == "fast_static_query"
+    assert not trace["tools"]
+    assert trace["route"]["kind"] == "local_static_context"
+    render_span = next(
+        span
+        for span in trace["timeline_spans"]
+        if span["stage"] == "local_inventory_render"
+    )
+    assert render_span["attrs"]["llm_used"] is False
+    assert render_span["attrs"]["tools_used"] == []
+    assert render_span["attrs"]["entity_count"] >= 5
+
+
+async def test_weather_query_uses_local_context_path_without_forced_search(
+    hass, aioclient_mock, mock_config_entry
+):
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {
+            CONF_LLM_HASS_API: "assist",
+            CONF_SEARCH_ENABLED: True,
+            CONF_TAVILY_API_KEY: "tvly-test",
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
+        },
+    )
+    requests = []
+    responses = iter(
+        [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "live-1",
+                        "type": "function",
+                        "function": {
+                            "name": LIVE_CONTEXT_TOOL_NAME,
+                            "arguments": "{}",
+                        },
+                    }
+                ],
+            },
+            {"role": "assistant", "content": "暂时没有本地天气数据。"},
+        ]
+    )
+
+    async def fake_completion(**kwargs: object):
+        requests.append(kwargs)
+        return SimpleNamespace(
+            message=next(responses),
+            provider={"name": "primary", "fallback_used": False},
+            attempts=[],
+        )
+
+    with patch(
+        "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
+        side_effect=fake_completion,
+    ):
+        result = await conversation.async_converse(
+            hass, "今天天气。", None, Context(), agent_id=agent_id
+        )
+
+    assert result.response.speech["plain"]["speech"] == "暂时没有本地天气数据。"
+    assert requests[0].get("tool_choice") != {
+        "type": "function",
+        "function": {"name": "search_web"},
+    }
+    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+    assert trace["first_response_decision"]["task_type"] == "weather_query"
+    assert trace["search_gate"]["decision"] == "local_weather_first"
+    assert not trace["search_debug"]["searched"]
+    assert trace["weather_context_path"]["path"] == "GetLiveContext"
+    live_context_calls = [
+        tool
+        for tool in trace["tools"]
+        if tool["phase"] == "call" and tool["name"] == LIVE_CONTEXT_TOOL_NAME
+    ]
+    assert live_context_calls
+    assert len(live_context_calls) == 1
+
+
+async def test_weather_query_suppresses_repeated_live_context_call(
+    hass, aioclient_mock, mock_config_entry
+):
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {
+            CONF_LLM_HASS_API: "assist",
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
+        },
+    )
+    responses = iter(
+        [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "live-1",
+                        "type": "function",
+                        "function": {
+                            "name": LIVE_CONTEXT_TOOL_NAME,
+                            "arguments": "{}",
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "live-2",
+                        "type": "function",
+                        "function": {
+                            "name": LIVE_CONTEXT_TOOL_NAME,
+                            "arguments": '{"name":"静安天气"}',
+                        },
+                    }
+                ],
+            },
+            {"role": "assistant", "content": "已有信息不足。"},
+        ]
+    )
+
+    async def fake_completion(**kwargs: object):
+        return SimpleNamespace(
+            message=next(responses),
+            provider={"name": "primary", "fallback_used": False},
+            attempts=[],
+        )
+
+    with patch(
+        "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
+        side_effect=fake_completion,
+    ):
+        result = await conversation.async_converse(
+            hass, "今天天气。", None, Context(), agent_id=agent_id
+        )
+
+    assert result.response.speech["plain"]["speech"] == "已有信息不足。"
+    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+    live_calls = [
+        tool
+        for tool in trace["tools"]
+        if tool["phase"] == "call" and tool["name"] == LIVE_CONTEXT_TOOL_NAME
+    ]
+    suppressed = [
+        span
+        for span in trace["timeline_spans"]
+        if span["stage"] == "tool_call_suppressed"
+    ]
+    assert len(live_calls) == 1
+    assert suppressed[0]["attrs"]["reason"] == "duplicate_live_context"
+    assert trace["duplicate_tool_suppressions"][0]["reason"] == (
+        "duplicate_live_context"
+    )
+    assert trace["weather_context_path"]["duplicate_live_context_suppressed"] is True
+
+
+async def test_weather_query_empty_final_gets_local_context_fallback(
+    hass, aioclient_mock, mock_config_entry
+):
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {
+            CONF_LLM_HASS_API: "assist",
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
+        },
+    )
+
+    async def fake_completion(**kwargs: object):
+        return SimpleNamespace(
+            message={"role": "assistant", "content": ""},
+            provider={"name": "primary", "fallback_used": False},
+            attempts=[],
+        )
+
+    with patch(
+        "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
+        side_effect=fake_completion,
+    ):
+        result = await conversation.async_converse(
+            hass, "今天天气。", None, Context(), agent_id=agent_id
+        )
+
+    assert result.response.speech["plain"]["speech"] == "暂时没有本地天气数据。"
+    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+    assert trace["final_speech_text"] == "暂时没有本地天气数据。"
+    assert any(span["stage"] == "fallback_final" for span in trace["timeline_spans"])
+
+
+async def test_explicit_web_weather_can_search_without_repeating_live_context(
+    hass, aioclient_mock, mock_config_entry
+):
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    aioclient_mock.post(
+        "https://api.tavily.com/search",
+        json={
+            "results": [
+                {
+                    "title": "上海天气",
+                    "url": "https://weather.example/shanghai",
+                    "content": "今天多云。",
+                }
+            ]
+        },
+    )
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {
+            CONF_LLM_HASS_API: "assist",
+            CONF_SEARCH_ENABLED: True,
+            CONF_TAVILY_API_KEY: "tvly-test",
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
+        },
+    )
+    responses = iter(
+        [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "search-1",
+                        "type": "function",
+                        "function": {
+                            "name": "search_web",
+                            "arguments": '{"query":"上海 今天 天气","max_results":2}',
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "live-1",
+                        "type": "function",
+                        "function": {
+                            "name": LIVE_CONTEXT_TOOL_NAME,
+                            "arguments": "{}",
+                        },
+                    }
+                ],
+            },
+            {"role": "assistant", "content": "今天多云。"},
+        ]
+    )
+
+    async def fake_completion(**kwargs: object):
+        return SimpleNamespace(
+            message=next(responses),
+            provider={"name": "primary", "fallback_used": False},
+            attempts=[],
+        )
+
+    with patch(
+        "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
+        side_effect=fake_completion,
+    ):
+        result = await conversation.async_converse(
+            hass, "帮我网上查一下今天的天气。", None, Context(), agent_id=agent_id
+        )
+
+    assert result.response.speech["plain"]["speech"] == "今天多云。"
+    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+    assert trace["search_debug"]["searched"]
+    assert trace["search_gate"]["decision"] == "external_search_requested"
+    assert trace["weather_context_path"]["search_fallback"] is True
+    assert (
+        len(
+            [
+                tool
+                for tool in trace["tools"]
+                if tool["phase"] == "call" and tool["name"] == LIVE_CONTEXT_TOOL_NAME
+            ]
+        )
+        == 1
+    )
+
+
+async def test_converse_records_high_risk_confirmation_feedback(
+    hass, aioclient_mock, mock_config_entry
+):
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    aioclient_mock.post(
+        CHAT_URL,
+        json={
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "id": "call-1",
+                                "type": "function",
+                                "function": {
+                                    "name": "HassTurnOn",
+                                    "arguments": '{"domain":"lock","name":"前门门锁"}',
+                                },
+                            }
+                        ],
+                    }
+                }
+            ]
+        },
+    )
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
+        },
+    )
+
+    result = await conversation.async_converse(
+        hass, "打开前门", None, Context(), agent_id=agent_id
+    )
+
+    assert "确认" in result.response.speech["plain"]["speech"]
+    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+    assert "confirmation" in [event["earcon_name"] for event in trace["earcons"]]
+    assert trace["debug_flags"]["high_risk"] is True
+    assert trace["display_status"]["latest"]["state"] == "confirming"
+    assert trace["display_status"]["latest"]["action_buttons"] == [
+        "confirm",
+        "cancel",
+        "open_panel",
+    ]
+
+
+async def test_home_state_empty_final_gets_status_fallback(
+    hass, aioclient_mock, mock_config_entry
+):
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
+        },
+    )
+
+    async def fake_completion(**kwargs: object):
+        return SimpleNamespace(
+            message={"role": "assistant", "content": ""},
+            provider={"name": "primary", "fallback_used": False},
+            attempts=[],
+        )
+
+    with patch(
+        "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
+        side_effect=fake_completion,
+    ):
+        result = await conversation.async_converse(
+            hass, "卧室温度是多少？", None, Context(), agent_id=agent_id
+        )
+
+    assert result.response.speech["plain"]["speech"] == "暂时没有本地状态数据。"
+    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+    assert trace["first_response_decision"]["task_type"] == "home_state"
+    assert trace["final_speech_text"] == "暂时没有本地状态数据。"
+    assert any(span["stage"] == "fallback_final" for span in trace["timeline_spans"])
+
+
+async def test_high_risk_empty_final_gets_confirmation_fallback(
+    hass, aioclient_mock, mock_config_entry
+):
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
+        },
+    )
+
+    async def fake_completion(**kwargs: object):
+        return SimpleNamespace(
+            message={"role": "assistant", "content": ""},
+            provider={"name": "primary", "fallback_used": False},
+            attempts=[],
+        )
+
+    with patch(
+        "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
+        side_effect=fake_completion,
+    ):
+        result = await conversation.async_converse(
+            hass, "打开前门门锁", None, Context(), agent_id=agent_id
+        )
+
+    assert result.response.speech["plain"]["speech"] == "这个需要确认。"
+    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+    assert trace["first_response_decision"]["task_type"] == "high_risk"
+    assert trace["debug_flags"]["high_risk"] is True
+    assert trace["final_speech_text"] == "这个需要确认。"
+
+
+async def test_converse_records_plain_feedback_without_search_overplay(
+    hass, aioclient_mock, mock_config_entry
+):
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    aioclient_mock.post(
+        CHAT_URL,
+        json={
+            "choices": [{"message": {"role": "assistant", "content": "卧室 24 度。"}}]
+        },
+    )
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
+        },
+    )
+
+    await conversation.async_converse(
+        hass, "卧室现在多少度", None, Context(), agent_id=agent_id
+    )
+
+    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+    names = [event["earcon_name"] for event in trace["earcons"]]
+    assert names == ["captured"]
+    assert "search" not in names
+    assert "thinking" not in names
+    assert trace["display_status"]["latest"]["state"] == "done"
+
+
+async def test_converse_records_failure_feedback_trace(
+    hass, aioclient_mock, mock_config_entry
+):
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
+        },
+    )
+
+    with patch(
+        "custom_components.llm_gateway.api.LLMGatewayClient.async_chat_completion",
+        side_effect=LLMGatewayConnectionError("timeout"),
+    ):
+        result = await conversation.async_converse(
+            hass, "打开风扇", None, Context(), agent_id=agent_id
+        )
+
+    assert result.response.speech["plain"]["speech"] == GATEWAY_ERROR_SPEECH
+    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+    assert trace["status"] == "error"
+    assert "failure" in [event["earcon_name"] for event in trace["earcons"]]
+    assert trace["display_status"]["latest"]["state"] == "failed"
 
 
 async def test_converse_voice_pause_command_calls_local_service(

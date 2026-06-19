@@ -44,6 +44,11 @@ class VoiceRun:
     events: list[VoiceRunEvent] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
+        last_event = self.events[-1] if self.events else None
+        elapsed_ms = round((time.time() - self.created_at) * 1000)
+        running_duration_ms = (
+            elapsed_ms if self.status == "running" else self.latency_ms
+        )
         return {
             "id": self.id,
             "created_at": self.created_at,
@@ -53,6 +58,9 @@ class VoiceRun:
             "route": self.route,
             "provider": self.provider,
             "latency_ms": self.latency_ms,
+            "running_duration_ms": max(0, int(running_duration_ms or 0)),
+            "last_active_stage": last_event.stage if last_event else "",
+            "last_active_status": last_event.status if last_event else "",
             "events": [event.as_dict() for event in self.events],
         }
 
@@ -87,19 +95,19 @@ class VoiceRunRecorder:
         *,
         status: str = "ok",
         attrs: dict[str, Any] | None = None,
-    ) -> None:
+    ) -> dict[str, Any] | None:
         """Append a pipeline event to a run."""
         run = self._runs.get(run_id)
         if run is None:
-            return
-        run.events.append(
-            VoiceRunEvent(
-                stage=stage,
-                t_ms=round((time.time() - run.created_at) * 1000),
-                status=status,
-                attrs=dict(attrs or {}),
-            )
+            return None
+        event = VoiceRunEvent(
+            stage=stage,
+            t_ms=round((time.time() - run.created_at) * 1000),
+            status=status,
+            attrs=dict(attrs or {}),
         )
+        run.events.append(event)
+        return event.as_dict()
 
     def finish(
         self,
