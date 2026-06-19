@@ -697,6 +697,8 @@ def _search_debug(
     timeline_spans: list[dict[str, Any]],
 ) -> dict[str, Any]:
     search_tools = [tool for tool in tools if tool.get("name") == "search_web"]
+    search_calls = [tool for tool in search_tools if tool.get("phase") == "call"]
+    search_results = [tool for tool in search_tools if tool.get("phase") == "result"]
     search_spans = [
         span
         for span in timeline_spans
@@ -706,7 +708,7 @@ def _search_debug(
     if not isinstance(evidence, list):
         evidence = []
     results: list[dict[str, Any]] = []
-    for tool in search_tools:
+    for tool in search_results:
         result = _mapping_value(tool.get("result"))
         result_items = (
             result.get("results") if isinstance(result.get("results"), list) else []
@@ -722,11 +724,12 @@ def _search_debug(
         )
     return {
         "searched": bool(search_tools),
-        "gate_reason": _search_gate_reason(search_tools),
+        "gate_reason": _search_gate_reason(search_calls or search_tools),
         "queries": [
-            _truncate(str((tool.get("args") or {}).get("query") or ""), 240)
-            for tool in search_tools
+            _truncate(query, 240)
+            for tool in search_calls
             if isinstance(tool.get("args"), dict)
+            if (query := str((tool.get("args") or {}).get("query") or "").strip())
         ],
         "providers": [
             {
@@ -734,7 +737,7 @@ def _search_debug(
                 "status": str(tool.get("status") or "ok"),
                 "error": _truncate(str(tool.get("error") or ""), 240),
             }
-            for tool in search_tools
+            for tool in search_results
         ],
         "latency_ms": max(
             [_safe_int(span.get("duration_ms")) for span in search_spans] or [0]
@@ -751,7 +754,7 @@ def _search_debug(
         ),
         "cache_hit": any(
             bool(_mapping_value(tool.get("result")).get("cache_hit"))
-            for tool in search_tools
+            for tool in search_results
         ),
     }
 

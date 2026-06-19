@@ -367,6 +367,10 @@ async def test_trace_store_serializes_debug_run_detail(hass):
     assert record["debug_flags"]["search"]
     assert record["debug_flags"]["deep_verifier_waited"]
     assert record["verifier_mode"] == "blocking"
+    assert record["search_debug"]["queries"] == ["E7 错误码"]
+    assert record["search_debug"]["providers"] == [
+        {"provider": "", "status": "error", "error": "TimeoutError"}
+    ]
     assert record["tools"][0]["name"] == "search_web"
     assert record["grounding"]["evidence"][0]["evidence_type"] == "quote_origin"
     assert record["earcons"][0]["earcon_name"] == "search"
