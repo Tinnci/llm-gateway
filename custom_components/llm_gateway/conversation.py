@@ -1073,7 +1073,7 @@ class LLMGatewayConversationEntity(
                         effective_tools,
                         force_tool_call=force_tool_call,
                         force_live_context=(
-                            first_response.task_type == "weather_query"
+                            first_response.task_type in {"weather_query", "home_state"}
                             and iteration == 1
                         ),
                         require_grounding=iteration == 1,

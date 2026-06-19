@@ -283,6 +283,20 @@ def test_tool_choice_for_bare_lookup_weather_forces_live_context_not_search():
     ) == {"type": "function", "function": {"name": LIVE_CONTEXT_TOOL_NAME}}
 
 
+def test_tool_choice_for_home_state_forces_live_context_when_requested():
+    tools = [
+        {"type": "function", "function": {"name": LIVE_CONTEXT_TOOL_NAME}},
+        {"type": "function", "function": {"name": "search_web"}},
+    ]
+
+    assert _tool_choice_for_turn(
+        "卧室温度是多少",
+        tools,
+        force_tool_call=False,
+        force_live_context=True,
+    ) == {"type": "function", "function": {"name": LIVE_CONTEXT_TOOL_NAME}}
+
+
 def test_tool_choice_for_turn_forces_live_context_for_weather_when_available():
     tools = [
         {"type": "function", "function": {"name": LIVE_CONTEXT_TOOL_NAME}},
