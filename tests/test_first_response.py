@@ -24,7 +24,7 @@ def test_first_response_keeps_stable_fact_off_search_path():
 
 
 def test_first_response_uses_fast_search_cue_for_current_info():
-    decision = decide_first_response("查一下今天空气质量")
+    decision = decide_first_response("查一下 Home Assistant 最新语音更新")
 
     assert decision.task_type == "search_needed"
     assert decision.cue == "search"
@@ -57,6 +57,7 @@ def test_first_response_classifies_weather_as_local_state_by_default():
         "今天会下雨吗？",
         "外面冷不冷？",
         "空气质量怎么样？",
+        "查一下今天空气质量",
     ):
         decision = decide_first_response(text)
         assert decision.task_type == "weather_query"

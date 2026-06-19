@@ -137,6 +137,8 @@ def classify_route(text: str) -> RouteKind:  # noqa: PLR0911
         return "mid"
     if decision.task_family == "location_dependent_query":
         return "fast" if decision.next_action == "ask_location_permission" else "mid"
+    if decision.task_family == "home_state":
+        return "fast"
 
     if len(normalized) > _DEEP_LENGTH_THRESHOLD or any(
         keyword in normalized for keyword in _DEEP_KEYWORDS

@@ -13,7 +13,7 @@ from custom_components.llm_gateway.policy import (
 
 
 def test_search_policy_gating():
-    assert should_allow_search("查一下今天空气质量")
+    assert not should_allow_search("查一下今天空气质量")
     assert should_allow_search("帮我网上查一下今天的天气")
     assert should_allow_search("上海静安附近最近的麦当劳在哪里？")
     assert not should_allow_search("附近最近的麦当劳在哪里？")
@@ -33,7 +33,7 @@ def test_search_policy_requires_grounding_for_source_questions():
 
 
 def test_search_policy_only_forces_voice_path_for_current_or_explicit_search():
-    assert should_force_search_in_voice_path("查一下今天空气质量")
+    assert not should_force_search_in_voice_path("查一下今天空气质量")
     assert should_force_search_in_voice_path("帮我网上查一下今天的天气")
     assert should_force_search_in_voice_path("上海静安附近最近的麦当劳在哪里？")
     assert not should_force_search_in_voice_path("附近最近的麦当劳在哪里？")

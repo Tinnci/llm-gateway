@@ -81,8 +81,17 @@ def test_unknown_is_clarification_not_direct_answer():
     assert "换个说法" in decision.user_visible_prompt
 
 
-def test_explicit_current_info_beats_default_weather_state():
+def test_bare_lookup_weather_stays_home_state():
     decision = decide_route("查一下今天空气质量")
+
+    assert decision.task_family == "home_state"
+    assert decision.task_type == "weather_query"
+    assert decision.next_action == "answer_with_llm"
+    assert decision.allowed_tools == ("GetLiveContext",)
+
+
+def test_explicit_web_weather_can_search():
+    decision = decide_route("帮我网上查一下今天的天气")
 
     assert decision.task_family == "external_current_info"
     assert decision.task_type == "search_needed"

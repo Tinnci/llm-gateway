@@ -214,7 +214,7 @@ def test_tool_choice_for_turn_does_not_force_search_for_stable_source_questions(
 def test_tool_choice_for_turn_forces_search_for_current_questions():
     tools = [{"type": "function", "function": {"name": "search_web"}}]
     assert _tool_choice_for_turn(
-        "查一下今天空气质量",
+        "查一下 Home Assistant 最新语音更新",
         tools,
         force_tool_call=False,
     ) == {"type": "function", "function": {"name": "search_web"}}
@@ -230,6 +230,20 @@ def test_tool_choice_for_turn_does_not_force_search_for_weather_local_state():
         )
         is None
     )
+
+
+def test_tool_choice_for_bare_lookup_weather_forces_live_context_not_search():
+    tools = [
+        {"type": "function", "function": {"name": LIVE_CONTEXT_TOOL_NAME}},
+        {"type": "function", "function": {"name": "search_web"}},
+    ]
+
+    assert _tool_choice_for_turn(
+        "查一下今天空气质量",
+        tools,
+        force_tool_call=False,
+        force_live_context=True,
+    ) == {"type": "function", "function": {"name": LIVE_CONTEXT_TOOL_NAME}}
 
 
 def test_tool_choice_for_turn_forces_live_context_for_weather_when_available():
@@ -382,7 +396,7 @@ async def test_converse_records_search_feedback_trace(
     aioclient_mock.post(
         CHAT_URL,
         json={
-            "choices": [{"message": {"role": "assistant", "content": "空气质量良好。"}}]
+            "choices": [{"message": {"role": "assistant", "content": "有更新。"}}]
         },
     )
     agent_id = await _setup_agent(
@@ -395,10 +409,14 @@ async def test_converse_records_search_feedback_trace(
     )
 
     result = await conversation.async_converse(
-        hass, "查一下今天空气质量", None, Context(), agent_id=agent_id
+        hass,
+        "查一下 Home Assistant 最新语音更新",
+        None,
+        Context(),
+        agent_id=agent_id,
     )
 
-    assert result.response.speech["plain"]["speech"] == "空气质量良好。"
+    assert result.response.speech["plain"]["speech"] == "有更新。"
     trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
     assert [event["earcon_name"] for event in trace["earcons"]] == [
         "captured",

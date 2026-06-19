@@ -107,6 +107,9 @@ _WEATHER_RE = re.compile(
 _EXTERNAL_CURRENT_RE = re.compile(
     r"(查一下|搜一下|搜索|网上|上网|联网|外网|最新|新闻|交通|说明书|错误码|固件|兼容|价格|电价|发布)"
 )
+_EXPLICIT_EXTERNAL_RE = re.compile(
+    r"(搜一下|搜索|网上|上网|联网|外网|最新|新闻|交通|说明书|错误码|固件|兼容|价格|电价|发布)"
+)
 _STABLE_KNOWLEDGE_RE = re.compile(
     r"(出自哪里|出自哪|出处|谁写的|什么意思|是什么|典故|原文)"
 )
@@ -352,7 +355,7 @@ def decide_route(text: str) -> RouteDecision:  # noqa: PLR0911, PLR0912
             metadata={"explicit_location": has_location},
         )
 
-    if _EXTERNAL_CURRENT_RE.search(value):
+    if _EXPLICIT_EXTERNAL_RE.search(value):
         return RouteDecision(
             task_family="external_current_info",
             task_type="search_needed",
@@ -387,6 +390,19 @@ def decide_route(text: str) -> RouteDecision:  # noqa: PLR0911, PLR0912
             next_action="answer_with_llm",
             route="fast",
             matched_capability="home_state",
+        )
+
+    if _EXTERNAL_CURRENT_RE.search(value):
+        return RouteDecision(
+            task_family="external_current_info",
+            task_type="search_needed",
+            confidence=0.78,
+            requires_external_info=True,
+            requires_llm=True,
+            allowed_tools=("search_web",),
+            next_action="search",
+            route="mid",
+            matched_capability="external_current_info",
         )
 
     if _HOME_STATE_RE.search(value):
