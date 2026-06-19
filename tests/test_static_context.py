@@ -157,9 +157,9 @@ def test_render_scalar_state_answer_uses_live_context_readings() -> None:
     assert result
     assert "当前已暴露给助手的空气质量读数" in result.speech
     assert "PM2.5 10.0 μg/m³" in result.speech
-    assert "温度 25.5 °C" in result.speech
-    assert "湿度 80.2 %" in result.speech
     assert "CO2" in result.speech
     assert "TVOC" in result.speech
     assert "当前不可用" in result.speech
+    assert "温度" not in result.speech
+    assert "湿度" not in result.speech
     assert result.trace_attrs()["llm_final_used"] is False

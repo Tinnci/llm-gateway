@@ -708,7 +708,7 @@ def _state_metrics_from_text(text: str) -> tuple[str, ...]:
     normalized = _normalize_query_text(text)
     metrics: list[str] = []
     if "空气质量" in normalized or "空气怎么样" in normalized:
-        metrics.extend(("pm25", "co2", "eco2", "tvoc", "temperature", "humidity"))
+        metrics.extend(("pm25", "co2", "eco2", "tvoc"))
     if "pm25" in normalized or "pm2" in normalized or "雾霾" in normalized:
         metrics.append("pm25")
     if "co2" in normalized or "二氧化碳" in normalized:
@@ -736,13 +736,21 @@ def _select_state_entities(
     metrics: tuple[str, ...],
 ) -> tuple[ExposedEntity, ...]:
     wanted = metrics or STATE_METRIC_ORDER
-    selected = [
-        entity
-        for entity in entities
-        if (metric := _metric_for_entity(entity)) and metric in wanted
-    ]
-    selected.sort(key=lambda entity: _metric_sort_key(_metric_for_entity(entity)))
-    return tuple(selected[:8])
+    selected_by_metric: dict[str, ExposedEntity] = {}
+    for entity in entities:
+        metric = _metric_for_entity(entity)
+        if not metric or metric not in wanted:
+            continue
+        current = selected_by_metric.get(metric)
+        if current is None or (
+            not _state_is_available(current.state) and _state_is_available(entity.state)
+        ):
+            selected_by_metric[metric] = entity
+    return tuple(
+        selected_by_metric[metric]
+        for metric in STATE_METRIC_ORDER
+        if metric in selected_by_metric
+    )
 
 
 def _render_scalar_state_summary(
