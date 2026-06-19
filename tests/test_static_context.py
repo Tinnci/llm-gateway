@@ -188,3 +188,25 @@ def test_render_scalar_state_answer_handles_humidity_query() -> None:
     assert result
     assert result.speech == "卧室湿度现在 80.2%。"
     assert result.trace_attrs()["source"] == "GetLiveContext"
+
+
+def test_render_scalar_state_answer_handles_unavailable_single_metric() -> None:
+    result = render_scalar_state_answer(
+        "客厅温度是多少",
+        {
+            "success": True,
+            "result": (
+                "Live Context:\n"
+                "- names: 客厅温度\n"
+                "  domain: sensor\n"
+                "  state: unavailable\n"
+                "  areas: 客厅\n"
+                "  attributes:\n"
+                "    unit_of_measurement: °C\n"
+            ),
+        },
+        task_type="home_state",
+    )
+
+    assert result
+    assert result.speech == "客厅温度当前不可用。"

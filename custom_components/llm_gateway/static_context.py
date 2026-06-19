@@ -779,7 +779,6 @@ def _render_scalar_state_summary(
     if (
         single_entity
         and single_metric in {"temperature", "humidity"}
-        and _state_is_available(single_entity.state)
     ):
         return _render_single_scalar_state(text, single_entity, single_metric)
 
@@ -810,13 +809,16 @@ def _render_single_scalar_state(
 ) -> str:
     area = _state_area_label(text, entity)
     value = _clean_state_value(entity.state)
+    label = STATE_METRIC_LABELS.get(metric, entity.name)
+    if not _state_is_available(value):
+        prefix = f"{area}{label}" if area else label
+        return f"{prefix}当前不可用。"
     if metric == "temperature":
         prefix = f"{area}现在" if area else "现在"
         return f"{prefix} {value} 度。"
     if metric == "humidity":
         prefix = f"{area}湿度现在" if area else "湿度现在"
         return f"{prefix} {value}%。"
-    label = STATE_METRIC_LABELS.get(metric, entity.name)
     return f"{label} {_state_with_spoken_unit(entity)}。"
 
 
