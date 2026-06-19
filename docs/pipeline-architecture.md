@@ -70,6 +70,20 @@ explicit search and planning requests can start the display-agent processing
 loop quickly, while ordinary HA control remains quiet unless it actually takes
 too long.
 
+## Turn controller
+
+LLM Gateway keeps a small runtime turn controller for conversation ownership.
+Each new run receives a generation token. When a newer user turn starts, the
+previous active turn is marked stale, `rest_command.kukui_voice_barge_in` is
+requested when available, and late provider/tool results from the old turn are
+discarded before they can execute more tools, update final display state, write
+memory, or schedule more speech.
+
+This is not a full audio VAD implementation. The satellite/display-agent layer
+still owns real-time microphone and speaker control. The gateway controller is
+the backend safety layer that prevents old asynchronous work from winning the
+race after the user has moved on.
+
 ## Latency feedback
 
 Voice latency should be handled as a user-interface state, not as extra model
