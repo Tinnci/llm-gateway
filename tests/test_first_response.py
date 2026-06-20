@@ -35,6 +35,14 @@ def test_first_response_keeps_stable_fact_off_search_path():
     assert decision.cue == "none"
 
 
+def test_first_response_simple_stable_fact_does_not_say_look_it_up():
+    decision = decide_first_response("Alexa 是什么？")
+
+    assert decision.task_type == "stable_fact"
+    assert decision.cue == "none"
+    assert decision.spoken_hint == ""
+
+
 def test_first_response_literary_knowledge_is_not_unknown():
     decision = decide_first_response("张若虚有什么样的诗？")
 
@@ -80,18 +88,19 @@ def test_first_response_volume_control_uses_no_spoken_hint():
 
 
 def test_first_response_classifies_weather_as_local_state_by_default():
-    for text in (
-        "今天天气。",
-        "天气怎么样？",
-        "今天会下雨吗？",
-        "外面冷不冷？",
-        "空气质量怎么样？",
-        "查一下今天空气质量",
-    ):
+    cases = {
+        "今天天气。": "outdoor_current_weather_query",
+        "天气怎么样？": "outdoor_current_weather_query",
+        "今天会下雨吗？": "outdoor_current_weather_query",
+        "外面冷不冷？": "outdoor_current_weather_query",
+        "空气质量怎么样？": "indoor_environment_query",
+        "查一下今天空气质量": "indoor_environment_query",
+    }
+    for text, task_type in cases.items():
         decision = decide_first_response(text)
-        assert decision.task_type == "weather_query"
+        assert decision.task_type == task_type
         assert decision.cue == "none"
-        assert decision.reason == "home_state_weather"
+        assert decision.reason in {"home_state_weather", "home_state_pattern"}
 
 
 def test_first_response_classifies_inventory_as_fast_static_query():
@@ -118,8 +127,13 @@ def test_first_response_inventory_classifier_avoids_action_and_weather_false_hit
     assert decide_first_response("打开客厅灯").task_type == "home_control"
     assert decide_first_response("把风扇关了。").task_type == "home_control"
     assert decide_first_response("把空调开了").task_type == "home_control"
-    assert decide_first_response("今天天气怎么样？").task_type == "weather_query"
-    assert decide_first_response("卧室温度是多少？").task_type == "home_state"
+    assert (
+        decide_first_response("今天天气怎么样？").task_type
+        == "outdoor_current_weather_query"
+    )
+    assert decide_first_response("卧室温度是多少？").task_type == (
+        "indoor_environment_query"
+    )
 
 
 def test_first_response_marks_high_risk_confirmation():

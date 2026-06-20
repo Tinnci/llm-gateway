@@ -80,3 +80,36 @@ async def test_assistant_volume_reports_unconfigured(hass):
     assert result is not None
     assert result.status == "clarify"
     assert result.speech == "我说话音量控制还没有配置好。"
+
+
+async def test_assistant_volume_trace_includes_verified_action_state(hass):
+    calls: list[dict] = []
+    hass.states.async_set("input_number.kukui_tts_volume_day", "0.58")
+    hass.states.async_set("input_number.kukui_tts_volume_night", "0.38")
+    hass.states.async_set("input_number.kukui_fallback_clip_volume", "0.42")
+
+    async def set_value(call):
+        calls.append(dict(call.data))
+        for entity_id in call.data["entity_id"]:
+            hass.states.async_set(entity_id, str(call.data["value"]))
+
+    hass.services.async_register("input_number", "set_value", set_value)
+
+    route = decide_route("把你自己的音量调到最高")
+    result = await async_try_execute_local_capability(
+        hass, "把你自己的音量调到最高", route
+    )
+
+    assert result is not None
+    assert result.status == "executed"
+    trace = result.trace_attrs()
+    assert trace["action_trace"]["adapter"] == "ha_input_number"
+    assert trace["action_trace"]["target"] == "assistant_voice"
+    assert trace["action_trace"]["requested_level"] == 1.0
+    assert trace["action_trace"]["status"] == "executed"
+    assert trace["action_trace"]["verified_state"] == {
+        "input_number.kukui_tts_volume_day": "1.0",
+        "input_number.kukui_tts_volume_night": "1.0",
+        "input_number.kukui_fallback_clip_volume": "1.0",
+    }
+    assert len(calls) == 3

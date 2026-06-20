@@ -17,7 +17,12 @@ from homeassistant.util import ulid
 from voluptuous_openapi import convert
 
 from .api import LLMGatewayClient, LLMGatewayError, ToolChoice
-from .capabilities import RouteDecision, decide_route
+from .capabilities import (
+    MultiIntentPlan,
+    RouteDecision,
+    decide_route,
+    plan_multi_intent,
+)
 from .capability_executor import async_try_execute_local_capability
 from .const import (
     CONF_TEMPERATURE,
@@ -304,6 +309,53 @@ def _has_tool(tools: list[dict[str, Any]] | None, tool_name: str) -> bool:
     return False
 
 
+def _is_live_context_task_type(task_type: str) -> bool:
+    return task_type in {
+        "weather_query",
+        "home_state",
+        "indoor_environment_query",
+        "outdoor_current_weather_query",
+        "home_temperature_summary",
+    }
+
+
+def _multi_intent_is_local(plan: MultiIntentPlan) -> bool:
+    """Return whether all planned subtasks can complete without model execution."""
+    if not plan.is_multi_intent:
+        return False
+    for subtask in plan.subtasks:
+        decision = subtask.route_decision
+        if decision.forecast_required or decision.requires_external_info:
+            return False
+        if decision.task_type in INVENTORY_TASK_TYPES:
+            continue
+        if decision.next_action == "call_tool_then_local_render":
+            continue
+        return False
+    return True
+
+
+def _compose_spoken_subanswers(subanswers: list[str]) -> str:
+    """Compose local subtask answers into one concise spoken response."""
+    parts = [part.strip() for part in subanswers if part and part.strip()]
+    if not parts:
+        return ""
+    return " ".join(_ensure_sentence(part) for part in parts)
+
+
+def _final_must_cover(plan: MultiIntentPlan) -> list[str]:
+    """Return stable coverage keys for every subtask the composer must include."""
+    return [
+        f"{subtask.route_decision.task_type}:{subtask.index}"
+        for subtask in plan.subtasks
+    ]
+
+
+def _ensure_sentence(text: str) -> str:
+    value = str(text or "").strip()
+    return value if value.endswith(("。", "！", "？", ".", "!", "?")) else f"{value}。"
+
+
 def _chat_log_has_tool(chat_log: conversation.ChatLog, tool_name: str) -> bool:
     llm_api = getattr(chat_log, "llm_api", None)
     return any(
@@ -567,6 +619,20 @@ class LLMGatewayConversationEntity(
             "first_response",
             attrs=first_response.as_dict(),
         )
+        multi_intent_plan = plan_multi_intent(user_input.text)
+        if multi_intent_plan.is_multi_intent:
+            multi_intent_result = await self._async_try_multi_intent(
+                user_input,
+                chat_log,
+                started,
+                first_response,
+                route_decision,
+                multi_intent_plan,
+                run_id,
+                turn_token,
+            )
+            if multi_intent_result is not None:
+                return multi_intent_result
         if (
             route_decision.next_action == "execute_local"
             and route_decision.route == "local_action"
@@ -906,6 +972,7 @@ class LLMGatewayConversationEntity(
                     user_input.text,
                     result,
                     task_type=first_response.task_type,
+                    route_decision=route_decision,
                 )
                 if local_state is not None:
                     self._mark_run(
@@ -979,6 +1046,176 @@ class LLMGatewayConversationEntity(
             turn_token,
         )
 
+    async def _async_try_multi_intent(  # noqa: PLR0911, PLR0913
+        self,
+        user_input: conversation.ConversationInput,
+        chat_log: conversation.ChatLog,
+        started: float,
+        first_response: FirstResponseDecision,
+        route_decision: RouteDecision,
+        multi_intent_plan: MultiIntentPlan,
+        run_id: str,
+        turn_token: TurnToken,
+    ) -> conversation.ConversationResult | None:
+        """Execute supported local subtasks and compose one short spoken answer."""
+        runtime = self.entry.runtime_data
+        if not _multi_intent_is_local(multi_intent_plan):
+            return None
+        if any(
+            subtask.route_decision.next_action == "call_tool_then_local_render"
+            for subtask in multi_intent_plan.subtasks
+        ) and not _chat_log_has_tool(chat_log, LIVE_CONTEXT_TOOL_NAME):
+            return None
+
+        self._mark_run(
+            runtime,
+            run_id,
+            "multi_intent_plan",
+            attrs=multi_intent_plan.as_dict(),
+        )
+        final_must_cover = _final_must_cover(multi_intent_plan)
+        subanswers: list[str] = []
+        subtask_traces: list[dict[str, Any]] = []
+        for subtask in multi_intent_plan.subtasks:
+            decision = subtask.route_decision
+            if decision.task_type in INVENTORY_TASK_TYPES:
+                inventory = render_device_inventory(subtask.text, chat_log.content)
+                if inventory is None:
+                    return None
+                self._mark_run(
+                    runtime,
+                    run_id,
+                    "local_inventory_render",
+                    attrs={
+                        **inventory.trace_attrs(),
+                        "subtask_index": subtask.index,
+                        "subtask_text": subtask.text,
+                    },
+                )
+                subanswers.append(inventory.speech)
+                subtask_traces.append(subtask.as_dict())
+                continue
+
+            if decision.next_action != "call_tool_then_local_render":
+                return None
+            tool_args = _local_live_context_tool_args(subtask.text)
+            tool_call = llm.ToolInput(
+                id=ulid.ulid_now(),
+                tool_name=LIVE_CONTEXT_TOOL_NAME,
+                tool_args=tool_args,
+            )
+            self._mark_run(
+                runtime,
+                run_id,
+                "local_live_context_call",
+                attrs={
+                    "name": LIVE_CONTEXT_TOOL_NAME,
+                    "args": tool_args,
+                    "subtask_index": subtask.index,
+                    "subtask_text": subtask.text,
+                    "llm_used": False,
+                    "tools_used": [LIVE_CONTEXT_TOOL_NAME],
+                },
+            )
+            llm_api = chat_log.llm_api
+            if llm_api is None:
+                return None
+            try:
+                result = await llm_api.async_call_tool(tool_call)
+            except (HomeAssistantError, ValueError) as err:
+                self._mark_run(
+                    runtime,
+                    run_id,
+                    "tool_result",
+                    status="error",
+                    attrs={
+                        "name": LIVE_CONTEXT_TOOL_NAME,
+                        "iteration": 0,
+                        "local_live_context": True,
+                        "subtask_index": subtask.index,
+                        "error": type(err).__name__,
+                    },
+                )
+                return None
+            self._mark_run(
+                runtime,
+                run_id,
+                "tool_result",
+                status="error" if "error" in result else "ok",
+                attrs={
+                    "name": LIVE_CONTEXT_TOOL_NAME,
+                    "iteration": 0,
+                    "local_live_context": True,
+                    "subtask_index": subtask.index,
+                },
+            )
+            rendered = None
+            if "error" not in result:
+                rendered = render_scalar_state_answer(
+                    subtask.text,
+                    result,
+                    task_type=decision.task_type,
+                    route_decision=decision,
+                )
+            if rendered is None:
+                return None
+            self._mark_run(
+                runtime,
+                run_id,
+                "local_state_render",
+                status="ok" if rendered.answerable else "error",
+                attrs={
+                    **rendered.trace_attrs(),
+                    "subtask_index": subtask.index,
+                    "subtask_text": subtask.text,
+                },
+            )
+            subanswers.append(rendered.speech)
+            subtask_traces.append(subtask.as_dict())
+
+        speech = _compose_spoken_subanswers(subanswers)
+        if not speech:
+            return None
+        self._mark_run(
+            runtime,
+            run_id,
+            "spoken_answer_composer",
+            attrs={
+                "subanswer_count": len(subanswers),
+                "llm_final_used": False,
+                "subtasks": subtask_traces,
+                "final_must_cover": final_must_cover,
+            },
+        )
+        async for _tool_result in chat_log.async_add_assistant_content(
+            conversation.AssistantContent(agent_id=self.entity_id, content=speech)
+        ):
+            pass
+        return await self._async_finalize_turn(
+            user_input,
+            chat_log,
+            started,
+            {
+                "kind": "local_multi_intent",
+                "model": "spoken_answer_composer",
+                "max_tokens": 0,
+                "timeout_s": 0,
+                "async_deep_task": False,
+                "first_response": first_response.as_dict(),
+                "route_decision": {
+                    **route_decision.as_dict(),
+                    "metadata": {
+                        **dict(route_decision.metadata),
+                        "multi_intent": True,
+                        "subtasks": subtask_traces,
+                        "final_must_cover": final_must_cover,
+                    },
+                },
+            },
+            run_id,
+            turn_token,
+        )
+
     async def _async_finalize_turn(  # noqa: PLR0913
         self,
         user_input: conversation.ConversationInput,
@@ -1038,7 +1275,10 @@ class LLMGatewayConversationEntity(
                 attrs=grounding.as_dict(),
             )
         if grounded_spoken:
-            result.response.async_set_speech(markdown_to_spoken_text(grounded_spoken))
+            max_sentences = 4 if route_trace.get("kind") == "local_multi_intent" else 2
+            result.response.async_set_speech(
+                markdown_to_spoken_text(grounded_spoken, max_sentences=max_sentences)
+            )
             self._mark_run(runtime, run_id, "tts_cleaned")
         assistant_text = result.response.speech.get("plain", {}).get("speech", "")
         await runtime.memory.async_record_turn(
@@ -1374,7 +1614,7 @@ class LLMGatewayConversationEntity(
                         effective_tools,
                         force_tool_call=force_tool_call,
                         force_live_context=(
-                            first_response.task_type in {"weather_query", "home_state"}
+                            _is_live_context_task_type(first_response.task_type)
                             and iteration == 1
                         ),
                         require_grounding=iteration == 1,
@@ -1578,7 +1818,7 @@ class LLMGatewayConversationEntity(
                     attrs={"name": tool_result.tool_name, "iteration": iteration},
                 )
                 if (
-                    first_response.task_type in {"weather_query", "home_state"}
+                    _is_live_context_task_type(first_response.task_type)
                     and tool_result.tool_name == LIVE_CONTEXT_TOOL_NAME
                     and "error" not in result
                 ):
@@ -1751,9 +1991,13 @@ def _trace_status(assistant_text: str) -> str:
 
 def _empty_response_fallback(first_response: FirstResponseDecision) -> str:
     """Return a short safe fallback for task types that must not go silent."""
-    if first_response.task_type == "weather_query":
+    if first_response.task_type in {"weather_query", "outdoor_current_weather_query"}:
         return WEATHER_CONTEXT_FALLBACK_SPEECH
-    if first_response.task_type == "home_state":
+    if first_response.task_type in {
+        "home_state",
+        "indoor_environment_query",
+        "home_temperature_summary",
+    }:
         return HOME_STATE_FALLBACK_SPEECH
     if first_response.task_type == "high_risk":
         return first_response.spoken_hint or HIGH_RISK_FALLBACK_SPEECH

@@ -5,6 +5,8 @@ from __future__ import annotations
 from custom_components.llm_gateway.capabilities import (
     CAPABILITY_REGISTRY,
     decide_route,
+    plan_multi_intent,
+    plan_typed_semantic,
 )
 
 
@@ -34,6 +36,97 @@ def test_home_inventory_family_stays_local_static():
     assert decision.route == "local_static_context"
     assert not decision.requires_llm
     assert not decision.allowed_tools
+
+
+def test_multi_intent_planner_splits_inventory_and_temperature():
+    plan = plan_multi_intent("你现在我们家里有哪些设备？家里的温度是什么样的？")
+
+    assert plan.is_multi_intent
+    assert [subtask.route_decision.task_type for subtask in plan.subtasks] == [
+        "device_inventory_query",
+        "home_temperature_summary",
+    ]
+    assert plan.subtasks[0].route_decision.route == "local_static_context"
+    assert plan.subtasks[1].route_decision.route == "local_live_context"
+
+
+def test_multi_intent_planner_splits_temperature_and_humidity_with_area():
+    plan = plan_multi_intent("卧室温度和湿度分别是多少？")
+
+    assert plan.is_multi_intent
+    assert [subtask.text for subtask in plan.subtasks] == [
+        "卧室温度是多少",
+        "卧室湿度是多少",
+    ]
+    assert all(
+        subtask.route_decision.route == "local_live_context"
+        for subtask in plan.subtasks
+    )
+
+
+def test_typed_semantic_plan_exposes_required_frame_fields():
+    plan = plan_typed_semantic("你现在我们家里有哪些设备？家里的温度是什么样的？")
+
+    assert plan.is_composite
+    assert [frame.operation for frame in plan.frames] == [
+        "inventory_summary",
+        "home_temperature_summary",
+    ]
+    for frame in plan.frames:
+        data = frame.as_dict()
+        assert {
+            "domain",
+            "operation",
+            "scope",
+            "area",
+            "metric",
+            "time_horizon",
+            "data_requirement",
+            "forecast_required",
+            "risk",
+            "capability",
+        } <= data.keys()
+
+
+def test_multi_intent_planner_splits_indoor_and_outdoor_temperature():
+    plan = plan_typed_semantic("室内和室外温度分别是多少？")
+
+    assert plan.is_composite
+    assert [frame.scope for frame in plan.frames] == [
+        "indoor_environment",
+        "outdoor_weather",
+    ]
+    assert [frame.capability for frame in plan.frames] == [
+        "indoor_environment_query",
+        "outdoor_current_weather_query",
+    ]
+
+
+def test_weather_route_contract_separates_forecast_from_indoor_state():
+    tomorrow = decide_route("明天的天气怎么样？")
+
+    assert tomorrow.task_type == "weather_forecast_query"
+    assert tomorrow.scope == "outdoor_weather"
+    assert tomorrow.time_horizon == "tomorrow"
+    assert tomorrow.forecast_required
+    assert tomorrow.requires_external_info
+    assert tomorrow.allowed_tools == ("search_web",)
+
+    bedroom = decide_route("卧室温度是多少？")
+    assert bedroom.task_type == "indoor_environment_query"
+    assert bedroom.scope == "indoor_environment"
+    assert bedroom.time_horizon == "now"
+    assert not bedroom.forecast_required
+
+    home_air = decide_route("家里空气质量怎么样？")
+    assert home_air.task_type == "home_state"
+    assert home_air.scope == "home_summary"
+    assert not home_air.forecast_required
+
+    jingan = decide_route("静安天气怎么样？")
+    assert jingan.task_type == "outdoor_current_weather_query"
+    assert jingan.scope == "outdoor_weather"
+    assert jingan.location_hint == "静安"
 
 
 def test_location_dependent_paraphrases_require_location_without_explicit_place():
@@ -129,7 +222,7 @@ def test_home_state_routes_to_local_live_context_without_llm():
         decision = decide_route(text)
 
         assert decision.task_family == "home_state", text
-        assert decision.task_type == "home_state"
+        assert decision.task_type == "indoor_environment_query"
         assert decision.route == "local_live_context"
         assert decision.next_action == "call_tool_then_local_render"
         assert not decision.requires_llm
@@ -163,7 +256,7 @@ def test_bare_lookup_weather_stays_home_state():
     decision = decide_route("查一下今天空气质量")
 
     assert decision.task_family == "home_state"
-    assert decision.task_type == "weather_query"
+    assert decision.task_type == "indoor_environment_query"
     assert decision.route == "local_live_context"
     assert decision.next_action == "call_tool_then_local_render"
     assert not decision.requires_llm
@@ -183,7 +276,7 @@ def test_default_weather_stays_home_state():
     decision = decide_route("空气质量怎么样？")
 
     assert decision.task_family == "home_state"
-    assert decision.task_type == "weather_query"
+    assert decision.task_type == "indoor_environment_query"
     assert decision.route == "local_live_context"
     assert decision.next_action == "call_tool_then_local_render"
     assert not decision.requires_llm

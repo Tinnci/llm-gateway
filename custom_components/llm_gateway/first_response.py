@@ -12,6 +12,10 @@ TaskType = Literal[
     "home_control",
     "home_state",
     "weather_query",
+    "indoor_environment_query",
+    "outdoor_current_weather_query",
+    "weather_forecast_query",
+    "home_temperature_summary",
     "device_inventory_query",
     "area_inventory_query",
     "domain_inventory_query",
@@ -125,17 +129,29 @@ def decide_first_response(text: str) -> FirstResponseDecision:  # noqa: PLR0911,
             FAST_PROCESSING_CUE_DELAY_S,
             "explicit_or_current_search",
         )
-    if route.task_type == "weather_query":
+    if route.task_type in {"weather_query", "outdoor_current_weather_query"}:
         return _decision(
-            "weather_query",
+            route.task_type,
             "none",
             "",
             DEFAULT_PROCESSING_CUE_DELAY_S,
             "home_state_weather",
         )
-    if route.task_type == "home_state":
+    if route.task_type == "weather_forecast_query":
         return _decision(
-            "home_state",
+            "weather_forecast_query",
+            "search",
+            "",
+            DEFAULT_PROCESSING_CUE_DELAY_S,
+            "weather_forecast",
+        )
+    if route.task_type in {
+        "home_state",
+        "indoor_environment_query",
+        "home_temperature_summary",
+    }:
+        return _decision(
+            route.task_type,
             "none",
             "",
             DEFAULT_PROCESSING_CUE_DELAY_S,
@@ -144,9 +160,9 @@ def decide_first_response(text: str) -> FirstResponseDecision:  # noqa: PLR0911,
     if route.task_type == "stable_fact":
         return _decision(
             "stable_fact",
-            "thinking",
-            "我看一下。",
-            THINKING_PROCESSING_CUE_DELAY_S,
+            "none",
+            "",
+            DEFAULT_PROCESSING_CUE_DELAY_S,
             "stable_fact_question",
         )
     if route.task_family == "volume_control":

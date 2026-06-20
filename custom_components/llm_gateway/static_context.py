@@ -11,6 +11,8 @@ if TYPE_CHECKING:
 
     from homeassistant.components import conversation
 
+    from .capabilities import RouteDecision
+
 STATIC_CONTEXT_MARKER = "Static Context:"
 MAX_DEVICE_EXAMPLES = 8
 INVENTORY_SCORE_THRESHOLD = 4
@@ -238,6 +240,11 @@ class ScalarStateRenderResult:
     entity_count: int
     entities: tuple[ExposedEntity, ...]
     metrics: tuple[str, ...]
+    answerable: bool = True
+    missing_requirements: tuple[str, ...] = ()
+    required_data: tuple[str, ...] = ()
+    available_data: tuple[str, ...] = ()
+    skipped_entities: tuple[str, ...] = ()
 
     def trace_attrs(self) -> dict[str, object]:
         """Return Voice Harness timeline attrs for the local state renderer."""
@@ -246,6 +253,11 @@ class ScalarStateRenderResult:
             "source": self.source,
             "entity_count": self.entity_count,
             "metrics": list(self.metrics),
+            "answerable": self.answerable,
+            "missing_requirements": list(self.missing_requirements),
+            "required_data": list(self.required_data),
+            "available_data": list(self.available_data),
+            "skipped_entities": list(self.skipped_entities),
             "entities": [
                 {
                     "name": entity.name,
@@ -459,11 +471,12 @@ def render_device_inventory(
     return ExposedEntityIndex.from_content(content).render(text)
 
 
-def render_scalar_state_answer(
+def render_scalar_state_answer(  # noqa: PLR0911
     text: str,
     tool_result: dict[str, object],
     *,
     task_type: str = "home_state",
+    route_decision: RouteDecision | None = None,
 ) -> ScalarStateRenderResult | None:
     """Render deterministic scalar state answers from GetLiveContext output."""
     if tool_result.get("success") is not True:
@@ -480,9 +493,65 @@ def render_scalar_state_answer(
     if not entities:
         return None
 
+    required_data = _required_data(route_decision)
+    available_data = _available_data(entities)
+    if _forecast_required(route_decision):
+        return ScalarStateRenderResult(
+            speech=_forecast_missing_speech(route_decision),
+            task_type=task_type,
+            source="GetLiveContext",
+            entity_count=len(entities),
+            entities=entities,
+            metrics=("weather",),
+            answerable=False,
+            missing_requirements=("forecast",),
+            required_data=required_data,
+            available_data=available_data,
+        )
+
     metrics = _state_metrics_from_text(text)
-    selected = _select_state_entities(entities, metrics)
+    if _is_home_temperature_summary(route_decision, metrics):
+        return _render_home_temperature_summary(
+            entities,
+            task_type=task_type,
+            required_data=required_data,
+            available_data=available_data,
+        )
+
+    candidate_entities = entities
+    if _requires_outdoor_weather(route_decision):
+        candidate_entities = tuple(
+            entity for entity in entities if _is_outdoor_weather_entity(entity)
+        )
+        if not candidate_entities:
+            return ScalarStateRenderResult(
+                speech="我现在只能看到当前室内读数，还没有室外天气数据。",
+                task_type=task_type,
+                source="GetLiveContext",
+                entity_count=len(entities),
+                entities=entities,
+                metrics=metrics or ("weather",),
+                answerable=False,
+                missing_requirements=("outdoor_weather",),
+                required_data=required_data,
+                available_data=available_data,
+            )
+
+    selected = _select_state_entities(candidate_entities, metrics)
     if not selected:
+        if _requires_outdoor_weather(route_decision):
+            return ScalarStateRenderResult(
+                speech="我现在只能看到当前室内读数，还没有室外天气数据。",
+                task_type=task_type,
+                source="GetLiveContext",
+                entity_count=len(entities),
+                entities=entities,
+                metrics=metrics or ("weather",),
+                answerable=False,
+                missing_requirements=("outdoor_weather",),
+                required_data=required_data,
+                available_data=available_data,
+            )
         return None
 
     speech = _render_scalar_state_summary(text, selected, metrics)
@@ -493,7 +562,135 @@ def render_scalar_state_answer(
         entity_count=len(selected),
         entities=selected,
         metrics=metrics,
+        required_data=required_data,
+        available_data=available_data,
     )
+
+
+def _forecast_required(route_decision: RouteDecision | None) -> bool:
+    return bool(getattr(route_decision, "forecast_required", False))
+
+
+def _requires_outdoor_weather(route_decision: RouteDecision | None) -> bool:
+    return getattr(route_decision, "scope", "") == "outdoor_weather"
+
+
+def _is_home_temperature_summary(
+    route_decision: RouteDecision | None,
+    metrics: tuple[str, ...],
+) -> bool:
+    return getattr(route_decision, "task_type", "") == "home_temperature_summary" or (
+        getattr(route_decision, "scope", "") == "home_summary"
+        and "temperature" in metrics
+    )
+
+
+def _forecast_missing_speech(route_decision: RouteDecision | None) -> str:
+    horizon = str(getattr(route_decision, "time_horizon", "") or "")
+    label = "明天" if horizon == "tomorrow" else "未来"
+    return f"我现在只能看到当前读数，还没有{label}的预报数据。"
+
+
+def _required_data(route_decision: RouteDecision | None) -> tuple[str, ...]:
+    if _forecast_required(route_decision):
+        return ("weather_forecast",)
+    if _requires_outdoor_weather(route_decision):
+        return ("outdoor_weather",)
+    if getattr(route_decision, "task_type", "") == "home_temperature_summary":
+        return ("temperature_by_area",)
+    return ("current_sensor_snapshot",)
+
+
+def _available_data(entities: tuple[ExposedEntity, ...]) -> tuple[str, ...]:
+    available: list[str] = []
+    if any(entity.domain == "sensor" for entity in entities):
+        available.append("current_sensor_snapshot")
+    if any(_is_outdoor_weather_entity(entity) for entity in entities):
+        available.append("outdoor_weather")
+    if any(_metric_for_entity(entity) == "temperature" for entity in entities):
+        available.append("temperature_by_area")
+    if any(entity.domain == "weather" for entity in entities):
+        available.append("weather_entity")
+    return tuple(_dedup_names(available))
+
+
+def _is_outdoor_weather_entity(entity: ExposedEntity) -> bool:
+    normalized_name = _normalize_query_text(entity.name)
+    normalized_areas = tuple(_normalize_query_text(area) for area in entity.areas)
+    if entity.domain == "weather":
+        return True
+    if any(term in normalized_name for term in ("天气", "室外", "外面", "静安")):
+        return True
+    return any(area in {"室外", "户外", "阳台"} for area in normalized_areas)
+
+
+def _render_home_temperature_summary(
+    entities: tuple[ExposedEntity, ...],
+    *,
+    task_type: str,
+    required_data: tuple[str, ...],
+    available_data: tuple[str, ...],
+) -> ScalarStateRenderResult:
+    readings: list[tuple[str, ExposedEntity]] = []
+    skipped: list[str] = []
+    seen_labels: set[str] = set()
+    for entity in entities:
+        if _metric_for_entity(entity) != "temperature":
+            continue
+        label = _summary_area_label(entity)
+        if not _state_is_available(entity.state):
+            skipped.append(entity.name)
+            continue
+        if label in seen_labels:
+            skipped.append(entity.name)
+            continue
+        seen_labels.add(label)
+        readings.append((label, entity))
+
+    if not readings:
+        return ScalarStateRenderResult(
+            speech="我现在没有看到可用的家里温度读数。",
+            task_type=task_type,
+            source="GetLiveContext",
+            entity_count=0,
+            entities=(),
+            metrics=("temperature",),
+            answerable=False,
+            missing_requirements=("temperature_by_area",),
+            required_data=required_data,
+            available_data=available_data,
+            skipped_entities=tuple(skipped),
+        )
+
+    parts = [
+        f"{label} {_state_with_spoken_unit(entity)}" for label, entity in readings[:5]
+    ]
+    return ScalarStateRenderResult(
+        speech=f"家里温度：{'，'.join(parts)}。",
+        task_type=task_type,
+        source="GetLiveContext",
+        entity_count=len(readings),
+        entities=tuple(entity for _, entity in readings),
+        metrics=("temperature",),
+        required_data=required_data,
+        available_data=available_data,
+        skipped_entities=tuple(skipped),
+    )
+
+
+def _summary_area_label(entity: ExposedEntity) -> str:
+    normalized_name = _normalize_query_text(entity.name)
+    if _is_outdoor_weather_entity(entity):
+        if "静安" in normalized_name:
+            return "室外/静安"
+        return "室外"
+    for area in entity.areas:
+        if area:
+            return area
+    for area in COMMON_AREAS:
+        if area in entity.name:
+            return area
+    return entity.name
 
 
 def parse_static_devices_from_content(

@@ -255,6 +255,17 @@ async def test_trace_store_serializes_debug_run_detail(hass):
                     },
                 },
                 {
+                    "stage": "first_response_audio",
+                    "t_ms": 42,
+                    "status": "error",
+                    "attrs": {
+                        "first_response_audio.scheduled": True,
+                        "first_response_audio.suppressed_reason": (
+                            "playback_unavailable"
+                        ),
+                    },
+                },
+                {
                     "stage": "search_result",
                     "t_ms": 1400,
                     "status": "error",
@@ -382,6 +393,13 @@ async def test_trace_store_serializes_debug_run_detail(hass):
     assert record["first_response_audio"]["scheduled"] is True
     assert record["first_response_audio"]["played"] is False
     assert record["first_response_audio"]["suppressed_reason"] == "playback_unavailable"
+    audio_path = next(
+        item
+        for item in record["critical_path"]
+        if item["stage"] == "first_response_audio"
+    )
+    assert audio_path["blocking"] is False
+    assert audio_path["reason"] == "feedback_playback"
     assert record["errors"][0]["type"] == "tool_error"
     assert record["timeline_spans"][1]["stage"] == "first_response"
 

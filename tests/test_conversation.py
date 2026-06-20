@@ -751,6 +751,149 @@ async def test_home_state_uses_local_live_context_without_model(
     assert render_span["attrs"]["source"] == "GetLiveContext"
 
 
+async def test_multi_intent_inventory_and_temperature_answers_both_subtasks(
+    hass, aioclient_mock, mock_config_entry
+):
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {
+            CONF_LLM_HASS_API: "assist",
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
+        },
+    )
+    live_calls: list[dict] = []
+
+    class FakeLiveContextApi:
+        custom_serializer = None
+
+        def __init__(self) -> None:
+            self.tools = [SimpleNamespace(name=LIVE_CONTEXT_TOOL_NAME)]
+
+        async def async_call_tool(self, tool_input: llm.ToolInput):
+            assert tool_input.tool_name == LIVE_CONTEXT_TOOL_NAME
+            live_calls.append(dict(tool_input.tool_args))
+            return LIVE_CONTEXT_RESULT
+
+    async def provide_live_context_api(
+        self,
+        *_args: object,
+        **_kwargs: object,
+    ) -> None:
+        self.llm_api = FakeLiveContextApi()
+        self.content.append(conversation.SystemContent(content=STATIC_CONTEXT))
+
+    with (
+        patch(
+            "homeassistant.components.conversation.ChatLog.async_provide_llm_data",
+            provide_live_context_api,
+        ),
+        patch(
+            "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
+        ) as completion,
+    ):
+        result = await conversation.async_converse(
+            hass,
+            "你现在我们家里有哪些设备？家里的温度是什么样的？",
+            None,
+            Context(),
+            agent_id=agent_id,
+        )
+
+    completion.assert_not_called()
+    speech = result.response.speech["plain"]["speech"]
+    assert "我能看到这些设备" in speech
+    assert "25.5 度" in speech
+    assert live_calls == [{"domain": "sensor"}]
+    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+    assert trace["route"]["kind"] == "local_multi_intent"
+    assert trace["route_decision"]["metadata"]["multi_intent"] is True
+    assert trace["route_decision"]["metadata"]["final_must_cover"] == [
+        "device_inventory_query:0",
+        "home_temperature_summary:1",
+    ]
+    composer = next(
+        span
+        for span in trace["timeline_spans"]
+        if span["stage"] == "spoken_answer_composer"
+    )
+    assert composer["attrs"]["final_must_cover"] == [
+        "device_inventory_query:0",
+        "home_temperature_summary:1",
+    ]
+    stages = [span["stage"] for span in trace["timeline_spans"]]
+    assert "multi_intent_plan" in stages
+    assert "local_inventory_render" in stages
+    assert "local_state_render" in stages
+
+
+async def test_multi_intent_temperature_and_humidity_answers_both_metrics(
+    hass, aioclient_mock, mock_config_entry
+):
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {
+            CONF_LLM_HASS_API: "assist",
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
+        },
+    )
+
+    class FakeLiveContextApi:
+        custom_serializer = None
+
+        def __init__(self) -> None:
+            self.tools = [SimpleNamespace(name=LIVE_CONTEXT_TOOL_NAME)]
+
+        async def async_call_tool(self, tool_input: llm.ToolInput):
+            assert tool_input.tool_name == LIVE_CONTEXT_TOOL_NAME
+            return LIVE_CONTEXT_RESULT
+
+    async def provide_live_context_api(
+        self,
+        *_args: object,
+        **_kwargs: object,
+    ) -> None:
+        self.llm_api = FakeLiveContextApi()
+        self.content.append(conversation.SystemContent(content=STATIC_CONTEXT))
+
+    with (
+        patch(
+            "homeassistant.components.conversation.ChatLog.async_provide_llm_data",
+            provide_live_context_api,
+        ),
+        patch(
+            "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
+        ) as completion,
+    ):
+        result = await conversation.async_converse(
+            hass,
+            "卧室温度和湿度分别是多少？",
+            None,
+            Context(),
+            agent_id=agent_id,
+        )
+
+    completion.assert_not_called()
+    speech = result.response.speech["plain"]["speech"]
+    assert "卧室现在 25.5 度" in speech
+    assert "卧室湿度现在 80.2%" in speech
+    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+    assert trace["route"]["kind"] == "local_multi_intent"
+    assert trace["route_decision"]["metadata"]["final_must_cover"] == [
+        "indoor_environment_query:0",
+        "indoor_environment_query:1",
+    ]
+
+
 async def test_weather_query_uses_local_context_path_without_forced_search(
     hass, aioclient_mock, mock_config_entry
 ):
@@ -810,7 +953,9 @@ async def test_weather_query_uses_local_context_path_without_forced_search(
         "function": {"name": "search_web"},
     }
     trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
-    assert trace["first_response_decision"]["task_type"] == "weather_query"
+    assert (
+        trace["first_response_decision"]["task_type"] == "outdoor_current_weather_query"
+    )
     assert trace["search_gate"]["decision"] == "local_weather_first"
     assert not trace["search_debug"]["searched"]
     assert trace["weather_context_path"]["path"] == "GetLiveContext"
@@ -1120,7 +1265,7 @@ async def test_home_state_empty_final_gets_status_fallback(
 
     assert result.response.speech["plain"]["speech"] == "暂时没有本地状态数据。"
     trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
-    assert trace["first_response_decision"]["task_type"] == "home_state"
+    assert trace["first_response_decision"]["task_type"] == "indoor_environment_query"
     assert trace["final_speech_text"] == "暂时没有本地状态数据。"
     assert any(span["stage"] == "fallback_final" for span in trace["timeline_spans"])
 

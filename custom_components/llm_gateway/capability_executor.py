@@ -78,6 +78,7 @@ class LocalCapabilityResult:
     matches: tuple[dict[str, str], ...] = ()
     reason: str = ""
     panel: dict[str, Any] = field(default_factory=dict)
+    action_trace: dict[str, Any] = field(default_factory=dict)
 
     @property
     def handled(self) -> bool:
@@ -107,6 +108,7 @@ class LocalCapabilityResult:
             "service_calls": [dict(call) for call in self.service_calls],
             "matches": [dict(match) for match in self.matches],
             "panel": dict(self.panel),
+            "action_trace": dict(self.action_trace),
         }
 
 
@@ -280,13 +282,14 @@ async def _async_execute_assistant_volume(
             reason="assistant_volume_unconfigured",
         )
     service_calls: list[dict[str, Any]] = []
+    requested_level = candidate.volume_level or 0.5
     for entity_id in entity_ids:
         state = hass.states.get(entity_id)
-        value = _bounded_assistant_volume_value(state, candidate.volume_level or 0.5)
+        value = _bounded_assistant_volume_value(state, requested_level)
         await hass.services.async_call(
             "input_number",
             "set_value",
-            {ATTR_ENTITY_ID: entity_id, "value": value},
+            {ATTR_ENTITY_ID: [entity_id], "value": value},
             blocking=True,
         )
         service_calls.append(
@@ -294,13 +297,25 @@ async def _async_execute_assistant_volume(
                 "domain": "input_number",
                 "service": "set_value",
                 "entity_ids": [entity_id],
+                "value": value,
             }
         )
+    verified_state = {
+        entity_id: (state.state if (state := hass.states.get(entity_id)) else "")
+        for entity_id in entity_ids
+    }
     return LocalCapabilityResult(
         "executed",
         "我说话的音量已调整。",
         candidate=candidate,
         service_calls=tuple(service_calls),
+        action_trace={
+            "adapter": "ha_input_number",
+            "target": "assistant_voice",
+            "requested_level": requested_level,
+            "status": "executed",
+            "verified_state": verified_state,
+        },
     )
 
 

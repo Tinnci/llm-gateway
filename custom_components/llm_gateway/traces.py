@@ -37,6 +37,9 @@ _NON_BLOCKING_STAGES = {
     "summary",
     "memory_extraction",
     "deep_task_submitted",
+    "feedback",
+    "first_response_audio",
+    "display_status",
 }
 _ACTION_TOOL_PREFIXES = ("Hass",)
 
@@ -619,6 +622,9 @@ def _critical_path(
         blocking = stage not in _NON_BLOCKING_STAGES
         if stage in {"grounding_verifier", "verifier"} and verifier_mode != "blocking":
             blocking = False
+        reason = "voice_path" if blocking else "background_or_audit"
+        if stage in {"feedback", "first_response_audio", "display_status"}:
+            reason = "feedback_playback"
         path.append(
             {
                 "stage": stage,
@@ -626,7 +632,7 @@ def _critical_path(
                 "duration_ms": span.get("duration_ms") or 0,
                 "status": span.get("status") or "ok",
                 "blocking": blocking,
-                "reason": "voice_path" if blocking else "background_or_audit",
+                "reason": reason,
             }
         )
     return path
@@ -767,7 +773,7 @@ def _search_gate_summary(
     task_type = str(first_response.get("task_type") or "")
     reason = str(first_response.get("reason") or search_debug.get("gate_reason") or "")
     decision = "searched" if searched else "not_searched"
-    if task_type == "weather_query" and not searched:
+    if _is_weather_task_type(task_type) and not searched:
         decision = "local_weather_first"
     elif reason == "explicit_or_current_search":
         decision = (
@@ -808,7 +814,7 @@ def _weather_context_path(
     local_state_cache = "local_state_cache" in stages
     weather_entity = "weather_entity" in stages
     search_fallback = bool(search_debug.get("searched"))
-    if task_type != "weather_query" and not (
+    if not _is_weather_task_type(task_type) and not (
         live_context_calls or weather_entity or search_fallback
     ):
         return {
@@ -839,6 +845,14 @@ def _weather_context_path(
         "search_fallback": search_fallback,
         "duplicate_live_context_suppressed": "duplicate_live_context"
         in suppressed_reasons,
+    }
+
+
+def _is_weather_task_type(task_type: str) -> bool:
+    return task_type in {
+        "weather_query",
+        "outdoor_current_weather_query",
+        "weather_forecast_query",
     }
 
 

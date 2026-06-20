@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from homeassistant.components import conversation
 
+from custom_components.llm_gateway.capabilities import decide_route
 from custom_components.llm_gateway.static_context import (
     is_device_inventory_query,
     parse_static_devices,
@@ -214,3 +215,93 @@ def test_render_scalar_state_answer_handles_unavailable_single_metric() -> None:
 
     assert result
     assert result.speech == "客厅温度当前不可用。"
+
+
+def test_renderer_guard_rejects_forecast_from_current_sensor_snapshot() -> None:
+    result = render_scalar_state_answer(
+        "明天的天气怎么样？",
+        {
+            "success": True,
+            "result": (
+                "Live Context:\n"
+                "- names: 卧室温度\n"
+                "  domain: sensor\n"
+                "  state: '25.5'\n"
+                "  areas: 卧室\n"
+                "  unit_of_measurement: °C\n"
+            ),
+        },
+        task_type="weather_query",
+        route_decision=decide_route("明天的天气怎么样？"),
+    )
+
+    assert result is not None
+    assert result.speech == "我现在只能看到当前读数，还没有明天的预报数据。"
+    trace = result.trace_attrs()
+    assert trace["answerable"] is False
+    assert trace["missing_requirements"] == ["forecast"]
+
+
+def test_renderer_guard_rejects_outdoor_weather_from_indoor_snapshot() -> None:
+    result = render_scalar_state_answer(
+        "外面温度是多少？",
+        {
+            "success": True,
+            "result": (
+                "Live Context:\n"
+                "- names: 卧室温度\n"
+                "  domain: sensor\n"
+                "  state: '25.5'\n"
+                "  areas: 卧室\n"
+                "  unit_of_measurement: °C\n"
+            ),
+        },
+        task_type="outdoor_current_weather_query",
+        route_decision=decide_route("外面温度是多少？"),
+    )
+
+    assert result is not None
+    assert result.speech == "我现在只能看到当前室内读数，还没有室外天气数据。"
+    trace = result.trace_attrs()
+    assert trace["answerable"] is False
+    assert trace["missing_requirements"] == ["outdoor_weather"]
+
+
+def test_home_temperature_summary_lists_areas_and_skips_unavailable() -> None:
+    result = render_scalar_state_answer(
+        "家里的温度是什么样的？",
+        {
+            "success": True,
+            "result": (
+                "Live Context:\n"
+                "- names: 卧室温度\n"
+                "  domain: sensor\n"
+                "  state: '25.5'\n"
+                "  areas: 卧室\n"
+                "  unit_of_measurement: °C\n"
+                "- names: 客厅温度\n"
+                "  domain: sensor\n"
+                "  state: '24.1'\n"
+                "  areas: 客厅\n"
+                "  unit_of_measurement: °C\n"
+                "- names: 厨房温度\n"
+                "  domain: sensor\n"
+                "  state: unavailable\n"
+                "  areas: 厨房\n"
+                "  unit_of_measurement: °C\n"
+                "- names: 静安天气温度\n"
+                "  domain: weather\n"
+                "  state: '22'\n"
+                "  areas:\n"
+                "  unit_of_measurement: °C\n"
+            ),
+        },
+        task_type="home_temperature_summary",
+        route_decision=decide_route("家里的温度是什么样的？"),
+    )
+
+    assert result is not None
+    assert result.speech == "家里温度：卧室 25.5 度，客厅 24.1 度，室外/静安 22 度。"
+    trace = result.trace_attrs()
+    assert trace["metrics"] == ["temperature"]
+    assert trace["skipped_entities"] == ["厨房温度"]

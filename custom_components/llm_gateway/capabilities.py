@@ -29,6 +29,10 @@ TaskType = Literal[
     "home_control",
     "home_state",
     "weather_query",
+    "indoor_environment_query",
+    "outdoor_current_weather_query",
+    "weather_forecast_query",
+    "home_temperature_summary",
     "device_inventory_query",
     "area_inventory_query",
     "domain_inventory_query",
@@ -59,6 +63,32 @@ NextAction = Literal[
 ]
 
 RiskLevel = Literal["low", "privacy_location", "high"]
+EnvironmentScope = Literal[
+    "indoor_environment",
+    "outdoor_weather",
+    "home_summary",
+    "",
+]
+TimeHorizon = Literal["now", "today", "tomorrow", "future", ""]
+FrameDomain = Literal[
+    "home",
+    "environment",
+    "weather",
+    "knowledge",
+    "location",
+    "control",
+    "conversation",
+    "unknown",
+]
+DataRequirement = Literal[
+    "static_context",
+    "live_context",
+    "weather_forecast",
+    "external_search",
+    "location",
+    "none",
+    "unknown",
+]
 
 _LOCATION_WORDS = (
     "附近",
@@ -145,6 +175,20 @@ _CONTENT_GENERATION_RE = re.compile(
     r"(写|生成|总结|翻译|润色|起草|讲个|解释一下|说明一下)"
 )
 _NORMALIZE_RE = re.compile(r"[\s《》「」『』“”\"'`·.。,:：，、_\-—!?！？]+")
+_SENTENCE_SPLIT_RE = re.compile(r"[？?。!！；;]+")
+_FORECAST_TOMORROW_RE = re.compile(r"(明天|明日)")
+_FORECAST_FUTURE_RE = re.compile(r"(后天|大后天|周末|下周|未来|下午|晚上|今晚)")
+_LOCATION_HINT_RE = re.compile(
+    r"(静安|上海|浦东|黄浦|徐汇|长宁|人民广场|南京西路|陆家嘴)"
+)
+INVENTORY_TASK_TYPES = {
+    "device_inventory_query",
+    "area_inventory_query",
+    "domain_inventory_query",
+    "capability_query",
+    "exposed_context_query",
+    "static_context_query",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +225,10 @@ class RouteDecision:
     risk: RiskLevel = "low"
     missing_requirements: tuple[str, ...] = ()
     matched_capability: str = ""
+    scope: EnvironmentScope = ""
+    time_horizon: TimeHorizon = ""
+    forecast_required: bool = False
+    location_hint: str = ""
     metadata: dict[str, object] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, object]:
@@ -202,7 +250,126 @@ class RouteDecision:
             "risk": self.risk,
             "missing_requirements": list(self.missing_requirements),
             "matched_capability": self.matched_capability,
+            "scope": self.scope,
+            "time_horizon": self.time_horizon,
+            "forecast_required": self.forecast_required,
+            "location_hint": self.location_hint,
             "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class EnvironmentQuerySpec:
+    """Structured weather / indoor-environment query contract."""
+
+    scope: EnvironmentScope = ""
+    time_horizon: TimeHorizon = "now"
+    forecast_required: bool = False
+    location_hint: str = ""
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "scope": self.scope,
+            "time_horizon": self.time_horizon,
+            "forecast_required": self.forecast_required,
+            "location_hint": self.location_hint,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticFrame:
+    """One typed semantic frame in a capability-first plan."""
+
+    index: int
+    text: str
+    domain: FrameDomain
+    operation: str
+    scope: EnvironmentScope = ""
+    area: str = ""
+    metric: str = ""
+    time_horizon: TimeHorizon = ""
+    data_requirement: DataRequirement = "unknown"
+    forecast_required: bool = False
+    risk: RiskLevel = "low"
+    capability: str = ""
+
+    def as_dict(self) -> dict[str, object]:
+        """Return trace-safe typed frame metadata."""
+        return {
+            "index": self.index,
+            "text": self.text,
+            "domain": self.domain,
+            "operation": self.operation,
+            "scope": self.scope,
+            "area": self.area,
+            "metric": self.metric,
+            "time_horizon": self.time_horizon,
+            "data_requirement": self.data_requirement,
+            "forecast_required": self.forecast_required,
+            "risk": self.risk,
+            "capability": self.capability,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class TypedSemanticPlan:
+    """Typed semantic plan for one user utterance."""
+
+    original_text: str
+    frames: tuple[SemanticFrame, ...]
+
+    @property
+    def is_composite(self) -> bool:
+        return len(self.frames) > 1
+
+    def as_dict(self) -> dict[str, object]:
+        """Return trace-safe semantic plan metadata."""
+        return {
+            "original_text": self.original_text,
+            "is_composite": self.is_composite,
+            "frames": [frame.as_dict() for frame in self.frames],
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class MultiIntentSubtask:
+    """One independently routed user subtask."""
+
+    index: int
+    text: str
+    route_decision: RouteDecision
+    semantic_frame: SemanticFrame
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "index": self.index,
+            "text": self.text,
+            "route_decision": self.route_decision.as_dict(),
+            "semantic_frame": self.semantic_frame.as_dict(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class MultiIntentPlan:
+    """Planner output for an utterance that may contain several intents."""
+
+    original_text: str
+    subtasks: tuple[MultiIntentSubtask, ...]
+
+    @property
+    def is_multi_intent(self) -> bool:
+        return len(self.subtasks) > 1
+
+    def as_dict(self) -> dict[str, object]:
+        typed_plan = TypedSemanticPlan(
+            self.original_text,
+            tuple(subtask.semantic_frame for subtask in self.subtasks),
+        )
+        return {
+            "original_text": self.original_text,
+            "is_multi_intent": self.is_multi_intent,
+            "typed_semantic_plan": typed_plan.as_dict(),
+            "subtasks": [subtask.as_dict() for subtask in self.subtasks],
         }
 
 
@@ -343,6 +510,9 @@ def decide_route(text: str) -> RouteDecision:  # noqa: PLR0911, PLR0912
     if _VOLUME_RE.search(value):
         return _volume_route(value)
 
+    if _looks_like_environment_state_question(value):
+        return _environment_route(value, confidence=0.82)
+
     inventory_spec = classify_inventory_query(value)
     if inventory_spec is not None:
         family: TaskFamily = (
@@ -407,16 +577,7 @@ def decide_route(text: str) -> RouteDecision:  # noqa: PLR0911, PLR0912
         )
 
     if _WEATHER_RE.search(value):
-        return RouteDecision(
-            task_family="home_state",
-            task_type="weather_query",
-            confidence=0.82,
-            requires_live_home_context=True,
-            allowed_tools=("GetLiveContext",),
-            next_action="call_tool_then_local_render",
-            route="local_live_context",
-            matched_capability="home_state",
-        )
+        return _environment_route(value, confidence=0.86)
 
     if _EXTERNAL_CURRENT_RE.search(value):
         return RouteDecision(
@@ -432,16 +593,7 @@ def decide_route(text: str) -> RouteDecision:  # noqa: PLR0911, PLR0912
         )
 
     if _HOME_STATE_RE.search(value):
-        return RouteDecision(
-            task_family="home_state",
-            task_type="home_state",
-            confidence=0.74,
-            requires_live_home_context=True,
-            allowed_tools=("GetLiveContext",),
-            next_action="call_tool_then_local_render",
-            route="local_live_context",
-            matched_capability="home_state",
-        )
+        return _environment_route(value, confidence=0.74)
 
     if _STABLE_KNOWLEDGE_RE.search(value) or _is_literary_knowledge(value):
         return RouteDecision(
@@ -504,6 +656,216 @@ def task_family_for_text(text: str) -> TaskFamily:
     return decide_route(text).task_family
 
 
+def _environment_route(text: str, *, confidence: float) -> RouteDecision:
+    """Return the split environment/weather capability route for one query."""
+    environment = classify_environment_query(text)
+    task_type: TaskType = "home_state"
+    matched_capability = "indoor_environment_query"
+    if environment.forecast_required:
+        return RouteDecision(
+            task_family="external_current_info",
+            task_type="weather_forecast_query",
+            confidence=confidence,
+            requires_external_info=True,
+            requires_llm=True,
+            allowed_tools=("search_web",),
+            next_action="search",
+            route="mid",
+            matched_capability="weather_forecast_query",
+            scope=environment.scope or "outdoor_weather",
+            time_horizon=environment.time_horizon,
+            forecast_required=True,
+            location_hint=environment.location_hint,
+            missing_requirements=("forecast",),
+            metadata=environment.as_dict(),
+        )
+    if environment.scope == "outdoor_weather":
+        task_type = "outdoor_current_weather_query"
+        matched_capability = "outdoor_current_weather_query"
+    elif (
+        environment.scope == "home_summary" and _metric_from_text(text) == "temperature"
+    ):
+        task_type = "home_temperature_summary"
+        matched_capability = "home_temperature_summary"
+    elif environment.scope == "indoor_environment":
+        task_type = "indoor_environment_query"
+        matched_capability = "indoor_environment_query"
+    return RouteDecision(
+        task_family="home_state",
+        task_type=task_type,
+        confidence=confidence,
+        requires_live_home_context=True,
+        allowed_tools=("GetLiveContext",),
+        next_action="call_tool_then_local_render",
+        route="local_live_context",
+        matched_capability=matched_capability,
+        scope=environment.scope,
+        time_horizon=environment.time_horizon,
+        forecast_required=environment.forecast_required,
+        location_hint=environment.location_hint,
+        metadata=environment.as_dict() if environment.scope else {},
+    )
+
+
+def plan_multi_intent(text: str) -> MultiIntentPlan:
+    """Split supported multi-question utterances into independently routed subtasks."""
+    original = str(text or "").strip()
+    if not original:
+        return MultiIntentPlan(original, ())
+
+    expanded = _expand_indoor_outdoor_question(original)
+    if not expanded:
+        expanded = _expand_metric_pair_question(original)
+    parts = expanded or _split_sentence_subtasks(original)
+    parts = _inherit_previous_area(parts)
+    normalized_parts = [_normalize_subtask_for_route(part) for part in parts]
+    subtasks = tuple(
+        _subtask_for_text(index, part)
+        for index, part in enumerate(normalized_parts)
+        if part.strip()
+    )
+    if len(subtasks) <= 1:
+        return MultiIntentPlan(original, subtasks)
+    supported = tuple(
+        subtask
+        for subtask in subtasks
+        if subtask.route_decision.task_family
+        in {"home_inventory", "home_capability", "home_state"}
+    )
+    return MultiIntentPlan(original, supported if len(supported) > 1 else subtasks)
+
+
+def plan_typed_semantic(text: str) -> TypedSemanticPlan:
+    """Return the typed semantic plan for one user utterance."""
+    plan = plan_multi_intent(text)
+    return TypedSemanticPlan(
+        plan.original_text,
+        tuple(subtask.semantic_frame for subtask in plan.subtasks),
+    )
+
+
+def _subtask_for_text(index: int, text: str) -> MultiIntentSubtask:
+    decision = decide_route(text)
+    return MultiIntentSubtask(
+        index=index,
+        text=text,
+        route_decision=decision,
+        semantic_frame=_semantic_frame(index, text, decision),
+    )
+
+
+def classify_environment_query(text: str) -> EnvironmentQuerySpec:
+    """Return weather-vs-indoor scope and forecast requirements."""
+    value = str(text or "")
+    normalized = _normalize(value)
+    time_horizon: TimeHorizon = "now"
+    if _FORECAST_TOMORROW_RE.search(value):
+        time_horizon = "tomorrow"
+    elif "今天" in value or "今日" in value:
+        time_horizon = "today"
+    elif _FORECAST_FUTURE_RE.search(value):
+        time_horizon = "future"
+    forecast_required = time_horizon in {"tomorrow", "future"}
+    location_hint = _location_hint(value)
+
+    indoor_areas = ("卧室", "客厅", "餐厅", "厨房", "书房", "卫生间", "阳台")
+    indoor_metrics = ("温度", "湿度", "空气质量", "pm25", "pm2")
+    any_indoor_metrics = ("温度", "湿度", "空气质量", "pm25", "pm2", "co2", "tvoc")
+    has_indoor_area = any(area in value for area in indoor_areas)
+    if "家里" in value or "全屋" in value:
+        scope: EnvironmentScope = "home_summary"
+    elif "室内" in value or (
+        has_indoor_area and any(term in normalized for term in indoor_metrics)
+    ):
+        scope = "indoor_environment"
+    elif (
+        "外面" in value
+        or "室外" in value
+        or location_hint
+        or "天气" in value
+        or "下雨" in value
+        or "雨" in value
+    ):
+        scope = "outdoor_weather"
+    elif any(term in normalized for term in any_indoor_metrics):
+        scope = "indoor_environment"
+    else:
+        scope = ""
+    if forecast_required and not scope:
+        scope = "outdoor_weather"
+    return EnvironmentQuerySpec(
+        scope=scope,
+        time_horizon=time_horizon,
+        forecast_required=forecast_required,
+        location_hint=location_hint,
+    )
+
+
+def _semantic_frame(
+    index: int,
+    text: str,
+    decision: RouteDecision,
+) -> SemanticFrame:
+    """Build a typed semantic frame from a route decision."""
+    capability = decision.matched_capability or decision.task_type
+    metric = _metric_from_text(text)
+    operation = decision.task_type
+    domain: FrameDomain = "unknown"
+    data_requirement: DataRequirement = "unknown"
+    if decision.task_type in INVENTORY_TASK_TYPES:
+        domain = "home"
+        operation = "inventory_summary"
+        data_requirement = "static_context"
+    elif decision.task_type == "home_temperature_summary":
+        domain = "environment"
+        operation = "home_temperature_summary"
+        data_requirement = "live_context"
+        metric = metric or "temperature"
+    elif decision.task_type == "indoor_environment_query":
+        domain = "environment"
+        operation = "read_metric"
+        data_requirement = "live_context"
+    elif decision.task_type == "outdoor_current_weather_query":
+        domain = "weather"
+        operation = "current_weather"
+        data_requirement = "live_context"
+    elif decision.task_type == "weather_forecast_query":
+        domain = "weather"
+        operation = "forecast"
+        data_requirement = "weather_forecast"
+        metric = metric or "weather"
+    elif decision.task_family == "stable_knowledge":
+        domain = "knowledge"
+        operation = "answer_fact"
+        data_requirement = "none"
+    elif decision.task_family == "volume_control":
+        domain = "control"
+        operation = "set_volume"
+        data_requirement = "none"
+    elif decision.task_family == "location_dependent_query":
+        domain = "location"
+        operation = "nearby_place_search"
+        data_requirement = "location"
+    elif decision.task_family == "conversation_control":
+        domain = "conversation"
+        operation = "control_turn"
+        data_requirement = "none"
+    return SemanticFrame(
+        index=index,
+        text=text,
+        domain=domain,
+        operation=operation,
+        scope=decision.scope,
+        area=_area_hint(text),
+        metric=metric,
+        time_horizon=decision.time_horizon,
+        data_requirement=data_requirement,
+        forecast_required=decision.forecast_required,
+        risk=decision.risk,
+        capability=capability,
+    )
+
+
 def _unknown(reason: str) -> RouteDecision:
     return RouteDecision(
         task_family="unknown_or_ambiguous",
@@ -515,6 +877,112 @@ def _unknown(reason: str) -> RouteDecision:
         matched_capability="unknown_or_ambiguous",
         metadata={"reason": reason, "planner": "llm_route_generalization"},
     )
+
+
+def _split_sentence_subtasks(text: str) -> list[str]:
+    parts = [
+        part.strip(" ，,")
+        for part in _SENTENCE_SPLIT_RE.split(text)
+        if part.strip(" ，,")
+    ]
+    return parts or [text]
+
+
+def _normalize_subtask_for_route(text: str) -> str:
+    value = str(text or "")
+    if any(term in value for term in ("设备", "实体", "东西")) and any(
+        term in value for term in ("哪些", "什么", "有啥", "有什么")
+    ):
+        value = value.replace("现在", "")
+    return value.strip()
+
+
+def _expand_metric_pair_question(text: str) -> list[str]:
+    if "温度" not in text or "湿度" not in text:
+        return []
+    if not any(marker in text for marker in ("分别", "和", "以及", "还有")):
+        return []
+    area = _area_hint(text)
+    prefix = area or ""
+    return [f"{prefix}温度是多少", f"{prefix}湿度是多少"]
+
+
+def _expand_indoor_outdoor_question(text: str) -> list[str]:
+    value = str(text or "")
+    if "室内" not in value:
+        return []
+    if not any(term in value for term in ("室外", "外面", "外头")):
+        return []
+    if not any(marker in value for marker in ("分别", "和", "以及", "还有")):
+        return []
+    metric = "温度"
+    if "湿度" in value:
+        metric = "湿度"
+    elif "空气质量" in value or "pm2" in _normalize(value):
+        metric = "空气质量"
+    elif "天气" in value:
+        metric = "天气"
+    return [f"室内{metric}是多少", f"室外{metric}是多少"]
+
+
+def _inherit_previous_area(parts: list[str]) -> list[str]:
+    result: list[str] = []
+    previous_area = ""
+    for part in parts:
+        area = _area_hint(part)
+        routed_part = part
+        if area:
+            previous_area = area
+        elif previous_area and _looks_like_area_state_followup(part):
+            routed_part = f"{previous_area}{part}"
+        result.append(routed_part)
+    return result
+
+
+def _looks_like_area_state_followup(text: str) -> bool:
+    return any(
+        term in text
+        for term in ("温度", "湿度", "空气质量", "多少", "几度", "冷不冷", "热不热")
+    )
+
+
+def _looks_like_environment_state_question(text: str) -> bool:
+    normalized = _normalize(text)
+    has_metric = any(term in normalized for term in ("温度", "湿度", "co2", "tvoc"))
+    has_value_question = any(
+        term in normalized
+        for term in ("多少", "几度", "现在", "当前", "什么样", "怎么样", "如何")
+    )
+    return has_metric and has_value_question
+
+
+def _area_hint(text: str) -> str:
+    for area in ("卫生间", "卧室", "客厅", "餐厅", "厨房", "书房", "阳台"):
+        if area in text:
+            return area
+    return ""
+
+
+def _metric_from_text(text: str) -> str:
+    normalized = _normalize(text)
+    metric_patterns = (
+        ("air_quality", ("空气质量",)),
+        ("pm25", ("pm25", "pm2")),
+        ("co2", ("co2", "二氧化碳")),
+        ("tvoc", ("tvoc", "甲醛")),
+        ("temperature", ("温度", "气温", "几度")),
+        ("humidity", ("湿度",)),
+        ("weather", ("天气",)),
+    )
+    for metric, patterns in metric_patterns:
+        if any(pattern in normalized for pattern in patterns):
+            return metric
+    return ""
+
+
+def _location_hint(text: str) -> str:
+    match = _LOCATION_HINT_RE.search(text)
+    return match.group(1) if match else ""
 
 
 def _is_literary_knowledge(text: str) -> bool:
