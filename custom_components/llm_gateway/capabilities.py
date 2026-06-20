@@ -146,6 +146,9 @@ _EXTERNAL_CURRENT_RE = re.compile(
 _EXPLICIT_EXTERNAL_RE = re.compile(
     r"(搜一下|搜索|网上|上网|联网|外网|最新|新闻|交通|说明书|错误码|固件|兼容|价格|电价|发布)"
 )
+_BARE_SEARCH_RE = re.compile(
+    r"^(搜索一下|搜一下|查一下|联网查|上网查)[。！？!,.，\s]*$"
+)
 _STABLE_KNOWLEDGE_RE = re.compile(
     r"(出自哪里|出自哪|出处|谁写的|什么意思|是什么|典故|原文)"
 )
@@ -549,6 +552,22 @@ def decide_route(text: str) -> RouteDecision:  # noqa: PLR0911, PLR0912
             missing_requirements=() if has_location else ("location",),
             matched_capability="location_dependent_query",
             metadata={"explicit_location": has_location},
+        )
+
+    if _BARE_SEARCH_RE.search(value):
+        return RouteDecision(
+            task_family="external_current_info",
+            task_type="search_needed",
+            confidence=0.82,
+            requires_external_info=True,
+            requires_llm=False,
+            allowed_tools=(),
+            next_action="clarify",
+            user_visible_prompt="你想搜索什么？",
+            route="local_clarify",
+            missing_requirements=("query",),
+            matched_capability="external_current_info",
+            metadata={"clarification_reason": "missing_search_query"},
         )
 
     if _EXPLICIT_EXTERNAL_RE.search(value):

@@ -274,6 +274,18 @@ def test_explicit_web_weather_can_search():
     assert decision.allowed_tools == ("search_web",)
 
 
+def test_bare_search_request_asks_for_query_without_tools():
+    decision = decide_route("搜索一下。")
+
+    assert decision.task_family == "external_current_info"
+    assert decision.task_type == "search_needed"
+    assert decision.next_action == "clarify"
+    assert decision.route == "local_clarify"
+    assert decision.missing_requirements == ("query",)
+    assert decision.allowed_tools == ()
+    assert decision.user_visible_prompt == "你想搜索什么？"
+
+
 def test_default_weather_stays_home_state():
     decision = decide_route("空气质量怎么样？")
 
