@@ -37,6 +37,12 @@ from .const import (
     TOOL_LOOP_ERROR_SPEECH,
     TOOL_LOOP_GUARD_SPEECH,
 )
+from .dialogue import (
+    PendingTask,
+    interaction_state_for_policy_block,
+    pending_task_from_route,
+    resolve_pending_task,
+)
 from .feedback import (
     VoiceFeedbackPolicy,
     feedback_trace_attrs,
@@ -309,6 +315,24 @@ def _has_tool(tools: list[dict[str, Any]] | None, tool_name: str) -> bool:
     return False
 
 
+def _tool_name(tool: dict[str, Any]) -> str:
+    function = tool.get("function") or {}
+    return str(function.get("name") or "")
+
+
+def _filter_visible_tools(
+    tools: list[dict[str, Any]] | None,
+    route_decision: RouteDecision,
+) -> list[dict[str, Any]] | None:
+    """Expose only tools allowed by the capability route."""
+    if tools is None:
+        return None
+    allowed = set(route_decision.allowed_tools)
+    if not allowed:
+        return []
+    return [tool for tool in tools if _tool_name(tool) in allowed]
+
+
 def _is_live_context_task_type(task_type: str) -> bool:
     return task_type in {
         "weather_query",
@@ -481,6 +505,7 @@ class LLMGatewayConversationEntity(
     def __init__(self, entry: LLMGatewayConfigEntry) -> None:
         """Initialize the agent."""
         self.entry = entry
+        self._pending_tasks: dict[str, PendingTask] = {}
         self._attr_unique_id = entry.entry_id
         self._attr_device_info = dr.DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
@@ -509,7 +534,7 @@ class LLMGatewayConversationEntity(
         conversation.async_unset_agent(self.hass, self.entry)
         await super().async_will_remove_from_hass()
 
-    async def _async_handle_message(  # noqa: PLR0911, PLR0912, PLR0915
+    async def _async_handle_message(  # noqa: C901, PLR0911, PLR0912, PLR0915
         self,
         user_input: conversation.ConversationInput,
         chat_log: conversation.ChatLog,
@@ -576,12 +601,70 @@ class LLMGatewayConversationEntity(
             return err.as_conversation_result()
         _insert_system_once(chat_log.content, VOICE_RESPONSE_CONTRACT, index=1)
         self._mark_run(runtime, run_id, "llm_data")
-        route_decision = decide_route(user_input.text)
+        pending_key = user_input.conversation_id or self.entry.entry_id
+        pending_resolution = resolve_pending_task(
+            user_input.text,
+            self._pending_tasks.get(pending_key),
+        )
+        effective_text = pending_resolution.effective_text or user_input.text
+        if pending_resolution.relation != "new_task":
+            self._mark_run(
+                runtime,
+                run_id,
+                "pending_state_resolver",
+                attrs=pending_resolution.as_dict(),
+            )
+        if pending_resolution.relation == "cancellation":
+            self._pending_tasks.pop(pending_key, None)
+            async for _tool_result in chat_log.async_add_assistant_content(
+                conversation.AssistantContent(
+                    agent_id=self.entity_id,
+                    content=pending_resolution.prompt or "好的，已取消。",
+                )
+            ):
+                pass
+            return await self._async_finalize_turn(
+                user_input,
+                chat_log,
+                started,
+                {"kind": "local_dialogue_control", "model": "pending_state_resolver"},
+                run_id,
+                turn_token,
+            )
+        if pending_resolution.relation == "permission":
+            async for _tool_result in chat_log.async_add_assistant_content(
+                conversation.AssistantContent(
+                    agent_id=self.entity_id,
+                    content=pending_resolution.prompt or "你想查哪个地方？",
+                )
+            ):
+                pass
+            return await self._async_finalize_turn(
+                user_input,
+                chat_log,
+                started,
+                {"kind": "local_dialogue_followup", "model": "pending_state_resolver"},
+                run_id,
+                turn_token,
+            )
+        if pending_resolution.relation == "slot_fill":
+            self._pending_tasks.pop(pending_key, None)
+            _insert_system_once(
+                chat_log.content,
+                f"Resolved follow-up request: {effective_text}",
+                index=1,
+            )
+
+        route_decision = decide_route(effective_text)
         self._mark_run(
             runtime,
             run_id,
             "route_decision",
-            attrs=route_decision.as_dict(),
+            attrs={
+                **route_decision.as_dict(),
+                "effective_text": effective_text,
+                "dialogue_relation": pending_resolution.relation,
+            },
         )
 
         local_control_speech = await async_handle_voice_runtime_command(
@@ -612,14 +695,14 @@ class LLMGatewayConversationEntity(
                 turn_token,
             )
 
-        first_response = decide_first_response(user_input.text)
+        first_response = decide_first_response(effective_text)
         self._mark_run(
             runtime,
             run_id,
             "first_response",
             attrs=first_response.as_dict(),
         )
-        multi_intent_plan = plan_multi_intent(user_input.text)
+        multi_intent_plan = plan_multi_intent(effective_text)
         if multi_intent_plan.is_multi_intent:
             multi_intent_result = await self._async_try_multi_intent(
                 user_input,
@@ -639,7 +722,7 @@ class LLMGatewayConversationEntity(
         ):
             local_capability_result = await async_try_execute_local_capability(
                 self.hass,
-                user_input.text,
+                effective_text,
                 route_decision,
             )
             if local_capability_result is not None and local_capability_result.handled:
@@ -710,14 +793,20 @@ class LLMGatewayConversationEntity(
                 route_decision.user_visible_prompt
                 or "我还不确定你想让我做什么，可以换个说法吗？"
             )
+            pending = pending_task_from_route(run_id, route_decision)
+            if pending is not None:
+                self._pending_tasks[pending_key] = pending
             self._mark_run(
                 runtime,
                 run_id,
                 "local_route_clarify",
                 attrs={
                     **route_decision.as_dict(),
+                    "pending_task": pending.as_dict() if pending else {},
+                    "interaction_state": "awaiting_user_info",
                     "llm_used": False,
                     "tools_used": [],
+                    "tools_used_count": 0,
                 },
             )
             async for _tool_result in chat_log.async_add_assistant_content(
@@ -742,7 +831,7 @@ class LLMGatewayConversationEntity(
             )
         if first_response.task_type in INVENTORY_TASK_TYPES:
             inventory = render_device_inventory(
-                user_input.text,
+                effective_text,
                 chat_log.content,
             )
             if inventory:
@@ -775,7 +864,7 @@ class LLMGatewayConversationEntity(
                     run_id,
                     turn_token,
                 )
-        if local_answer := stable_fact_answer(user_input.text):
+        if local_answer := stable_fact_answer(effective_text):
             self._mark_run(
                 runtime,
                 run_id,
@@ -819,7 +908,7 @@ class LLMGatewayConversationEntity(
             if local_live_result is not None:
                 return local_live_result
 
-        route = select_model_route(user_input.text, options)
+        route = select_model_route(effective_text, options)
         self._mark_run(
             runtime,
             run_id,
@@ -837,7 +926,7 @@ class LLMGatewayConversationEntity(
             task_id = runtime.deep_tasks.submit(
                 route=route,
                 messages=messages,
-                user_text=user_input.text,
+                user_text=effective_text,
                 temperature=options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE),
                 top_p=options.get(CONF_TOP_P, RECOMMENDED_TOP_P),
             )
@@ -877,7 +966,7 @@ class LLMGatewayConversationEntity(
             provider_runs = await self._async_run_chat_log(
                 chat_log,
                 route,
-                user_input.text,
+                effective_text,
                 run_id,
                 first_response,
                 turn_token,
@@ -1559,6 +1648,18 @@ class LLMGatewayConversationEntity(
         search_tools = available_search_tools(options)
         if search_tools:
             tools = [*(tools or []), *search_tools]
+        route_decision = decide_route(user_text)
+        tools = _filter_visible_tools(tools, route_decision)
+        self._mark_run(
+            runtime,
+            run_id,
+            "visible_tool_schema",
+            attrs={
+                "allowed_tools": list(route_decision.allowed_tools),
+                "visible_tool_schema": [_tool_name(tool) for tool in tools or []],
+                "task_type": route_decision.task_type,
+            },
+        )
 
         force_tool_call = False
         force_final = False
@@ -1921,9 +2022,14 @@ class LLMGatewayConversationEntity(
             attrs = {
                 "tool": tool_call.tool_name,
                 "blocked_reason": decision.reason,
+                "spoken_prompt": decision.spoken_prompt or "",
+                "interaction_state": interaction_state_for_policy_block(
+                    decision.reason,
+                    decision.metadata,
+                ),
                 **decision.metadata,
             }
-            return decision.spoken_prompt or "这个操作需要先确认。", attrs
+            return decision.spoken_prompt or "当前不能执行这个请求。", attrs
         return None
 
 

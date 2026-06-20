@@ -88,7 +88,7 @@ def test_missing_location_blocks_search_with_permission_prompt():
     decision = validate_tool_call(call, "附近最近的麦当劳在哪里？")
 
     assert not decision.allowed
-    assert decision.reason == "missing_requirements"
+    assert decision.reason == "missing_user_slot"
     assert "位置" in decision.spoken_prompt
     assert "不需要联网搜索" not in decision.spoken_prompt
     assert decision.metadata["task_family"] == "location_dependent_query"
@@ -96,6 +96,23 @@ def test_missing_location_blocks_search_with_permission_prompt():
     assert decision.metadata["missing_requirements"] == ["location"]
     assert decision.metadata["user_visible_action"] == "ask_location_permission"
     assert decision.metadata["policy_name"] == "external_search_policy"
+
+
+def test_weather_forecast_missing_location_blocks_as_user_slot_not_confirmation():
+    call = llm.ToolInput(
+        id="search-weather",
+        tool_name="search_web",
+        tool_args={"query": "明天 天气"},
+        external=True,
+    )
+
+    decision = validate_tool_call(call, "明天的天气怎么样？")
+
+    assert not decision.allowed
+    assert decision.reason == "missing_user_slot"
+    assert "哪个地方" in decision.spoken_prompt
+    assert decision.metadata["blocked_reason"] == "missing_user_slot"
+    assert decision.metadata["task_type"] == "weather_forecast_query"
 
 
 def test_explicit_location_search_is_allowed():

@@ -111,6 +111,8 @@ def test_weather_route_contract_separates_forecast_from_indoor_state():
     assert tomorrow.forecast_required
     assert tomorrow.requires_external_info
     assert tomorrow.allowed_tools == ("search_web",)
+    assert tomorrow.next_action == "clarify"
+    assert tomorrow.missing_requirements == ("location_hint",)
 
     bedroom = decide_route("卧室温度是多少？")
     assert bedroom.task_type == "indoor_environment_query"

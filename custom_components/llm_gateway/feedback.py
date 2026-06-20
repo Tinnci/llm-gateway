@@ -375,7 +375,7 @@ class VoiceFeedbackPolicy:
         if stage == "first_response":
             return self._first_response(turn_id=turn_id, t_ms=t_ms, attrs=attrs)
         if stage == "tool_policy_block":
-            return self._emit_confirmation(turn_id, t_ms, "这个操作需要确认。")
+            return self._policy_block(turn_id, t_ms, attrs)
         if stage == "search_result":
             if status == "error":
                 return self._emit_failure(turn_id, t_ms, "搜索失败。")
@@ -489,6 +489,37 @@ class VoiceFeedbackPolicy:
             action_buttons=["confirm", "cancel", "open_panel"],
         )
         return earcon, display
+
+    def _policy_block(
+        self, turn_id: str, t_ms: int, attrs: dict[str, Any]
+    ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+        state = str(attrs.get("interaction_state") or "")
+        text = str(attrs.get("spoken_prompt") or attrs.get("prompt") or "")
+        blocked_reason = str(attrs.get("blocked_reason") or attrs.get("reason") or "")
+        if state == "confirming_high_risk" or blocked_reason == "confirmation_required":
+            return self._emit_confirmation(turn_id, t_ms, text or "这个操作需要确认。")
+        if state == "awaiting_user_info" or blocked_reason in {
+            "missing_user_slot",
+            "missing_requirements",
+        }:
+            display = self._store.emit_display(
+                turn_id=turn_id,
+                state="clarifying",
+                title="More information needed",
+                short_text=text or "还需要补充信息。",
+                action_buttons=["cancel", "open_panel"],
+                ttl_s=45,
+            )
+            return None, display
+        display = self._store.emit_display(
+            turn_id=turn_id,
+            state="capability_missing" if state == "capability_missing" else "blocked",
+            title="Blocked",
+            short_text=text or "当前不能执行这个请求。",
+            action_buttons=["open_panel"],
+            ttl_s=60,
+        )
+        return None, display
 
     def _emit_success(
         self, turn_id: str, t_ms: int, short_text: str

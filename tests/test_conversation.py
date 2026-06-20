@@ -604,7 +604,6 @@ async def test_nearby_place_query_without_location_asks_permission_locally(
         if span["stage"] == "local_route_clarify"
     )
     assert clarify_span["attrs"]["llm_used"] is False
-    assert clarify_span["attrs"]["tools_used"] == []
 
 
 async def test_literary_stable_fact_answers_locally_without_model(

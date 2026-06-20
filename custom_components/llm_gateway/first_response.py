@@ -140,7 +140,7 @@ def decide_first_response(text: str) -> FirstResponseDecision:  # noqa: PLR0911,
     if route.task_type == "weather_forecast_query":
         return _decision(
             "weather_forecast_query",
-            "search",
+            "none",
             "",
             DEFAULT_PROCESSING_CUE_DELAY_S,
             "weather_forecast",

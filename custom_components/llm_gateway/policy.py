@@ -161,11 +161,11 @@ def validate_tool_call(  # noqa: PLR0911
         if route.missing_requirements:
             return PolicyDecision(
                 allowed=False,
-                reason="missing_requirements",
+                reason="missing_user_slot",
                 spoken_prompt=_search_block_prompt(route),
                 metadata=_policy_metadata(
                     route,
-                    blocked_reason="missing_requirements",
+                    blocked_reason="missing_user_slot",
                     policy_name="external_search_policy",
                 ),
             )
@@ -211,7 +211,9 @@ def _search_block_prompt(route: RouteDecision) -> str:
         return route.user_visible_prompt or "这个问题还缺少必要信息。"
     if route.task_family == "unknown_or_ambiguous":
         return "我还不确定你想查什么，可以换个说法吗？"
-    return "这个问题需要更多信息才能决定是否联网。"
+    if route.task_type == "weather_forecast_query":
+        return "我现在没有可用的天气预报来源，不能直接查明天的天气。"
+    return "当前不能使用搜索来回答这个问题。"
 
 
 def _policy_metadata(

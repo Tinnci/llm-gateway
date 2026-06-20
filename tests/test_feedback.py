@@ -41,6 +41,43 @@ def test_feedback_policy_maps_confirmation_first_response() -> None:
     assert display["action_buttons"] == ["confirm", "cancel", "open_panel"]
 
 
+def test_feedback_policy_does_not_confirm_missing_user_slot_policy_block() -> None:
+    store = VoiceFeedbackStore()
+    earcon, display = VoiceFeedbackPolicy(store).pipeline_event(
+        turn_id="turn-weather",
+        stage="tool_policy_block",
+        t_ms=80,
+        status="error",
+        attrs={
+            "blocked_reason": "missing_user_slot",
+            "interaction_state": "awaiting_user_info",
+            "spoken_prompt": "你想查哪个地方明天的天气？",
+        },
+    )
+
+    assert earcon is None
+    assert display["state"] == "clarifying"
+    assert display["short_text"] == "你想查哪个地方明天的天气？"
+
+
+def test_feedback_policy_only_confirms_high_risk_policy_block() -> None:
+    store = VoiceFeedbackStore()
+    earcon, display = VoiceFeedbackPolicy(store).pipeline_event(
+        turn_id="turn-risk",
+        stage="tool_policy_block",
+        t_ms=80,
+        status="error",
+        attrs={
+            "blocked_reason": "confirmation_required",
+            "interaction_state": "confirming_high_risk",
+            "spoken_prompt": "要操作前门吗？请确认。",
+        },
+    )
+
+    assert earcon["earcon_name"] == "confirmation"
+    assert display["state"] == "confirming"
+
+
 def test_feedback_policy_maps_action_success() -> None:
     store = VoiceFeedbackStore()
     earcon, display = VoiceFeedbackPolicy(store).pipeline_event(

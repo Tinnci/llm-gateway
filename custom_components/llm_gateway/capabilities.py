@@ -662,21 +662,23 @@ def _environment_route(text: str, *, confidence: float) -> RouteDecision:
     task_type: TaskType = "home_state"
     matched_capability = "indoor_environment_query"
     if environment.forecast_required:
+        missing = () if environment.location_hint else ("location_hint",)
         return RouteDecision(
             task_family="external_current_info",
             task_type="weather_forecast_query",
             confidence=confidence,
             requires_external_info=True,
-            requires_llm=True,
+            requires_llm=not missing,
             allowed_tools=("search_web",),
-            next_action="search",
-            route="mid",
+            next_action="search" if not missing else "clarify",
+            user_visible_prompt="" if not missing else "你想查哪个地方明天的天气？",
+            route="mid" if not missing else "local_clarify",
             matched_capability="weather_forecast_query",
             scope=environment.scope or "outdoor_weather",
             time_horizon=environment.time_horizon,
             forecast_required=True,
             location_hint=environment.location_hint,
-            missing_requirements=("forecast",),
+            missing_requirements=missing,
             metadata=environment.as_dict(),
         )
     if environment.scope == "outdoor_weather":
