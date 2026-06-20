@@ -88,6 +88,32 @@ def test_clear_area_device_reference_can_execute() -> None:
     assert frame.commitment.reason == "high_confidence"
 
 
+def test_climate_reference_uses_shared_device_resolution() -> None:
+    frame = resolve_device_referent(
+        raw_text="空调",
+        domain="climate",
+        action="turn_on",
+        devices=(
+            DeviceReference(
+                id="climate.bedroom_ac",
+                name="卧室空调",
+                domain="climate",
+                areas=("卧室",),
+            ),
+        ),
+    )
+
+    referent = frame.referents[0]
+
+    assert frame.frame_type == "home_control"
+    assert frame.constraints["domain"] == "climate"
+    assert referent.kind == "device"
+    assert referent.candidates[0].id == "climate.bedroom_ac"
+    assert "domain_match:climate" in referent.candidates[0].evidence
+    assert "name_domain_label:空调" in referent.candidates[0].evidence
+    assert frame.commitment.state == "execute"
+
+
 def test_person_resolution_frame_preserves_candidate_evidence() -> None:
     frame = resolution_frame_from_entity_resolution(
         operation="resolve_entity",

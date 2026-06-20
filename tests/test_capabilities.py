@@ -372,13 +372,9 @@ def test_colloquial_home_control_routes_to_control_capability():
 
         assert decision.task_family == "home_control", text
         assert decision.task_type == "home_control"
-        if "空调" in text:
-            assert decision.route == "fast"
-            assert decision.requires_llm
-        else:
-            assert decision.route == "local_action"
-            assert decision.next_action == "execute_local"
-            assert not decision.requires_llm
+        assert decision.route == "local_action"
+        assert decision.next_action == "execute_local"
+        assert not decision.requires_llm
 
 
 def test_bare_lookup_weather_stays_home_state():

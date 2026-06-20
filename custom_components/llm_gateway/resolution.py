@@ -25,7 +25,13 @@ CommitmentState = Literal[
 
 _NORMALIZE_RE = re.compile(r"[\s《》「」『』“”\"'`·.。,:：，、_\-—!?！？]+")
 _DIGIT_RE = re.compile(r"\d+")
-_LIGHT_DOMAIN_ALIASES = {"light": "灯", "fan": "风扇", "media_player": "播放器"}
+_DOMAIN_LABELS = {
+    "climate": "空调",
+    "fan": "风扇",
+    "light": "灯",
+    "media_player": "播放器",
+    "switch": "开关",
+}
 _ASR_NORMALIZATIONS = (
     ("麦西色", "麦希瑟"),
     ("麦希色", "麦希瑟"),
@@ -42,6 +48,7 @@ _TARGET_FILLER_WORDS = (
 )
 
 EXECUTE_THRESHOLD = 0.96
+UNIQUE_CANDIDATE_EXECUTE_THRESHOLD = 0.82
 TARGETED_CLARIFY_THRESHOLD = 0.72
 LIST_CANDIDATE_THRESHOLD = 0.45
 CLOSE_CANDIDATE_DELTA = 0.08
@@ -376,7 +383,7 @@ def _score_device(  # noqa: PLR0912 - explicit evidence scoring keeps resolution
         score += 0.5
         evidence.append("area_domain_target")
 
-    domain_label = _LIGHT_DOMAIN_ALIASES.get(domain, domain)
+    domain_label = _DOMAIN_LABELS.get(domain, domain)
     if domain_label and domain_label in normalize_reference_text(device.name):
         score += 0.08
         evidence.append(f"name_domain_label:{domain_label}")
@@ -393,7 +400,7 @@ def _score_device(  # noqa: PLR0912 - explicit evidence scoring keeps resolution
     )
 
 
-def _device_commitment(
+def _device_commitment(  # noqa: PLR0911 - explicit commitment states are the policy surface.
     *,
     referent: Referent,
     domain: str,
@@ -414,7 +421,7 @@ def _device_commitment(
         return CommitmentDecision(
             state="ask_missing_slot",
             reason="no_matching_entity",
-            prompt=f"你想操作哪个{_LIGHT_DOMAIN_ALIASES.get(domain, '设备')}？",
+            prompt=f"你想操作哪个{_DOMAIN_LABELS.get(domain, '设备')}？",
             interaction_state="awaiting_user_info",
             display_state="clarifying",
             allowed_next_user_actions=("provide_target", "cancel"),
@@ -436,6 +443,17 @@ def _device_commitment(
             interaction_state="committed_executing",
             display_state="executing",
         )
+    if (
+        len(candidates) == 1
+        and top.score >= UNIQUE_CANDIDATE_EXECUTE_THRESHOLD
+        and not _needs_confirmation_for_evidence(top)
+    ):
+        return CommitmentDecision(
+            state="execute",
+            reason="single_candidate_high_confidence",
+            interaction_state="committed_executing",
+            display_state="executing",
+        )
     if top.score >= TARGETED_CLARIFY_THRESHOLD:
         return CommitmentDecision(
             state="targeted_clarify",
@@ -449,8 +467,7 @@ def _device_commitment(
         state="ask_missing_slot",
         reason="low_target_confidence",
         prompt=(
-            f"我没确定是哪一个{_LIGHT_DOMAIN_ALIASES.get(domain, '设备')}。"
-            "可以说房间或名字。"
+            f"我没确定是哪一个{_DOMAIN_LABELS.get(domain, '设备')}。可以说房间或名字。"
         ),
         interaction_state="awaiting_user_info",
         display_state="clarifying",
@@ -515,7 +532,7 @@ def _asr_variant_evidence(normalized_mention: str, candidate_name: str) -> str:
 
 
 def _list_candidate_prompt(domain: str, candidates: tuple[Candidate, ...]) -> str:
-    label = _LIGHT_DOMAIN_ALIASES.get(domain, "设备")
+    label = _DOMAIN_LABELS.get(domain, "设备")
     names = "、".join(
         _spoken_candidate_label(candidate) for candidate in candidates[:2]
     )

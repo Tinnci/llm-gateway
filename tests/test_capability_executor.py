@@ -19,6 +19,16 @@ def test_local_action_candidate_parses_low_risk_home_control():
     assert candidate.area == "客厅"
 
 
+def test_local_action_candidate_parses_climate_control():
+    candidate = local_action_candidate("打开空调。")
+
+    assert candidate is not None
+    assert candidate.family == "home_control"
+    assert candidate.action == "turn_on"
+    assert candidate.domain == "climate"
+    assert candidate.target_hint == "空调"
+
+
 def test_local_action_candidate_rejects_high_risk_control():
     assert local_action_candidate("打开前门门锁") is None
 
@@ -54,6 +64,30 @@ async def test_local_executor_calls_light_service(hass):
     assert result.status == "executed"
     assert result.speech == "已打开客厅灯。"
     assert calls == [{"entity_id": ["light.living_room"]}]
+
+
+async def test_local_executor_calls_climate_service(hass):
+    calls: list[dict] = []
+
+    async def turn_on(call):
+        calls.append(dict(call.data))
+
+    hass.states.async_set(
+        "climate.bedroom_ac",
+        "off",
+        {"friendly_name": "卧室空调"},
+    )
+    hass.services.async_register("climate", "turn_on", turn_on)
+
+    route = decide_route("打开空调。")
+    result = await async_try_execute_local_capability(hass, "打开空调。", route)
+
+    assert route.next_action == "execute_local"
+    assert route.metadata["domain"] == "climate"
+    assert result is not None
+    assert result.status == "executed"
+    assert result.speech == "已打开卧室空调。"
+    assert calls == [{"entity_id": ["climate.bedroom_ac"]}]
 
 
 async def test_local_executor_clarifies_ambiguous_media_player(hass):

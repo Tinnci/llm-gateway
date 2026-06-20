@@ -43,7 +43,7 @@ LocalActionStatus = Literal[
     "error",
 ]
 
-LOW_RISK_DOMAINS = {"light", "fan", "switch", "media_player"}
+LOW_RISK_DOMAINS = {"climate", "fan", "light", "media_player", "switch"}
 ASSISTANT_VOLUME_ENTITIES = (
     "input_number.kukui_tts_volume_day",
     "input_number.kukui_tts_volume_night",
@@ -599,6 +599,8 @@ def _float_attr(state: State | None, name: str, default: float) -> float:
 def _domain_from_text(normalized: str) -> str:
     if any(word in normalized for word in ("灯", "灯光", "照明")):
         return "light"
+    if any(word in normalized for word in ("空调", "温控", "恒温器", "暖气")):
+        return "climate"
     if any(word in normalized for word in ("风扇", "循环扇")):
         return "fan"
     if any(
@@ -614,6 +616,7 @@ def _domain_from_text(normalized: str) -> str:
 def _domain_label(domain: str) -> str:
     return {
         "light": "灯",
+        "climate": "空调",
         "fan": "风扇",
         "switch": "开关",
         "media_player": "播放器",
@@ -672,7 +675,11 @@ def _state_name(state: State) -> str:
 
 
 def _hint_parts(hint: str) -> tuple[str, ...]:
-    return tuple(part for part in re.split(r"(灯|音箱|播放器|开关|风扇)", hint) if part)
+    return tuple(
+        part
+        for part in re.split(r"(灯|空调|温控|恒温器|暖气|音箱|播放器|开关|风扇)", hint)
+        if part
+    )
 
 
 def _normalize(text: str) -> str:

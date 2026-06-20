@@ -908,6 +908,62 @@ async def test_local_device_clarification_confirmation_uses_dialogue_frame_stack
     assert second_trace["route_decision"]["task_family"] == "home_control"
 
 
+async def test_climate_control_uses_local_device_resolution(
+    hass, aioclient_mock, mock_config_entry
+):
+    calls: list[dict] = []
+
+    async def turn_on(call):
+        calls.append(dict(call.data))
+
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    hass.states.async_set(
+        "climate.bedroom_ac",
+        "off",
+        {"friendly_name": "卧室空调"},
+    )
+    hass.services.async_register("climate", "turn_on", turn_on)
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
+        },
+    )
+
+    with patch(
+        "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
+    ) as completion:
+        result = await conversation.async_converse(
+            hass,
+            "打开空调。",
+            None,
+            Context(),
+            agent_id=agent_id,
+        )
+
+    completion.assert_not_called()
+    assert result.response.speech["plain"]["speech"] == "已打开卧室空调。"
+    assert calls == [{ATTR_ENTITY_ID: ["climate.bedroom_ac"]}]
+    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+    assert trace["route"]["kind"] == "local_action"
+    assert trace["route_decision"]["metadata"]["domain"] == "climate"
+    execute_span = next(
+        span
+        for span in trace["timeline_spans"]
+        if span["stage"] == "local_capability_execute"
+    )
+    frame = execute_span["attrs"]["action_trace"]["resolution_frame"]
+    assert frame["constraints"]["domain"] == "climate"
+    assert frame["commitment"]["state"] == "execute"
+    assert execute_span["attrs"]["action_trace"]["top_candidate"]["id"] == (
+        "climate.bedroom_ac"
+    )
+
+
 async def test_virginia_wolf_routes_to_literary_knowledge_with_entity_correction(
     hass, aioclient_mock, mock_config_entry
 ):
@@ -1651,7 +1707,7 @@ async def test_converse_records_failure_feedback_trace(
         side_effect=LLMGatewayConnectionError("timeout"),
     ):
         result = await conversation.async_converse(
-            hass, "把空调开了", None, Context(), agent_id=agent_id
+            hass, "请写一段关于空调保养的短文", None, Context(), agent_id=agent_id
         )
 
     assert result.response.speech["plain"]["speech"] == GATEWAY_ERROR_SPEECH
@@ -1837,7 +1893,7 @@ async def test_converse_gateway_timeout_returns_spoken_error(
         side_effect=LLMGatewayConnectionError("timeout"),
     ):
         result = await conversation.async_converse(
-            hass, "把空调开了", None, Context(), agent_id=agent_id
+            hass, "请写一段关于空调保养的短文", None, Context(), agent_id=agent_id
         )
 
     assert result.response.speech["plain"]["speech"] == GATEWAY_ERROR_SPEECH
