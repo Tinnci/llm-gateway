@@ -30,6 +30,7 @@ from custom_components.llm_gateway.panel import (
     async_setup_panel,
 )
 from custom_components.llm_gateway.traces import TraceStore, TraceTurn
+from custom_components.llm_gateway.views import SATELLITE_STATE_ENTITIES
 
 
 async def test_panel_registers_sidebar_entry(hass):
@@ -89,6 +90,13 @@ async def test_harness_status_api(hass, hass_client):
     assert (
         data["satellite"]["states"]["pause_requested"]["entity_id"]
         == "input_boolean.kukui_voice_pause_requested"
+    )
+
+
+def test_satellite_status_reads_canonical_display_brightness_entity() -> None:
+    assert (
+        SATELLITE_STATE_ENTITIES["screen_brightness"]
+        == "sensor.kukui_display_brightness"
     )
 
 

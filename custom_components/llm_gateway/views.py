@@ -684,7 +684,7 @@ SATELLITE_STATE_ENTITIES = {
     "voice_config": "sensor.kukui_voice_config",
     "asr_metrics": "sensor.kukui_asr_metrics",
     "ambient_light": "sensor.kukui_ambient_light",
-    "screen_brightness": "sensor.kukui_screen_brightness",
+    "screen_brightness": "sensor.kukui_display_brightness",
 }
 
 
