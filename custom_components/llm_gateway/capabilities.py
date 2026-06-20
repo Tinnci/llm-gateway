@@ -192,6 +192,11 @@ _EN_LITERARY_HINT_RE = re.compile(
     re.IGNORECASE,
 )
 _EN_NAMED_ENTITY_RE = re.compile(r"\b([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){1,3})\b")
+_EN_LOWER_ENTITY_QUERY_RE = re.compile(
+    r"\b(?:who\s+(?:is|was)|do\s+you\s+know\s+who\s+(?:is|was))\s+"
+    r"([A-Za-z][A-Za-z0-9' -]{1,60})",
+    re.IGNORECASE,
+)
 _KNOWN_ENTITY_ALIASES = {
     "virginia woolf": ("Virginia Woolf", "none", 0.99),
     "virginia wolf": ("Virginia Woolf", "spelling", 0.94),
@@ -1462,6 +1467,8 @@ def _extract_english_named_entity(text: str) -> str:
         candidate = match.group(1).strip()
         if candidate.split()[0] not in ignored:
             return candidate
+    if match := _EN_LOWER_ENTITY_QUERY_RE.search(value):
+        return match.group(1).strip(" ?!.,;:")
     return ""
 
 

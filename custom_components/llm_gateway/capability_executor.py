@@ -11,6 +11,12 @@ from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
+from .resolution import (
+    DeviceReference,
+    SemanticResolutionFrame,
+    resolve_device_referent,
+)
+
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
@@ -75,7 +81,7 @@ class LocalCapabilityResult:
     speech: str
     candidate: LocalActionCandidate | None = None
     service_calls: tuple[dict[str, Any], ...] = ()
-    matches: tuple[dict[str, str], ...] = ()
+    matches: tuple[dict[str, Any], ...] = ()
     reason: str = ""
     panel: dict[str, Any] = field(default_factory=dict)
     action_trace: dict[str, Any] = field(default_factory=dict)
@@ -215,13 +221,29 @@ def _volume_candidate(text: str, normalized: str) -> LocalActionCandidate | None
 async def _async_execute_ha_action(
     hass: HomeAssistant, candidate: LocalActionCandidate
 ) -> LocalCapabilityResult:
-    matches = _resolve_entities(hass, candidate)
+    resolution_frame = _resolve_device_frame(hass, candidate)
+    commitment = resolution_frame.commitment
+    if commitment.state != "execute":
+        matches = _states_for_candidate_ids(
+            hass, _candidate_entity_ids(resolution_frame)
+        )
+        return LocalCapabilityResult(
+            "clarify",
+            commitment.prompt or _missing_target_speech(candidate),
+            candidate=candidate,
+            matches=tuple(_match_trace(match) for match in matches),
+            reason=commitment.reason,
+            action_trace=_resolution_action_trace(resolution_frame),
+        )
+
+    matches = _states_for_candidate_ids(hass, _committed_entity_ids(resolution_frame))
     if not matches:
         return LocalCapabilityResult(
             "clarify",
             _missing_target_speech(candidate),
             candidate=candidate,
             reason="no_matching_entity",
+            action_trace=_resolution_action_trace(resolution_frame),
         )
     if _needs_single_target(candidate) and len(matches) > 1:
         return LocalCapabilityResult(
@@ -230,6 +252,7 @@ async def _async_execute_ha_action(
             candidate=candidate,
             matches=tuple(_match_trace(match) for match in matches),
             reason="ambiguous_target",
+            action_trace=_resolution_action_trace(resolution_frame),
         )
     service, data = _service_for_candidate(candidate, matches)
     if not service:
@@ -239,6 +262,7 @@ async def _async_execute_ha_action(
             candidate=candidate,
             matches=tuple(_match_trace(match) for match in matches),
             reason="unsupported_action",
+            action_trace=_resolution_action_trace(resolution_frame),
         )
     domain, service_name = service.split(".", 1)
     try:
@@ -250,6 +274,7 @@ async def _async_execute_ha_action(
             candidate=candidate,
             matches=tuple(_match_trace(match) for match in matches),
             reason=type(err).__name__,
+            action_trace=_resolution_action_trace(resolution_frame),
         )
     return LocalCapabilityResult(
         "executed",
@@ -263,6 +288,7 @@ async def _async_execute_ha_action(
             },
         ),
         matches=tuple(_match_trace(match) for match in matches),
+        action_trace=_resolution_action_trace(resolution_frame),
     )
 
 
@@ -322,6 +348,24 @@ async def _async_execute_assistant_volume(
 def _resolve_entities(
     hass: HomeAssistant, candidate: LocalActionCandidate
 ) -> list[State]:
+    frame = _resolve_device_frame(hass, candidate)
+    committed_ids = _committed_entity_ids(frame)
+    if committed_ids:
+        return [
+            state
+            for entity_id in committed_ids
+            if (state := hass.states.get(entity_id)) is not None
+        ]
+    candidate_ids = _candidate_entity_ids(frame)
+    if candidate_ids:
+        return [
+            state
+            for entity_id in candidate_ids
+            if (state := hass.states.get(entity_id)) is not None
+        ][:12]
+
+    # Fallback for unusual domains or registry states not indexed by the
+    # resolution kernel yet.
     states = [
         state
         for state in hass.states.async_all(candidate.domain)
@@ -356,6 +400,70 @@ def _resolve_entities(
         if exact:
             states = exact
     return states[:12]
+
+
+def _states_for_candidate_ids(
+    hass: HomeAssistant,
+    entity_ids: tuple[str, ...],
+) -> list[State]:
+    return [
+        state
+        for entity_id in entity_ids
+        if (state := hass.states.get(entity_id)) is not None
+    ]
+
+
+def _resolve_device_frame(
+    hass: HomeAssistant,
+    candidate: LocalActionCandidate,
+) -> SemanticResolutionFrame:
+    states = tuple(
+        DeviceReference(
+            id=state.entity_id,
+            name=_state_name(state),
+            domain=candidate.domain,
+            areas=_entity_area_names(hass, state.entity_id),
+            aliases=(_state_name(state),),
+            state=state.state,
+        )
+        for state in hass.states.async_all(candidate.domain)
+        if state.state not in {"unavailable", "unknown"}
+    )
+    return resolve_device_referent(
+        raw_text=candidate.target_hint,
+        domain=candidate.domain,
+        action=candidate.action,
+        devices=states,
+        area=candidate.area,
+    )
+
+
+def _committed_entity_ids(frame: SemanticResolutionFrame) -> tuple[str, ...]:
+    if frame.commitment.state != "execute":
+        return ()
+    for referent in frame.referents:
+        if referent.slot == "target_device" and referent.candidates:
+            return (referent.candidates[0].id,)
+    return ()
+
+
+def _candidate_entity_ids(frame: SemanticResolutionFrame) -> tuple[str, ...]:
+    for referent in frame.referents:
+        if referent.slot == "target_device":
+            return tuple(candidate.id for candidate in referent.candidates)
+    return ()
+
+
+def _resolution_action_trace(frame: SemanticResolutionFrame) -> dict[str, Any]:
+    referent = frame.referents[0] if frame.referents else None
+    candidates = referent.candidates if referent else ()
+    return {
+        "resolution_frame": frame.as_dict(),
+        "commitment_decision": frame.commitment.as_dict(),
+        "referent_status": referent.status if referent else "",
+        "candidate_scores": [candidate.as_dict() for candidate in candidates],
+        "top_candidate": candidates[0].as_dict() if candidates else {},
+    }
 
 
 def _entity_area_names(hass: HomeAssistant, entity_id: str) -> tuple[str, ...]:

@@ -108,6 +108,55 @@ Current enforced invariants:
 The current contract families include weather forecast, bare search,
 ambiguous-entity resolution, person knowledge, and literary works queries.
 
+## Reference resolution and commitment
+
+LLM Gateway treats locations, people, devices, times, areas, and follow-up
+targets as referents inside semantic frames. The maintained decision sequence
+is:
+
+```text
+Semantic Frame
+→ Referent Resolution
+→ Belief / Confidence Scoring
+→ Commitment Policy
+→ Dialogue Transaction
+→ Interaction State / Earcon
+```
+
+The reference resolution kernel emits:
+
+- `SemanticResolutionFrame`: frame type, operation, constraints, referents,
+  risk, and commitment.
+- `Referent`: slot, kind, raw text, normalized text, status, and candidates.
+- `Candidate`: id/name, score, evidence, source, and rejected reason.
+- `CommitmentDecision`: state, reason, prompt, interaction state, earcon, and
+  display state.
+
+The first connected referent kinds are:
+
+- `home_control.target_device`: HA entity candidates with lexical, numeric,
+  ASR-normalization, domain, and area evidence.
+- `weather_forecast.location/time`: missing location stays uncommitted and
+  asks the minimal slot question.
+- `knowledge_query.person`: low-confidence named entities clarify instead of
+  producing deterministic biographies.
+
+Commitment, not intent, decides whether the system may act:
+
+- `execute` / `answer`: resolved referents and risk policy allow commitment.
+- `targeted_clarify`: one likely candidate exists but evidence is not strong
+  enough to act.
+- `list_candidates`: several candidates are close.
+- `ask_missing_slot`: required referent is missing.
+- `high_risk_confirm`: target may be known, but action risk requires explicit
+  confirmation.
+- `blocked`: policy or capability prevents safe progress.
+
+Trace output must include candidate scores and evidence. Deeply nested frames
+may be compacted in summaries, so high-value fields such as `top_candidate`,
+`candidate_scores`, and `commitment_decision` are also exposed at the action
+trace level for harness assertions.
+
 ## Turn controller
 
 LLM Gateway keeps a small runtime turn controller for conversation ownership.

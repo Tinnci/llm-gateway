@@ -67,8 +67,61 @@ async def test_local_executor_clarifies_ambiguous_media_player(hass):
 
     assert result is not None
     assert result.status == "clarify"
-    assert "找到多个播放器" in result.speech
-    assert "你想操作哪一个" in result.speech
+    assert "我找到几个播放器" in result.speech
+    assert "客厅音箱 A" in result.speech
+    assert "客厅音箱 B" in result.speech
+
+
+async def test_local_executor_targeted_clarifies_numeric_light_reference(hass):
+    calls: list[dict] = []
+
+    async def turn_on(call):
+        calls.append(dict(call.data))
+
+    hass.states.async_set(
+        "light.devcea_1055",
+        "off",
+        {"friendly_name": "宜家麦希瑟E27 1055lm智能球泡灯 灯"},
+    )
+    hass.states.async_set(
+        "light.monitor",
+        "off",
+        {"friendly_name": "Yeelight 显示器挂灯 灯"},
+    )
+    hass.services.async_register("light", "turn_on", turn_on)
+
+    route = decide_route("打开 1,055 00 的那个灯。")
+    result = await async_try_execute_local_capability(
+        hass, "打开 1,055 00 的那个灯。", route
+    )
+
+    assert result is not None
+    assert result.status == "clarify"
+    assert "1055lm" in result.speech
+    assert calls == []
+    frame = result.trace_attrs()["action_trace"]["resolution_frame"]
+    referent = frame["referents"][0]
+    assert referent["candidates"][0]["id"] == "light.devcea_1055"
+    assert "numeric_match:1055" in referent["candidates"][0]["evidence"]
+    assert frame["commitment"]["state"] == "targeted_clarify"
+
+
+async def test_local_executor_targeted_clarifies_asr_light_reference(hass):
+    hass.states.async_set(
+        "light.devcea_1055",
+        "off",
+        {"friendly_name": "宜家麦希瑟E27 1055lm智能球泡灯 灯"},
+    )
+
+    route = decide_route("打开米家麦西色灯。")
+    result = await async_try_execute_local_capability(hass, "打开米家麦西色灯。", route)
+
+    assert result is not None
+    assert result.status == "clarify"
+    frame = result.trace_attrs()["action_trace"]["resolution_frame"]
+    evidence = frame["referents"][0]["candidates"][0]["evidence"]
+    assert "asr_normalization:麦西色≈麦希瑟" in evidence
+    assert frame["commitment"]["state"] == "targeted_clarify"
 
 
 async def test_assistant_volume_reports_unconfigured(hass):

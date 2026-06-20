@@ -297,6 +297,17 @@ def test_ambiguous_named_entity_does_not_route_to_freeform_unknown_answer():
     assert decision.metadata["answerability"] == "ambiguous_entity"
 
 
+def test_lowercase_unknown_person_referent_does_not_route_to_freeform_answer():
+    decision = decide_route("Do you know who is synonymity?")
+
+    assert decision.task_family == "stable_knowledge"
+    assert decision.task_type == "ambiguous_entity_query"
+    assert decision.next_action == "clarify"
+    assert not decision.requires_llm
+    assert decision.metadata["answerability"] == "ambiguous_entity"
+    assert decision.metadata["entity_resolution"]["raw_entity"] == "synonymity"
+
+
 def test_entity_resolver_records_canonical_correction_and_ambiguity():
     wolf = resolve_entity("Virginia Wolf")
     hope = resolve_entity("Virginia Hope")

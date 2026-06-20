@@ -488,7 +488,11 @@ class VoiceFeedbackPolicy:
         state = str(attrs.get("interaction_state") or "")
         text = str(attrs.get("prompt") or attrs.get("effective_text") or "")
         if state == "awaiting_user_info":
-            return self._clarifying(turn_id, t_ms, attrs)
+            # Pending resolution only classifies the relationship to an active
+            # frame.  The user-visible clarification is emitted later by the
+            # commitment/local_route_clarify stage, after the new turn is known
+            # not to be an unrelated task.
+            return None, None
         if state == "slot_filled":
             display = self._store.emit_display(
                 turn_id=turn_id,

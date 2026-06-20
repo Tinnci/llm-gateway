@@ -73,6 +73,23 @@ def test_feedback_policy_does_not_confirm_missing_user_slot_policy_block() -> No
     assert display["short_text"] == "你想查哪个地方明天的天气？"
 
 
+def test_pending_resolver_does_not_emit_user_visible_clarification() -> None:
+    store = VoiceFeedbackStore()
+    earcon, display = VoiceFeedbackPolicy(store).pipeline_event(
+        turn_id="turn-pending",
+        stage="pending_state_resolver",
+        t_ms=60,
+        attrs={
+            "interaction_state": "awaiting_user_info",
+            "prompt": "你想查哪个地方明天的天气？",
+            "dialogue_relation": "unresolved",
+        },
+    )
+
+    assert earcon is None
+    assert display is None
+
+
 def test_final_status_preserves_clarifying_state() -> None:
     store = VoiceFeedbackStore()
     VoiceFeedbackPolicy(store).pipeline_event(

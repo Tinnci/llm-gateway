@@ -58,6 +58,11 @@ from .grounding import (
 )
 from .policy import should_force_search_in_voice_path, validate_tool_call
 from .providers import async_chat_completion_with_fallback
+from .resolution import (
+    SemanticResolutionFrame,
+    resolution_frame_from_entity_resolution,
+    weather_resolution_frame,
+)
 from .router import (
     legacy_model_from_options,
     parse_extra_body,
@@ -388,6 +393,32 @@ def _chat_log_has_tool(chat_log: conversation.ChatLog, tool_name: str) -> bool:
     )
 
 
+def _resolution_frame_for_route(
+    route_decision: RouteDecision,
+) -> SemanticResolutionFrame | None:
+    """Return the common resolution/commitment frame for routed capabilities."""
+    if route_decision.task_type == "weather_forecast_query":
+        return weather_resolution_frame(
+            operation="forecast",
+            location_hint=route_decision.location_hint,
+            time_horizon=route_decision.time_horizon,
+            missing_requirements=route_decision.missing_requirements,
+        )
+    entity_resolution = route_decision.metadata.get("entity_resolution")
+    if isinstance(entity_resolution, dict):
+        raw_entity = str(
+            entity_resolution.get("raw_entity")
+            or next(iter(route_decision.metadata.get("named_entities", ()) or ()), "")
+        )
+        return resolution_frame_from_entity_resolution(
+            operation=str(route_decision.metadata.get("operation") or "answer_fact"),
+            raw_entity=raw_entity,
+            entity_resolution=entity_resolution,
+            answerability=str(route_decision.metadata.get("answerability") or ""),
+        )
+    return None
+
+
 def _local_live_context_tool_args(text: str) -> dict[str, Any]:
     slots = _local_live_context_slots(text)
     args: dict[str, Any] = {}
@@ -616,6 +647,15 @@ class LLMGatewayConversationEntity(
             )
         if pending_resolution.relation == "cancellation":
             self._pending_tasks.pop(pending_key, None)
+            self._mark_run(
+                runtime,
+                run_id,
+                "cancel",
+                attrs={
+                    "interaction_state": "cancelled",
+                    "prompt": pending_resolution.prompt or "好的，已取消。",
+                },
+            )
             async for _tool_result in chat_log.async_add_assistant_content(
                 conversation.AssistantContent(
                     agent_id=self.entity_id,
@@ -632,10 +672,24 @@ class LLMGatewayConversationEntity(
                 turn_token,
             )
         if pending_resolution.relation == "permission":
+            prompt = pending_resolution.prompt or "你想查哪个地方？"
+            self._mark_run(
+                runtime,
+                run_id,
+                "local_route_clarify",
+                attrs={
+                    "interaction_state": "awaiting_user_info",
+                    "prompt": prompt,
+                    "dialogue_relation": pending_resolution.relation,
+                    "llm_used": False,
+                    "tools_used": [],
+                    "tools_used_count": 0,
+                },
+            )
             async for _tool_result in chat_log.async_add_assistant_content(
                 conversation.AssistantContent(
                     agent_id=self.entity_id,
-                    content=pending_resolution.prompt or "你想查哪个地方？",
+                    content=prompt,
                 )
             ):
                 pass
@@ -666,6 +720,13 @@ class LLMGatewayConversationEntity(
                 "dialogue_relation": pending_resolution.relation,
             },
         )
+        if resolution_frame := _resolution_frame_for_route(route_decision):
+            self._mark_run(
+                runtime,
+                run_id,
+                "resolution_kernel",
+                attrs=resolution_frame.as_dict(),
+            )
 
         if pending_resolution.relation == "unresolved":
             if pending_resolution.expired:
@@ -785,6 +846,26 @@ class LLMGatewayConversationEntity(
                     ),
                     attrs=local_capability_result.trace_attrs(),
                 )
+                if local_capability_result.status == "clarify":
+                    self._mark_run(
+                        runtime,
+                        run_id,
+                        "local_route_clarify",
+                        attrs={
+                            **route_decision.as_dict(),
+                            "interaction_state": "awaiting_user_info",
+                            "prompt": local_capability_result.speech,
+                            "commitment": (
+                                local_capability_result.trace_attrs()
+                                .get("action_trace", {})
+                                .get("resolution_frame", {})
+                                .get("commitment", {})
+                            ),
+                            "llm_used": False,
+                            "tools_used": [],
+                            "tools_used_count": 0,
+                        },
+                    )
                 async for _tool_result in chat_log.async_add_assistant_content(
                     conversation.AssistantContent(
                         agent_id=self.entity_id,
