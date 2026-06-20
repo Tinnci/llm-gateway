@@ -486,19 +486,12 @@ async def test_converse_records_search_feedback_trace(
 
     assert result.response.speech["plain"]["speech"] == "有更新。"
     trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
-    assert [event["earcon_name"] for event in trace["earcons"]] == [
-        "captured",
-        "search",
-    ]
-    assert any(
+    assert [event["earcon_name"] for event in trace["earcons"]] == ["captured"]
+    assert not any(
         event["state"] == "searching" for event in trace["display_status"]["events"]
     )
     assert trace["display_status"]["latest"]["state"] == "done"
-    assert trace["first_response_audio"]["scheduled"] is True
-    assert trace["first_response_audio"]["played"] is False
-    assert trace["first_response_audio"]["suppressed_reason"].startswith(
-        "playback_unavailable"
-    )
+    assert not trace["first_response_audio"].get("scheduled", False)
 
 
 async def test_device_inventory_query_uses_static_context_renderer(
@@ -1167,6 +1160,11 @@ async def test_explicit_web_weather_can_search_without_repeating_live_context(
     assert trace["search_debug"]["searched"]
     assert trace["search_gate"]["decision"] == "external_search_requested"
     assert trace["weather_context_path"]["search_fallback"] is True
+    assert any(span["stage"] == "search_started" for span in trace["timeline_spans"])
+    assert "search" in [event["earcon_name"] for event in trace["earcons"]]
+    assert any(
+        event["state"] == "searching" for event in trace["display_status"]["events"]
+    )
     assert (
         len(
             [

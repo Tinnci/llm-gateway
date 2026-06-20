@@ -667,6 +667,54 @@ class LLMGatewayConversationEntity(
             },
         )
 
+        if pending_resolution.relation == "unresolved":
+            if pending_resolution.expired:
+                self._pending_tasks.pop(pending_key, None)
+            elif route_decision.task_family == "unknown_or_ambiguous":
+                prompt = pending_resolution.prompt or "还需要补充信息。"
+                self._mark_run(
+                    runtime,
+                    run_id,
+                    "local_route_clarify",
+                    attrs={
+                        **route_decision.as_dict(),
+                        "pending_task": (
+                            pending_resolution.pending_task.as_dict()
+                            if pending_resolution.pending_task
+                            else {}
+                        ),
+                        "interaction_state": "awaiting_user_info",
+                        "prompt": prompt,
+                        "llm_used": False,
+                        "tools_used": [],
+                        "tools_used_count": 0,
+                    },
+                )
+                async for _tool_result in chat_log.async_add_assistant_content(
+                    conversation.AssistantContent(
+                        agent_id=self.entity_id,
+                        content=prompt,
+                    )
+                ):
+                    pass
+                return await self._async_finalize_turn(
+                    user_input,
+                    chat_log,
+                    started,
+                    {
+                        "kind": "local_dialogue_followup",
+                        "model": "pending_state_resolver",
+                        "max_tokens": 0,
+                        "timeout_s": 0,
+                        "async_deep_task": False,
+                        "route_decision": route_decision.as_dict(),
+                    },
+                    run_id,
+                    turn_token,
+                )
+            else:
+                self._pending_tasks.pop(pending_key, None)
+
         local_control_speech = await async_handle_voice_runtime_command(
             self.hass, user_input.text
         )
@@ -1973,6 +2021,19 @@ class LLMGatewayConversationEntity(
             for tool_call in content.tool_calls or []:
                 if not tool_call.external:
                     continue
+                if tool_call.tool_name == SEARCH_TOOL_NAME:
+                    self._mark_run(
+                        runtime,
+                        run_id,
+                        "search_started",
+                        attrs={
+                            "name": tool_call.tool_name,
+                            "iteration": iteration,
+                            "query": str(tool_call.tool_args.get("query") or ""),
+                            "interaction_state": "searching",
+                            "spoken_hint": "我查一下。",
+                        },
+                    )
                 result = await async_execute_search_tool(
                     runtime.session,
                     options,

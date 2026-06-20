@@ -31,3 +31,26 @@ def test_search_permission_does_not_become_weather_query_without_location() -> N
     assert resolution.slot_updates == {"search_allowed": True}
     assert resolution.effective_text == ""
     assert "哪个地方" in resolution.prompt
+
+
+def test_pending_task_can_be_cancelled() -> None:
+    route = decide_route("明天的天气怎么样？")
+    pending = pending_task_from_route("turn-1", route)
+
+    resolution = resolve_pending_task("不用了", pending)
+
+    assert resolution.relation == "cancellation"
+    assert resolution.interaction_state == "cancelled"
+    assert "取消" in resolution.prompt
+
+
+def test_pending_task_expiry_is_explicit() -> None:
+    route = decide_route("明天的天气怎么样？")
+    pending = pending_task_from_route("turn-1", route)
+    assert pending is not None
+    pending.turns_seen = pending.expires_after_turns
+
+    resolution = resolve_pending_task("随便", pending)
+
+    assert resolution.relation == "unresolved"
+    assert resolution.expired is True

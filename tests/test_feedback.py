@@ -8,13 +8,26 @@ from custom_components.llm_gateway.feedback import (
 )
 
 
-def test_feedback_policy_maps_search_first_response() -> None:
+def test_feedback_policy_does_not_map_search_first_response_to_searching() -> None:
     store = VoiceFeedbackStore()
     earcon, display = VoiceFeedbackPolicy(store).pipeline_event(
         turn_id="turn-search",
         stage="first_response",
         t_ms=120,
         attrs={"cue": "search", "spoken_hint": "我查一下。"},
+    )
+
+    assert earcon is None
+    assert display is None
+
+
+def test_feedback_policy_maps_search_started() -> None:
+    store = VoiceFeedbackStore()
+    earcon, display = VoiceFeedbackPolicy(store).pipeline_event(
+        turn_id="turn-search",
+        stage="search_started",
+        t_ms=120,
+        attrs={"query": "Home Assistant 最新语音更新"},
     )
 
     assert earcon["earcon_name"] == "search"
@@ -58,6 +71,25 @@ def test_feedback_policy_does_not_confirm_missing_user_slot_policy_block() -> No
     assert earcon is None
     assert display["state"] == "clarifying"
     assert display["short_text"] == "你想查哪个地方明天的天气？"
+
+
+def test_final_status_preserves_clarifying_state() -> None:
+    store = VoiceFeedbackStore()
+    VoiceFeedbackPolicy(store).pipeline_event(
+        turn_id="turn-weather",
+        stage="local_route_clarify",
+        t_ms=80,
+        attrs={"prompt": "你想查哪个地方明天的天气？"},
+    )
+
+    display = VoiceFeedbackPolicy(store).final_status(
+        turn_id="turn-weather",
+        status="complete",
+        t_ms=120,
+        short_text="你想查哪个地方明天的天气？",
+    )
+
+    assert display["state"] == "clarifying"
 
 
 def test_feedback_policy_only_confirms_high_risk_policy_block() -> None:

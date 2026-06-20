@@ -89,6 +89,7 @@ class PendingResolution:
     effective_text: str = ""
     prompt: str = ""
     interaction_state: InteractionState = "classifying"
+    expired: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -98,6 +99,7 @@ class PendingResolution:
             "effective_text": self.effective_text,
             "prompt": self.prompt,
             "interaction_state": self.interaction_state,
+            "expired": self.expired,
             "pending_task": self.pending_task.as_dict() if self.pending_task else {},
         }
 
@@ -123,7 +125,7 @@ def resolve_pending_task(text: str, pending: PendingTask | None) -> PendingResol
         return PendingResolution("new_task")
     pending.turns_seen += 1
     if pending.turns_seen > pending.expires_after_turns:
-        return PendingResolution("unresolved", pending_task=pending)
+        return PendingResolution("unresolved", pending_task=pending, expired=True)
     if _CANCEL_RE.match(value):
         return PendingResolution(
             "cancellation",

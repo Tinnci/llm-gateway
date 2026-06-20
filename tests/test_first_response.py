@@ -51,12 +51,12 @@ def test_first_response_literary_knowledge_is_not_unknown():
     assert decision.reason == "local_stable_knowledge"
 
 
-def test_first_response_uses_fast_search_cue_for_current_info():
+def test_first_response_does_not_emit_search_cue_before_tool_start():
     decision = decide_first_response("查一下 Home Assistant 最新语音更新")
 
     assert decision.task_type == "search_needed"
-    assert decision.cue == "search"
-    assert decision.spoken_hint == "我查一下。"
+    assert decision.cue == "none"
+    assert decision.spoken_hint == ""
     assert decision.processing_cue_delay_s == FAST_PROCESSING_CUE_DELAY_S
 
 

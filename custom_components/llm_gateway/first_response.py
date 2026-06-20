@@ -105,7 +105,7 @@ def decide_first_response(text: str) -> FirstResponseDecision:  # noqa: PLR0911,
     if route.task_family == "location_dependent_query":
         return _decision(
             route.task_type,
-            "none" if route.next_action == "ask_location_permission" else "search",
+            "none",
             "",
             DEFAULT_PROCESSING_CUE_DELAY_S,
             "location_dependent_query",
@@ -124,8 +124,8 @@ def decide_first_response(text: str) -> FirstResponseDecision:  # noqa: PLR0911,
     if route.task_type == "search_needed":
         return _decision(
             "search_needed",
-            "search",
-            "我查一下。",
+            "none",
+            "",
             FAST_PROCESSING_CUE_DELAY_S,
             "explicit_or_current_search",
         )

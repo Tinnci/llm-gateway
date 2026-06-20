@@ -13,11 +13,16 @@ DisplayState = Literal[
     "listening",
     "captured",
     "thinking",
+    "continuing",
     "searching",
+    "clarifying",
     "confirming",
     "executing",
+    "blocked",
+    "capability_missing",
     "done",
     "failed",
+    "cancelled",
 ]
 PrivacyLevel = Literal["public", "private", "sensitive"]
 ProgressKind = Literal["none", "indeterminate", "percent"]
@@ -374,6 +379,12 @@ class VoiceFeedbackPolicy:
         attrs = attrs or {}
         if stage == "first_response":
             return self._first_response(turn_id=turn_id, t_ms=t_ms, attrs=attrs)
+        if stage == "pending_state_resolver":
+            return self._pending_state(turn_id=turn_id, t_ms=t_ms, attrs=attrs)
+        if stage == "local_route_clarify":
+            return self._clarifying(turn_id, t_ms, attrs)
+        if stage == "search_started":
+            return self._emit_searching(turn_id, t_ms, attrs)
         if stage == "tool_policy_block":
             return self._policy_block(turn_id, t_ms, attrs)
         if stage == "search_result":
@@ -417,7 +428,13 @@ class VoiceFeedbackPolicy:
                 return latest
             self._emit_failure(turn_id, t_ms, short_text or "请求失败。")
             return self._store.display_events_for_turn(turn_id)[-1]
-        if latest and latest.get("state") == "confirming":
+        if latest and latest.get("state") in {
+            "clarifying",
+            "confirming",
+            "blocked",
+            "capability_missing",
+            "cancelled",
+        }:
             return latest
         return self._store.emit_display(
             turn_id=turn_id,
@@ -438,20 +455,9 @@ class VoiceFeedbackPolicy:
         cue = str(attrs.get("cue") or "")
         text = str(attrs.get("spoken_hint") or attrs.get("reason") or "")
         if cue == "search":
-            earcon = self._store.emit_earcon(
-                turn_id=turn_id,
-                earcon_name="search",
-                scheduled_at_ms=t_ms,
-            )
-            display = self._store.emit_display(
-                turn_id=turn_id,
-                state="searching",
-                title="Searching",
-                short_text=text or "我查一下。",
-                progress="indeterminate",
-                action_buttons=["cancel", "open_panel"],
-            )
-            return earcon, display
+            # Search feedback is only user-truthful once an allowed search tool
+            # actually starts.  Keep first_response classification trace-only.
+            return None, None
         if cue == "confirmation":
             return self._emit_confirmation(turn_id, t_ms, text or "这个需要确认。")
         if cue in {"thinking", "planning"}:
@@ -471,6 +477,89 @@ class VoiceFeedbackPolicy:
             )
             return earcon, display
         return None, None
+
+    def _pending_state(
+        self,
+        *,
+        turn_id: str,
+        t_ms: int,
+        attrs: dict[str, Any],
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        state = str(attrs.get("interaction_state") or "")
+        text = str(attrs.get("prompt") or attrs.get("effective_text") or "")
+        if state == "awaiting_user_info":
+            return self._clarifying(turn_id, t_ms, attrs)
+        if state == "slot_filled":
+            display = self._store.emit_display(
+                turn_id=turn_id,
+                state="continuing",
+                title="Continuing",
+                short_text=text or "继续处理。",
+                progress="indeterminate",
+                action_buttons=["cancel", "open_panel"],
+                ttl_s=20,
+            )
+            return None, display
+        if state == "cancelled":
+            earcon = self._store.emit_earcon(
+                turn_id=turn_id,
+                earcon_name="cancel",
+                scheduled_at_ms=t_ms,
+            )
+            display = self._store.emit_display(
+                turn_id=turn_id,
+                state="cancelled",
+                title="Cancelled",
+                short_text=str(attrs.get("prompt") or "已取消。"),
+                action_buttons=["open_panel"],
+                ttl_s=20,
+            )
+            return earcon, display
+        return None, None
+
+    def _clarifying(
+        self,
+        turn_id: str,
+        _t_ms: int,
+        attrs: dict[str, Any],
+    ) -> tuple[None, dict[str, Any]]:
+        text = str(
+            attrs.get("spoken_prompt")
+            or attrs.get("user_visible_prompt")
+            or attrs.get("prompt")
+            or "还需要补充信息。"
+        )
+        display = self._store.emit_display(
+            turn_id=turn_id,
+            state="clarifying",
+            title="More information needed",
+            short_text=text,
+            action_buttons=["cancel", "open_panel"],
+            ttl_s=45,
+        )
+        return None, display
+
+    def _emit_searching(
+        self,
+        turn_id: str,
+        t_ms: int,
+        attrs: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        text = str(attrs.get("spoken_hint") or attrs.get("query") or "我查一下。")
+        earcon = self._store.emit_earcon(
+            turn_id=turn_id,
+            earcon_name="search",
+            scheduled_at_ms=t_ms,
+        )
+        display = self._store.emit_display(
+            turn_id=turn_id,
+            state="searching",
+            title="Searching",
+            short_text=text,
+            progress="indeterminate",
+            action_buttons=["cancel", "open_panel"],
+        )
+        return earcon, display
 
     def _emit_confirmation(
         self, turn_id: str, t_ms: int, short_text: str
@@ -502,15 +591,11 @@ class VoiceFeedbackPolicy:
             "missing_user_slot",
             "missing_requirements",
         }:
-            display = self._store.emit_display(
-                turn_id=turn_id,
-                state="clarifying",
-                title="More information needed",
-                short_text=text or "还需要补充信息。",
-                action_buttons=["cancel", "open_panel"],
-                ttl_s=45,
+            return self._clarifying(
+                turn_id,
+                t_ms,
+                {**attrs, "spoken_prompt": text or "还需要补充信息。"},
             )
-            return None, display
         display = self._store.emit_display(
             turn_id=turn_id,
             state="capability_missing" if state == "capability_missing" else "blocked",
