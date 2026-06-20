@@ -9,11 +9,13 @@ or a future adapter.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Literal
 
 from homeassistant.const import ATTR_ENTITY_ID
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
+from homeassistant.util import dt as dt_util
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant, State
@@ -282,9 +284,10 @@ def render_weather_context_answer(
 ) -> str:
     """Render a concise spoken weather answer."""
     if time_horizon in {"tomorrow", "future"} and context.forecasts.daily:
+        forecast = _forecast_for_horizon(context.forecasts.daily, time_horizon)
         return _render_forecast_answer(
             context.location,
-            context.forecasts.daily[0],
+            forecast,
             time_horizon=time_horizon,
         )
     return _render_current_answer(context)
@@ -413,6 +416,53 @@ def _forecast_from_row(row: dict[str, Any]) -> WeatherForecast:
         wind_bearing=str(row.get("wind_bearing") or ""),
         wind_speed=_float_or_none(row.get("wind_speed")),
     )
+
+
+def _forecast_for_horizon(
+    forecasts: tuple[WeatherForecast, ...],
+    time_horizon: str,
+) -> WeatherForecast:
+    if time_horizon == "tomorrow":
+        target = dt_util.now().date() + timedelta(days=1)
+        exact = _first_forecast_on_date(forecasts, target)
+        if exact is not None:
+            return exact
+        future = _first_forecast_after_date(forecasts, target)
+        if future is not None:
+            return future
+    return forecasts[0]
+
+
+def _first_forecast_on_date(
+    forecasts: tuple[WeatherForecast, ...],
+    target: date,
+) -> WeatherForecast | None:
+    for forecast in forecasts:
+        forecast_date = _forecast_date(forecast)
+        if forecast_date == target:
+            return forecast
+    return None
+
+
+def _first_forecast_after_date(
+    forecasts: tuple[WeatherForecast, ...],
+    target: date,
+) -> WeatherForecast | None:
+    for forecast in forecasts:
+        forecast_date = _forecast_date(forecast)
+        if forecast_date is not None and forecast_date >= target:
+            return forecast
+    return None
+
+
+def _forecast_date(forecast: WeatherForecast) -> date | None:
+    raw = forecast.datetime.strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw).date()
+    except ValueError:
+        return None
 
 
 def _state_is_available(value: str) -> bool:

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 from homeassistant.core import SupportsResponse
+from homeassistant.util import dt as dt_util
 
 from custom_components.llm_gateway.weather_context import (
     WeatherContextProvider,
@@ -101,3 +104,56 @@ async def test_weather_context_provider_calls_ha_forecast_service(hass) -> None:
     assert "有雨" in speech
     assert "22 到 27 度" in speech
     assert "降水 2 毫米" in speech
+
+
+async def test_weather_forecast_render_selects_tomorrow_not_first_stale_row(
+    hass,
+) -> None:
+    _set_weather_state(hass)
+    today = dt_util.now().date()
+    yesterday = today - timedelta(days=1)
+    tomorrow = today + timedelta(days=1)
+
+    async def get_forecasts(call):
+        return {
+            "weather.jingan": {
+                "forecast": [
+                    {
+                        "condition": "rainy",
+                        "datetime": f"{yesterday.isoformat()}T00:00:00+08:00",
+                        "temperature": 30.0,
+                        "templow": 24.0,
+                        "precipitation": 1.0,
+                        "humidity": 72,
+                        "wind_bearing": "西风",
+                    },
+                    {
+                        "condition": "cloudy",
+                        "datetime": f"{tomorrow.isoformat()}T00:00:00+08:00",
+                        "temperature": 25.0,
+                        "templow": 21.0,
+                        "precipitation": 0.0,
+                        "humidity": 80,
+                        "wind_bearing": "东风",
+                    },
+                ]
+            }
+        }
+
+    hass.services.async_register(
+        "weather",
+        "get_forecasts",
+        get_forecasts,
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    context = await WeatherContextProvider(hass).async_get_forecast(
+        location_hint="静安",
+        forecast_type="daily",
+    )
+
+    assert context is not None
+    speech = render_weather_context_answer(context, time_horizon="tomorrow")
+    assert "21 到 25 度" in speech
+    assert "东风" in speech
+    assert "24 到 30 度" not in speech

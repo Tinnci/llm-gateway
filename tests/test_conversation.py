@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -10,6 +11,7 @@ from homeassistant.const import ATTR_ENTITY_ID, CONF_LLM_HASS_API
 from homeassistant.core import Context, SupportsResponse
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import llm
+from homeassistant.util import dt as dt_util
 
 from custom_components.llm_gateway.api import LLMGatewayConnectionError
 from custom_components.llm_gateway.const import (
@@ -1372,6 +1374,9 @@ async def test_weather_forecast_uses_ha_weather_forecast_service_before_search(
     )
     _set_weather_jingan(hass)
     calls: list[dict[str, object]] = []
+    today = dt_util.now().date()
+    yesterday = today - timedelta(days=1)
+    tomorrow = today + timedelta(days=1)
 
     async def get_forecasts(call):
         calls.append(dict(call.data))
@@ -1380,13 +1385,22 @@ async def test_weather_forecast_uses_ha_weather_forecast_service_before_search(
                 "forecast": [
                     {
                         "condition": "rainy",
-                        "datetime": "2026-06-21T00:00:00+08:00",
+                        "datetime": f"{yesterday.isoformat()}T00:00:00+08:00",
+                        "temperature": 30.0,
+                        "templow": 24.0,
+                        "precipitation": 1.0,
+                        "humidity": 72,
+                        "wind_bearing": "西风",
+                    },
+                    {
+                        "condition": "rainy",
+                        "datetime": f"{tomorrow.isoformat()}T00:00:00+08:00",
                         "temperature": 27.0,
                         "templow": 22.0,
                         "precipitation": 2.0,
                         "humidity": 78,
                         "wind_bearing": "东风",
-                    }
+                    },
                 ]
             }
         }
