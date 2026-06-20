@@ -79,6 +79,7 @@ from .static_context import render_device_inventory, render_scalar_state_answer
 from .traces import TraceTurn
 from .voice_controls import async_handle_voice_runtime_command
 from .voice_text import enforce_output_contract, markdown_to_spoken_text
+from .weather_context import WeatherContextProvider, render_weather_context_answer
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -1126,6 +1127,26 @@ class LLMGatewayConversationEntity(
                 turn_token,
             )
 
+        if (
+            route_decision.task_type
+            in {
+                "outdoor_current_weather_query",
+                "weather_forecast_query",
+            }
+            and route_decision.next_action != "clarify"
+        ):
+            weather_result = await self._async_try_weather_context(
+                user_input,
+                chat_log,
+                started,
+                first_response,
+                route_decision,
+                run_id,
+                turn_token,
+            )
+            if weather_result is not None:
+                return weather_result
+
         if route_decision.next_action == "call_tool_then_local_render":
             local_live_result = await self._async_try_local_live_context(
                 user_input,
@@ -1359,6 +1380,93 @@ class LLMGatewayConversationEntity(
             _local_route_trace(
                 "local_live_context",
                 "live_context_renderer",
+                first_response,
+                route_decision,
+            ),
+            run_id,
+            turn_token,
+        )
+
+    async def _async_try_weather_context(  # noqa: PLR0913
+        self,
+        user_input: conversation.ConversationInput,
+        chat_log: conversation.ChatLog,
+        started: float,
+        first_response: FirstResponseDecision,
+        route_decision: RouteDecision,
+        run_id: str,
+        turn_token: TurnToken,
+    ) -> conversation.ConversationResult | None:
+        """Answer weather turns from HA weather entities before sensor fallback."""
+        runtime = self.entry.runtime_data
+        provider = WeatherContextProvider(self.hass)
+        if route_decision.task_type == "weather_forecast_query":
+            context = await provider.async_get_forecast(
+                location_hint=route_decision.location_hint,
+                forecast_type="daily",
+            )
+            if context is None or not context.forecasts.daily:
+                self._mark_run(
+                    runtime,
+                    run_id,
+                    "weather_entity_unavailable",
+                    status="error",
+                    attrs={
+                        "reason": "forecast_unavailable",
+                        "task_type": route_decision.task_type,
+                        "location_hint": route_decision.location_hint,
+                    },
+                )
+                return None
+        else:
+            context = await provider.async_get_current(
+                location_hint=route_decision.location_hint,
+            )
+            if context is None:
+                self._mark_run(
+                    runtime,
+                    run_id,
+                    "weather_entity_unavailable",
+                    status="error",
+                    attrs={
+                        "reason": "weather_entity_unavailable",
+                        "task_type": route_decision.task_type,
+                        "location_hint": route_decision.location_hint,
+                    },
+                )
+                return None
+
+        speech = render_weather_context_answer(
+            context,
+            time_horizon=route_decision.time_horizon or "now",
+        )
+        self._mark_run(
+            runtime,
+            run_id,
+            "weather_entity",
+            attrs={
+                **context.trace_attrs(),
+                "task_type": route_decision.task_type,
+                "time_horizon": route_decision.time_horizon,
+                "forecast_required": route_decision.forecast_required,
+                "llm_used": False,
+                "tools_used": [],
+            },
+        )
+        async for _tool_result in chat_log.async_add_assistant_content(
+            conversation.AssistantContent(
+                agent_id=self.entity_id,
+                content=speech,
+            )
+        ):
+            pass
+        return await self._async_finalize_turn(
+            user_input,
+            chat_log,
+            started,
+            _local_route_trace(
+                "local_weather",
+                "weather_context_provider",
                 first_response,
                 route_decision,
             ),

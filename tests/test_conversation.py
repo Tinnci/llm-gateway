@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from homeassistant.components import conversation
 from homeassistant.const import ATTR_ENTITY_ID, CONF_LLM_HASS_API
-from homeassistant.core import Context
+from homeassistant.core import Context, SupportsResponse
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import llm
 
@@ -79,6 +79,28 @@ LIVE_CONTEXT_RESULT = {
         "    unit_of_measurement: %\n"
     ),
 }
+
+
+def _set_weather_jingan(hass) -> None:
+    hass.states.async_set(
+        "weather.jingan",
+        "partlycloudy",
+        {
+            "friendly_name": "静安天气 静安",
+            "temperature": 26.7,
+            "temperature_unit": "°C",
+            "humidity": 85,
+            "wind_bearing": "西风",
+            "wind_speed": 1.0,
+            "wind_speed_unit": "km/h",
+            "visibility": 8.0,
+            "visibility_unit": "km",
+            "condition_desc": "多云",
+            "forecast_minutely": "未来2小时不会下雨",
+            "forecast_keypoint": "有降水，带雨伞，短期外出可收起雨伞。",
+            "supported_features": 3,
+        },
+    )
 
 
 async def _setup_agent(hass, mock_config_entry, options=None) -> str:
@@ -1308,6 +1330,98 @@ async def test_weather_query_uses_local_context_path_without_forced_search(
     ]
     assert live_context_calls
     assert len(live_context_calls) == 1
+
+
+async def test_weather_query_prefers_ha_weather_entity_over_live_sensor_context(
+    hass, aioclient_mock, mock_config_entry
+):
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    _set_weather_jingan(hass)
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {
+            CONF_LLM_HASS_API: "assist",
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
+        },
+    )
+
+    result = await conversation.async_converse(
+        hass, "室外的天气目前怎么样？", None, Context(), agent_id=agent_id
+    )
+
+    speech = result.response.speech["plain"]["speech"]
+    assert "静安现在多云" in speech
+    assert "26.7 度" in speech
+    assert "未来2小时不会下雨" in speech
+    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+    assert trace["route"]["kind"] == "local_weather"
+    assert trace["weather_context_path"]["path"] == "weather_entity"
+    assert trace["weather_context_path"]["get_live_context_calls"] == 0
+    assert any(span["stage"] == "weather_entity" for span in trace["timeline_spans"])
+
+
+async def test_weather_forecast_uses_ha_weather_forecast_service_before_search(
+    hass, aioclient_mock, mock_config_entry
+):
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    _set_weather_jingan(hass)
+    calls: list[dict[str, object]] = []
+
+    async def get_forecasts(call):
+        calls.append(dict(call.data))
+        return {
+            "weather.jingan": {
+                "forecast": [
+                    {
+                        "condition": "rainy",
+                        "datetime": "2026-06-21T00:00:00+08:00",
+                        "temperature": 27.0,
+                        "templow": 22.0,
+                        "precipitation": 2.0,
+                        "humidity": 78,
+                        "wind_bearing": "东风",
+                    }
+                ]
+            }
+        }
+
+    hass.services.async_register(
+        "weather",
+        "get_forecasts",
+        get_forecasts,
+        supports_response=SupportsResponse.ONLY,
+    )
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {
+            CONF_LLM_HASS_API: "assist",
+            CONF_SEARCH_ENABLED: True,
+            CONF_TAVILY_API_KEY: "tvly-test",
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
+        },
+    )
+
+    result = await conversation.async_converse(
+        hass, "静安明天的天气怎么样？", None, Context(), agent_id=agent_id
+    )
+
+    speech = result.response.speech["plain"]["speech"]
+    assert "静安明天天气" in speech
+    assert "有雨" in speech
+    assert "22 到 27 度" in speech
+    assert calls == [{"entity_id": "weather.jingan", "type": "daily"}]
+    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+    assert trace["route"]["kind"] == "local_weather"
+    assert trace["search_debug"]["searched"] is False
+    assert trace["weather_context_path"]["path"] == "weather_entity"
 
 
 async def test_weather_query_suppresses_repeated_live_context_call(
