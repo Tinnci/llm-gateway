@@ -38,10 +38,10 @@ from .const import (
     TOOL_LOOP_GUARD_SPEECH,
 )
 from .dialogue import (
-    PendingTask,
+    DialogueFrameStack,
+    dialogue_frame_from_route,
     interaction_state_for_policy_block,
-    pending_task_from_route,
-    resolve_pending_task,
+    resolve_dialogue_transaction,
 )
 from .feedback import (
     VoiceFeedbackPolicy,
@@ -536,7 +536,7 @@ class LLMGatewayConversationEntity(
     def __init__(self, entry: LLMGatewayConfigEntry) -> None:
         """Initialize the agent."""
         self.entry = entry
-        self._pending_tasks: dict[str, PendingTask] = {}
+        self._dialogue_frames: dict[str, DialogueFrameStack] = {}
         self._attr_unique_id = entry.entry_id
         self._attr_device_info = dr.DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
@@ -633,33 +633,47 @@ class LLMGatewayConversationEntity(
         _insert_system_once(chat_log.content, VOICE_RESPONSE_CONTRACT, index=1)
         self._mark_run(runtime, run_id, "llm_data")
         pending_key = user_input.conversation_id or self.entry.entry_id
-        pending_resolution = resolve_pending_task(
-            user_input.text,
-            self._pending_tasks.get(pending_key),
+        frame_stack = self._dialogue_frames.setdefault(
+            pending_key,
+            DialogueFrameStack(),
         )
-        effective_text = pending_resolution.effective_text or user_input.text
-        if pending_resolution.relation != "new_task":
+        dialogue_transaction = resolve_dialogue_transaction(
+            user_input.text,
+            frame_stack,
+        )
+        effective_text = dialogue_transaction.effective_text or user_input.text
+        if (
+            dialogue_transaction.relation != "new_task"
+            or dialogue_transaction.suspended_frame is not None
+        ):
             self._mark_run(
                 runtime,
                 run_id,
                 "pending_state_resolver",
-                attrs=pending_resolution.as_dict(),
+                attrs={
+                    **dialogue_transaction.as_dict(),
+                    "dialogue_frame_stack": frame_stack.as_dict(),
+                },
             )
-        if pending_resolution.relation == "cancellation":
-            self._pending_tasks.pop(pending_key, None)
+        if dialogue_transaction.relation == "new_task" and (
+            dialogue_transaction.suspended_frame is not None
+        ):
+            self._dialogue_frames.pop(pending_key, None)
+        if dialogue_transaction.relation == "cancellation":
+            self._dialogue_frames.pop(pending_key, None)
             self._mark_run(
                 runtime,
                 run_id,
                 "cancel",
                 attrs={
                     "interaction_state": "cancelled",
-                    "prompt": pending_resolution.prompt or "好的，已取消。",
+                    "prompt": dialogue_transaction.prompt or "好的，已取消。",
                 },
             )
             async for _tool_result in chat_log.async_add_assistant_content(
                 conversation.AssistantContent(
                     agent_id=self.entity_id,
-                    content=pending_resolution.prompt or "好的，已取消。",
+                    content=dialogue_transaction.prompt or "好的，已取消。",
                 )
             ):
                 pass
@@ -671,8 +685,8 @@ class LLMGatewayConversationEntity(
                 run_id,
                 turn_token,
             )
-        if pending_resolution.relation == "permission":
-            prompt = pending_resolution.prompt or "你想查哪个地方？"
+        if dialogue_transaction.relation == "permission":
+            prompt = dialogue_transaction.prompt or "你想查哪个地方？"
             self._mark_run(
                 runtime,
                 run_id,
@@ -680,7 +694,9 @@ class LLMGatewayConversationEntity(
                 attrs={
                     "interaction_state": "awaiting_user_info",
                     "prompt": prompt,
-                    "dialogue_relation": pending_resolution.relation,
+                    "dialogue_relation": dialogue_transaction.relation,
+                    "dialogue_transaction": dialogue_transaction.as_dict(),
+                    "dialogue_frame_stack": frame_stack.as_dict(),
                     "llm_used": False,
                     "tools_used": [],
                     "tools_used_count": 0,
@@ -701,8 +717,9 @@ class LLMGatewayConversationEntity(
                 run_id,
                 turn_token,
             )
-        if pending_resolution.relation == "slot_fill":
-            self._pending_tasks.pop(pending_key, None)
+        if dialogue_transaction.relation == "slot_fill":
+            if frame_stack.active_frame() is None:
+                self._dialogue_frames.pop(pending_key, None)
             _insert_system_once(
                 chat_log.content,
                 f"Resolved follow-up request: {effective_text}",
@@ -717,7 +734,7 @@ class LLMGatewayConversationEntity(
             attrs={
                 **route_decision.as_dict(),
                 "effective_text": effective_text,
-                "dialogue_relation": pending_resolution.relation,
+                "dialogue_relation": dialogue_transaction.relation,
             },
         )
         if resolution_frame := _resolution_frame_for_route(route_decision):
@@ -728,27 +745,25 @@ class LLMGatewayConversationEntity(
                 attrs=resolution_frame.as_dict(),
             )
 
-        if pending_resolution.relation == "unresolved":
-            if pending_resolution.expired:
-                self._pending_tasks.pop(pending_key, None)
+        if dialogue_transaction.relation == "unresolved":
+            if dialogue_transaction.expired:
+                if frame_stack.active_frame() is None:
+                    self._dialogue_frames.pop(pending_key, None)
             elif route_decision.task_family == "unknown_or_ambiguous":
-                prompt = pending_resolution.prompt or "还需要补充信息。"
+                prompt = dialogue_transaction.prompt or "还需要补充信息。"
                 self._mark_run(
                     runtime,
                     run_id,
                     "local_route_clarify",
                     attrs={
-                        **route_decision.as_dict(),
-                        "pending_task": (
-                            pending_resolution.pending_task.as_dict()
-                            if pending_resolution.pending_task
-                            else {}
-                        ),
-                        "interaction_state": "awaiting_user_info",
-                        "prompt": prompt,
                         "llm_used": False,
                         "tools_used": [],
                         "tools_used_count": 0,
+                        **route_decision.as_dict(),
+                        "dialogue_transaction": dialogue_transaction.as_dict(),
+                        "dialogue_frame_stack": frame_stack.as_dict(),
+                        "interaction_state": "awaiting_user_info",
+                        "prompt": prompt,
                     },
                 )
                 async for _tool_result in chat_log.async_add_assistant_content(
@@ -774,7 +789,7 @@ class LLMGatewayConversationEntity(
                     turn_token,
                 )
             else:
-                self._pending_tasks.pop(pending_key, None)
+                self._dialogue_frames.pop(pending_key, None)
 
         local_control_speech = await async_handle_voice_runtime_command(
             self.hass, user_input.text
@@ -852,6 +867,9 @@ class LLMGatewayConversationEntity(
                         run_id,
                         "local_route_clarify",
                         attrs={
+                            "llm_used": False,
+                            "tools_used": [],
+                            "tools_used_count": 0,
                             **route_decision.as_dict(),
                             "interaction_state": "awaiting_user_info",
                             "prompt": local_capability_result.speech,
@@ -861,9 +879,6 @@ class LLMGatewayConversationEntity(
                                 .get("resolution_frame", {})
                                 .get("commitment", {})
                             ),
-                            "llm_used": False,
-                            "tools_used": [],
-                            "tools_used_count": 0,
                         },
                     )
                 async for _tool_result in chat_log.async_add_assistant_content(
@@ -922,20 +937,29 @@ class LLMGatewayConversationEntity(
                 route_decision.user_visible_prompt
                 or "我还不确定你想让我做什么，可以换个说法吗？"
             )
-            pending = pending_task_from_route(run_id, route_decision)
-            if pending is not None:
-                self._pending_tasks[pending_key] = pending
+            frame = dialogue_frame_from_route(run_id, route_decision)
+            if frame is not None:
+                stack = self._dialogue_frames.setdefault(
+                    pending_key,
+                    DialogueFrameStack(),
+                )
+                stack.push(frame)
             self._mark_run(
                 runtime,
                 run_id,
                 "local_route_clarify",
                 attrs={
-                    **route_decision.as_dict(),
-                    "pending_task": pending.as_dict() if pending else {},
-                    "interaction_state": "awaiting_user_info",
                     "llm_used": False,
                     "tools_used": [],
                     "tools_used_count": 0,
+                    **route_decision.as_dict(),
+                    "dialogue_frame": frame.as_dict() if frame else {},
+                    "dialogue_frame_stack": (
+                        self._dialogue_frames[pending_key].as_dict()
+                        if pending_key in self._dialogue_frames
+                        else {}
+                    ),
+                    "interaction_state": "awaiting_user_info",
                 },
             )
             async for _tool_result in chat_log.async_add_assistant_content(

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from custom_components.llm_gateway.capabilities import decide_route
 from custom_components.llm_gateway.dialogue import (
+    DialogueFrameStack,
+    dialogue_frame_from_route,
     pending_task_from_route,
+    resolve_dialogue_transaction,
     resolve_pending_task,
 )
 
@@ -54,3 +57,54 @@ def test_pending_task_expiry_is_explicit() -> None:
 
     assert resolution.relation == "unresolved"
     assert resolution.expired is True
+
+
+def test_dialogue_frame_stack_fills_weather_location_referent() -> None:
+    route = decide_route("明天的天气怎么样？")
+    frame = dialogue_frame_from_route("turn-1", route)
+    stack = DialogueFrameStack()
+    assert frame is not None
+    stack.push(frame)
+
+    transaction = resolve_dialogue_transaction("上海静安。", stack)
+
+    assert transaction.relation == "slot_fill"
+    assert transaction.target_frame is frame
+    assert transaction.slot_updates == {"location_hint": "上海静安"}
+    assert transaction.effective_text == "上海静安明天的天气怎么样？"
+    assert stack.active_frame() is None
+
+
+def test_dialogue_frame_stack_suspends_weather_for_high_confidence_new_task() -> None:
+    route = decide_route("明天的天气怎么样？")
+    frame = dialogue_frame_from_route("turn-1", route)
+    stack = DialogueFrameStack()
+    assert frame is not None
+    stack.push(frame)
+
+    transaction = resolve_dialogue_transaction(
+        "Do you know who is Virginia Hope?",
+        stack,
+    )
+
+    assert transaction.relation == "new_task"
+    assert transaction.suspended_frame is frame
+    assert transaction.prompt == ""
+    assert transaction.interaction_state == "classifying"
+    assert frame.status == "suspended"
+    assert stack.active_frame() is None
+
+
+def test_dialogue_frame_stack_keeps_search_permission_as_followup() -> None:
+    route = decide_route("明天的天气怎么样？")
+    frame = dialogue_frame_from_route("turn-1", route)
+    stack = DialogueFrameStack()
+    assert frame is not None
+    stack.push(frame)
+
+    transaction = resolve_dialogue_transaction("搜索一下。", stack)
+
+    assert transaction.relation == "permission"
+    assert transaction.slot_updates == {"search_allowed": True}
+    assert transaction.suspended_frame is None
+    assert stack.active_frame() is frame

@@ -96,8 +96,9 @@ Current enforced invariants:
   `confirmation_required` for high-risk HA actions can enter the confirmation
   interaction state or play the confirmation earcon.
 - `allowed_tools=[]` means no model-visible tool schema for that route.
-- Short follow-up utterances are resolved against pending tasks before normal
-  routing.
+- Short follow-up utterances are resolved against the dialogue frame stack
+  before normal routing. A high-confidence unrelated new task suspends the
+  active frame instead of replaying stale prompts.
 - The search earcon is emitted only from `search_started`, after an allowed
   search tool call is actually starting.
 - Final spoken/display text must not expose internal tool protocol fragments
@@ -156,6 +157,21 @@ Trace output must include candidate scores and evidence. Deeply nested frames
 may be compacted in summaries, so high-value fields such as `top_candidate`,
 `candidate_scores`, and `commitment_decision` are also exposed at the action
 trace level for harness assertions.
+
+Dialogue follow-up is represented as a transaction over a short-lived
+`DialogueFrameStack`, not as a global pending prompt:
+
+- `DialogueFrame`: frame id/type/operation, awaiting status, missing
+  referents, filled referents, last prompt, candidates, TTL, and original route.
+- `DialogueTransaction`: relation (`new_task`, `slot_fill`, `permission`,
+  `cancellation`, `unresolved`), target frame, suspended frame, slot updates,
+  effective text, and interaction state.
+- The resolver emits trace only. It does not directly emit display or earcon
+  state. User-visible prompts are produced later by commitment/local clarify
+  stages after the new turn is known not to be unrelated.
+- If a new utterance is a high-confidence unrelated task, the active frame is
+  suspended and removed from active matching. This prevents a weather location
+  prompt from leaking into a later person/entity question.
 
 ## Turn controller
 

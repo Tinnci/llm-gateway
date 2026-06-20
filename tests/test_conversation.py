@@ -721,6 +721,68 @@ async def test_ambiguous_person_entity_asks_clarification_without_model(
     assert not trace["tools"]
 
 
+async def test_new_person_task_suspends_weather_dialogue_frame_without_prompt_leak(
+    hass, aioclient_mock, mock_config_entry
+):
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
+        },
+    )
+
+    with patch(
+        "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
+    ) as completion:
+        first = await conversation.async_converse(
+            hass,
+            "明天的天气怎么样？",
+            "conv-frame-stack",
+            Context(),
+            agent_id=agent_id,
+        )
+        second = await conversation.async_converse(
+            hass,
+            "Do you know who is Virginia Hope?",
+            "conv-frame-stack",
+            Context(),
+            agent_id=agent_id,
+        )
+
+    completion.assert_not_called()
+    assert "哪个地方" in first.response.speech["plain"]["speech"]
+    second_speech = second.response.speech["plain"]["speech"]
+    assert "Virginia Hope" in second_speech
+    assert "Virginia Woolf" in second_speech
+    assert "哪个地方" not in second_speech
+
+    records = mock_config_entry.runtime_data.trace_store.snapshot()["records"]
+    second_trace = records[0]
+    assert second_trace["route_decision"]["task_type"] == "ambiguous_entity_query"
+    pending_span = next(
+        span
+        for span in second_trace["timeline_spans"]
+        if span["stage"] == "pending_state_resolver"
+    )
+    assert pending_span["attrs"]["dialogue_relation"] == "new_task"
+    assert pending_span["attrs"]["suspended_frame"]["frame_type"] == "weather_forecast"
+    assert pending_span["attrs"]["suspended_frame"]["status"] == "suspended"
+    assert pending_span["attrs"]["dialogue_frame_stack"]["active_frames"] == []
+
+    clarify_span = next(
+        span
+        for span in second_trace["timeline_spans"]
+        if span["stage"] == "local_route_clarify"
+    )
+    assert "Virginia Hope" in clarify_span["attrs"]["user_visible_prompt"]
+    assert "哪个地方" not in clarify_span["attrs"]["user_visible_prompt"]
+
+
 async def test_ambiguous_device_reference_keeps_display_clarifying(
     hass, aioclient_mock, mock_config_entry
 ):
