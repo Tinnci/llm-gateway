@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from custom_components.llm_gateway.resolution import (
     DeviceReference,
+    resolution_frame_from_entity_resolution,
     resolve_device_referent,
 )
 
@@ -85,3 +86,30 @@ def test_clear_area_device_reference_can_execute() -> None:
     assert frame.referents[0].candidates[0].id == "light.living_room"
     assert frame.commitment.state == "execute"
     assert frame.commitment.reason == "high_confidence"
+
+
+def test_person_resolution_frame_preserves_candidate_evidence() -> None:
+    frame = resolution_frame_from_entity_resolution(
+        operation="resolve_entity",
+        raw_entity="Virginia Hope",
+        entity_resolution={
+            "raw_entity": "Virginia Hope",
+            "canonical_entity_candidates": ["Virginia Woolf"],
+            "correction_type": "asr",
+            "confidence": 0.42,
+            "evidence": [
+                "low_confidence_asr_similarity",
+                "known_literary_candidate",
+            ],
+        },
+        answerability="ambiguous_entity",
+    )
+
+    referent = frame.referents[0]
+    candidate = referent.candidates[0]
+
+    assert frame.frame_type == "knowledge_query"
+    assert referent.status == "ambiguous"
+    assert candidate.name == "Virginia Woolf"
+    assert "low_confidence_asr_similarity" in candidate.evidence
+    assert frame.commitment.state == "targeted_clarify"

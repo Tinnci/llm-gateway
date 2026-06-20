@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from homeassistant.components import conversation
-from homeassistant.const import CONF_LLM_HASS_API
+from homeassistant.const import ATTR_ENTITY_ID, CONF_LLM_HASS_API
 from homeassistant.core import Context
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import llm
@@ -837,6 +837,75 @@ async def test_ambiguous_device_reference_keeps_display_clarifying(
     assert execute_span["attrs"]["action_trace"]["candidate_scores"][0]["id"] == (
         "light.devcea_1055"
     )
+
+
+async def test_local_device_clarification_confirmation_uses_dialogue_frame_stack(
+    hass, aioclient_mock, mock_config_entry
+):
+    calls: list[dict] = []
+
+    async def turn_on(call):
+        calls.append(dict(call.data))
+
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    hass.states.async_set(
+        "light.devcea_1055",
+        "off",
+        {"friendly_name": "宜家麦希瑟E27 1055lm智能球泡灯 灯"},
+    )
+    hass.states.async_set(
+        "light.monitor",
+        "off",
+        {"friendly_name": "Yeelight 显示器挂灯 灯"},
+    )
+    hass.services.async_register("light", "turn_on", turn_on)
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
+        },
+    )
+
+    with patch(
+        "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
+    ) as completion:
+        first = await conversation.async_converse(
+            hass,
+            "打开 1,055 00 的那个灯。",
+            "conv-device-frame",
+            Context(),
+            agent_id=agent_id,
+        )
+        second = await conversation.async_converse(
+            hass,
+            "对。",
+            "conv-device-frame",
+            Context(),
+            agent_id=agent_id,
+        )
+
+    completion.assert_not_called()
+    assert "1055lm" in first.response.speech["plain"]["speech"]
+    assert second.response.speech["plain"]["speech"] == (
+        "已打开宜家麦希瑟E27 1055lm智能球泡灯 灯。"
+    )
+    assert calls == [{ATTR_ENTITY_ID: ["light.devcea_1055"]}]
+    records = mock_config_entry.runtime_data.trace_store.snapshot()["records"]
+    second_trace = records[0]
+    pending_span = next(
+        span
+        for span in second_trace["timeline_spans"]
+        if span["stage"] == "pending_state_resolver"
+    )
+    assert pending_span["attrs"]["dialogue_relation"] == "slot_fill"
+    assert pending_span["attrs"]["slot_updates"]["target_device"]["id"] == (
+        "light.devcea_1055"
+    )
+    assert second_trace["route_decision"]["task_family"] == "home_control"
 
 
 async def test_virginia_wolf_routes_to_literary_knowledge_with_entity_correction(

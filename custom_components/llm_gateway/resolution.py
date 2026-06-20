@@ -186,7 +186,11 @@ def resolve_device_referent(  # noqa: PLR0913 - public kernel API mirrors frame 
                 candidate
                 for device in devices
                 if device.domain == domain
-                if (candidate := _score_device(device, normalized, domain, area))
+                if (
+                    candidate := _score_device(
+                        device, raw_text, normalized, domain, area
+                    )
+                )
                 and candidate.score >= LIST_CANDIDATE_THRESHOLD
             ),
             key=lambda item: item.score,
@@ -224,12 +228,16 @@ def resolution_frame_from_entity_resolution(
     answerability: str,
 ) -> SemanticResolutionFrame:
     """Convert existing person/entity resolution into the common frame schema."""
+    evidence = tuple(str(item) for item in entity_resolution.get("evidence", ()))
+    correction_type = str(entity_resolution.get("correction_type") or "none")
+    if correction_type != "none" and not evidence:
+        evidence = (f"{correction_type}_correction",)
     candidates = tuple(
         Candidate(
             id=str(candidate),
             name=str(candidate),
             score=float(entity_resolution.get("confidence") or 0.0),
-            evidence=("entity_resolution_candidate",),
+            evidence=evidence or ("entity_resolution_candidate",),
             source="known_entity_index",
         )
         for candidate in entity_resolution.get("canonical_entity_candidates", ())
@@ -317,8 +325,9 @@ def weather_resolution_frame(
     )
 
 
-def _score_device(
+def _score_device(  # noqa: PLR0912 - explicit evidence scoring keeps resolution auditable.
     device: DeviceReference,
+    raw_mention: str,
     normalized_mention: str,
     domain: str,
     area: str,
@@ -343,6 +352,9 @@ def _score_device(
         evidence.append(f"area_mismatch:{area}")
 
     if normalized_mention:
+        if "已确认" in str(raw_mention or ""):
+            score += 0.35
+            evidence.append("confirmed_target")
         best_name = max(
             normalized_names, key=lambda name: _overlap_score(normalized_mention, name)
         )
@@ -458,6 +470,8 @@ def _referent_status(candidates: tuple[Candidate, ...]) -> ReferentStatus:
 
 
 def _needs_confirmation_for_evidence(candidate: Candidate) -> bool:
+    if "confirmed_target" in candidate.evidence:
+        return False
     return any(
         item.startswith(("numeric_match", "asr_normalization"))
         for item in candidate.evidence

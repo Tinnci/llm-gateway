@@ -38,6 +38,7 @@ from .const import (
     TOOL_LOOP_GUARD_SPEECH,
 )
 from .dialogue import (
+    DialogueFrame,
     DialogueFrameStack,
     dialogue_frame_from_route,
     interaction_state_for_policy_block,
@@ -417,6 +418,64 @@ def _resolution_frame_for_route(
             answerability=str(route_decision.metadata.get("answerability") or ""),
         )
     return None
+
+
+def _dialogue_frame_from_local_capability(  # noqa: PLR0911 - validation exits keep the frame seam explicit.
+    turn_id: str,
+    prompt: str,
+    route_decision: RouteDecision,
+    trace_attrs: dict[str, Any],
+) -> DialogueFrame | None:
+    """Create a transactional frame from a local target-resolution clarification."""
+    action_trace = trace_attrs.get("action_trace")
+    if not isinstance(action_trace, dict):
+        return None
+    resolution_frame = action_trace.get("resolution_frame")
+    if not isinstance(resolution_frame, dict):
+        return None
+    if resolution_frame.get("frame_type") != "home_control":
+        return None
+    commitment = resolution_frame.get("commitment")
+    if not isinstance(commitment, dict):
+        return None
+    if commitment.get("state") not in {
+        "targeted_clarify",
+        "list_candidates",
+        "ask_missing_slot",
+    }:
+        return None
+    referents = resolution_frame.get("referents")
+    if not isinstance(referents, list) or not referents:
+        return None
+    referent = referents[0]
+    if not isinstance(referent, dict) or referent.get("slot") != "target_device":
+        return None
+    candidates = tuple(
+        dict(candidate)
+        for candidate in referent.get("candidates", ())
+        if isinstance(candidate, dict)
+    )
+    if not candidates:
+        return None
+    operation = str(resolution_frame.get("operation") or "")
+    return DialogueFrame(
+        id=f"{turn_id}:target_device",
+        frame_type="home_control",
+        operation=operation,
+        status=(
+            "awaiting_confirmation"
+            if commitment.get("state") == "targeted_clarify"
+            else "awaiting_referent"
+        ),
+        missing_referents=("target_device",),
+        last_prompt=prompt,
+        candidates=candidates,
+        route_decision={
+            **route_decision.as_dict(),
+            "resolution_frame": dict(resolution_frame),
+            "commitment": dict(commitment),
+        },
+    )
 
 
 def _local_live_context_tool_args(text: str) -> dict[str, Any]:
@@ -850,6 +909,7 @@ class LLMGatewayConversationEntity(
                 route_decision,
             )
             if local_capability_result is not None and local_capability_result.handled:
+                local_capability_trace = local_capability_result.trace_attrs()
                 self._mark_run(
                     runtime,
                     run_id,
@@ -859,9 +919,21 @@ class LLMGatewayConversationEntity(
                         if local_capability_result.status == "executed"
                         else local_capability_result.status
                     ),
-                    attrs=local_capability_result.trace_attrs(),
+                    attrs=local_capability_trace,
                 )
                 if local_capability_result.status == "clarify":
+                    frame = _dialogue_frame_from_local_capability(
+                        run_id,
+                        local_capability_result.speech,
+                        route_decision,
+                        local_capability_trace,
+                    )
+                    if frame is not None:
+                        stack = self._dialogue_frames.setdefault(
+                            pending_key,
+                            DialogueFrameStack(),
+                        )
+                        stack.push(frame)
                     self._mark_run(
                         runtime,
                         run_id,
@@ -873,9 +945,15 @@ class LLMGatewayConversationEntity(
                             **route_decision.as_dict(),
                             "interaction_state": "awaiting_user_info",
                             "prompt": local_capability_result.speech,
+                            "dialogue_frame": frame.as_dict() if frame else {},
+                            "dialogue_frame_stack": (
+                                self._dialogue_frames[pending_key].as_dict()
+                                if frame is not None
+                                and pending_key in self._dialogue_frames
+                                else {}
+                            ),
                             "commitment": (
-                                local_capability_result.trace_attrs()
-                                .get("action_trace", {})
+                                local_capability_trace.get("action_trace", {})
                                 .get("resolution_frame", {})
                                 .get("commitment", {})
                             ),

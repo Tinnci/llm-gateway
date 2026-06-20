@@ -374,6 +374,7 @@ class EntityResolution:
     candidates: tuple[str, ...] = ()
     correction_type: str = "none"
     confidence: float = 0.0
+    evidence: tuple[str, ...] = ()
     ambiguous: bool = False
     needs_clarification: bool = False
 
@@ -384,6 +385,7 @@ class EntityResolution:
             "canonical_entity_candidates": list(self.candidates),
             "correction_type": self.correction_type,
             "confidence": self.confidence,
+            "evidence": list(self.evidence),
             "ambiguous": self.ambiguous,
             "needs_clarification": self.needs_clarification,
         }
@@ -1239,6 +1241,11 @@ def resolve_entity(raw_entity: str) -> EntityResolution:
             candidates=(canonical,),
             correction_type=correction_type,
             confidence=confidence,
+            evidence=(
+                "known_entity_exact"
+                if correction_type == "none"
+                else f"{correction_type}_correction:{raw}≈{canonical}"
+            ),
             ambiguous=False,
             needs_clarification=False,
         )
@@ -1249,6 +1256,7 @@ def resolve_entity(raw_entity: str) -> EntityResolution:
             candidates=candidates,
             correction_type="asr",
             confidence=0.42,
+            evidence=("low_confidence_asr_similarity", "known_literary_candidate"),
             ambiguous=True,
             needs_clarification=True,
         )
@@ -1257,6 +1265,7 @@ def resolve_entity(raw_entity: str) -> EntityResolution:
         candidates=(),
         correction_type="none",
         confidence=0.5 if raw else 0.0,
+        evidence=("unknown_entity_no_local_candidate",) if raw else (),
         ambiguous=True,
         needs_clarification=True,
     )

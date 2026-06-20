@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from custom_components.llm_gateway.capabilities import decide_route
 from custom_components.llm_gateway.dialogue import (
+    DialogueFrame,
     DialogueFrameStack,
     dialogue_frame_from_route,
     pending_task_from_route,
@@ -108,3 +109,76 @@ def test_dialogue_frame_stack_keeps_search_permission_as_followup() -> None:
     assert transaction.slot_updates == {"search_allowed": True}
     assert transaction.suspended_frame is None
     assert stack.active_frame() is frame
+
+
+def test_dialogue_frame_stack_confirms_top_device_candidate() -> None:
+    frame = _device_frame()
+    stack = DialogueFrameStack([frame])
+
+    transaction = resolve_dialogue_transaction("对。", stack)
+
+    assert transaction.relation == "slot_fill"
+    assert transaction.slot_updates["target_device"]["id"] == "light.devcea_1055"
+    assert transaction.effective_text == "打开已确认的宜家麦希瑟E27 1055lm智能球泡灯 灯"
+    assert stack.active_frame() is None
+
+
+def test_dialogue_frame_stack_selects_device_candidate_by_name_fragment() -> None:
+    frame = _device_frame()
+    stack = DialogueFrameStack([frame])
+
+    transaction = resolve_dialogue_transaction("宜家的那个", stack)
+
+    assert transaction.relation == "slot_fill"
+    assert transaction.slot_updates["target_device"]["id"] == "light.devcea_1055"
+    assert transaction.effective_text == "打开已确认的宜家麦希瑟E27 1055lm智能球泡灯 灯"
+
+
+def test_dialogue_frame_stack_selects_device_candidate_by_ordinal() -> None:
+    frame = _device_frame()
+    stack = DialogueFrameStack([frame])
+
+    transaction = resolve_dialogue_transaction("第二个", stack)
+
+    assert transaction.relation == "slot_fill"
+    assert transaction.slot_updates["target_device"]["id"] == "light.monitor"
+    assert transaction.effective_text == "打开已确认的Yeelight 显示器挂灯 灯"
+
+
+def test_dialogue_frame_stack_suspends_device_frame_for_new_person_task() -> None:
+    frame = _device_frame()
+    stack = DialogueFrameStack([frame])
+
+    transaction = resolve_dialogue_transaction(
+        "Do you know who is Virginia Hope?", stack
+    )
+
+    assert transaction.relation == "new_task"
+    assert transaction.suspended_frame is frame
+    assert frame.status == "suspended"
+    assert stack.active_frame() is None
+
+
+def _device_frame() -> DialogueFrame:
+    return DialogueFrame(
+        id="turn-1:target_device",
+        frame_type="home_control",
+        operation="turn_on",
+        status="awaiting_confirmation",
+        missing_referents=("target_device",),
+        candidates=(
+            {
+                "id": "light.devcea_1055",
+                "name": "宜家麦希瑟E27 1055lm智能球泡灯 灯",
+                "score": 0.88,
+                "evidence": ["numeric_match:1055"],
+            },
+            {
+                "id": "light.monitor",
+                "name": "Yeelight 显示器挂灯 灯",
+                "score": 0.47,
+                "evidence": ["domain_match:light"],
+            },
+        ),
+        last_prompt="你是说宜家 1055lm 那个灯吗？",
+    )
