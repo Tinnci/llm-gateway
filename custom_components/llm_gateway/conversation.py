@@ -72,7 +72,7 @@ from .search import (
 from .static_context import render_device_inventory, render_scalar_state_answer
 from .traces import TraceTurn
 from .voice_controls import async_handle_voice_runtime_command
-from .voice_text import markdown_to_spoken_text
+from .voice_text import enforce_output_contract, markdown_to_spoken_text
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -1418,6 +1418,19 @@ class LLMGatewayConversationEntity(
             )
             self._mark_run(runtime, run_id, "tts_cleaned")
         assistant_text = result.response.speech.get("plain", {}).get("speech", "")
+        safe_assistant_text, output_modified, output_reason = enforce_output_contract(
+            assistant_text
+        )
+        if output_modified:
+            assistant_text = safe_assistant_text
+            result.response.async_set_speech(assistant_text)
+            self._mark_run(
+                runtime,
+                run_id,
+                "output_contract_validator",
+                status="error",
+                attrs={"reason": output_reason},
+            )
         await runtime.memory.async_record_turn(
             user_input.conversation_id,
             user_input.text,

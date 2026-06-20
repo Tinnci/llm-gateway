@@ -70,6 +70,44 @@ explicit search and planning requests can start the display-agent processing
 loop quickly, while ordinary HA control remains quiet unless it actually takes
 too long.
 
+## Capability contracts and invariants
+
+Routing fixes must land as capability contracts rather than one-off utterance
+patches. A concrete capability defines:
+
+- trigger examples across supported languages,
+- required user slots,
+- required system capabilities,
+- allowed and forbidden tools,
+- forbidden data sources,
+- missing-slot interaction state,
+- policy-block interaction state,
+- renderer and answerability guards.
+
+Current enforced invariants:
+
+- `unknown` may still use the fast model for general conversation, but a
+  factual named-entity question must first pass entity resolution and a
+  confidence gate.
+- `forecast_required=true` cannot be answered from current indoor sensors,
+  static inventory, current room temperature, or current home air-quality
+  snapshots.
+- `tool_policy_block` is not equivalent to confirmation. Only
+  `confirmation_required` for high-risk HA actions can enter the confirmation
+  interaction state or play the confirmation earcon.
+- `allowed_tools=[]` means no model-visible tool schema for that route.
+- Short follow-up utterances are resolved against pending tasks before normal
+  routing.
+- The search earcon is emitted only from `search_started`, after an allowed
+  search tool call is actually starting.
+- Final spoken/display text must not expose internal tool protocol fragments
+  such as tool calls, function names, arguments, or HA tool names.
+- Multi-frame responses must record coverage requirements so the composer can
+  avoid silently answering only one subtask.
+
+The current contract families include weather forecast, bare search,
+ambiguous-entity resolution, person knowledge, and literary works queries.
+
 ## Turn controller
 
 LLM Gateway keeps a small runtime turn controller for conversation ownership.

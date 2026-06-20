@@ -146,7 +146,7 @@ def should_force_search_in_voice_path(text: str) -> bool:
     if route.task_family == "location_dependent_query":
         return route.next_action == "search"
     if route.task_family == "external_current_info":
-        return True
+        return route.next_action == "search" and not route.missing_requirements
     return should_allow_search(normalized) and any(
         keyword in normalized for keyword in _VOICE_PATH_SEARCH_KEYWORDS
     )

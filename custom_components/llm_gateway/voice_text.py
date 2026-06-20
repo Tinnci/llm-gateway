@@ -22,6 +22,17 @@ _CODE_HINT_RE = re.compile(
     flags=re.IGNORECASE,
 )
 _CODE_SYMBOL_RE = re.compile(r"(\{|\}|=>|==|!=|<=|>=|;|</|/>|\w+\([^)]*\))")
+_TOOL_PROTOCOL_RE = re.compile(
+    r"(<\s*/?\s*tool[_-]?call\b|"
+    r"\bfunction\s*=|"
+    r"\barguments\s*=|"
+    r"\bsearch[_-]?web\b|"
+    r"\btool_calls?\b|"
+    r"\bHass(?:TurnOn|TurnOff|CallService)\b|"
+    r"\bGetLiveContext\b)",
+    re.IGNORECASE,
+)
+TOOL_PROTOCOL_FALLBACK = "我不能直接展示内部工具调用。请换个说法或稍后重试。"
 
 
 def markdown_to_spoken_text(
@@ -42,6 +53,16 @@ def markdown_to_spoken_text(
 
     text = _normalize_text(text)
     return _limit_sentences(text, max_sentences=max_sentences)
+
+
+def enforce_output_contract(text: str | None) -> tuple[str, bool, str]:
+    """Return voice-safe final text and whether internal protocol text was blocked."""
+    value = str(text or "").strip()
+    if not value:
+        return "", False, ""
+    if _TOOL_PROTOCOL_RE.search(value):
+        return TOOL_PROTOCOL_FALLBACK, True, "tool_protocol_leak"
+    return value, False, ""
 
 
 def _render_token(token: dict[str, Any]) -> str:  # noqa: PLR0911, PLR0912

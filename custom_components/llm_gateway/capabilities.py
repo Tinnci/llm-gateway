@@ -89,6 +89,8 @@ DataRequirement = Literal[
     "live_context",
     "weather_forecast",
     "external_search",
+    "stable_knowledge",
+    "entity_resolution",
     "location",
     "none",
     "unknown",
@@ -143,6 +145,15 @@ _HOME_CONTROL_RE = re.compile(
 _HOME_STATE_RE = re.compile(r"(多少|是不是|现在|开着吗|关着吗|锁了吗|温度|湿度|状态)")
 _WEATHER_RE = re.compile(
     r"(天气|空气质量|空气怎么样|下雨|雨|外面|室外|冷不冷|热不热|气温|pm2\.?5|雾霾)"
+)
+_EN_WEATHER_RE = re.compile(
+    r"\b(weather|forecast|rain|raining|temperature|outside)\b",
+    re.IGNORECASE,
+)
+_EN_FORECAST_TOMORROW_RE = re.compile(r"\b(tomorrow|next\s+day)\b", re.IGNORECASE)
+_EN_FORECAST_FUTURE_RE = re.compile(
+    r"\b(not\s+today|weekend|next\s+week|later|future|tonight|this\s+evening)\b",
+    re.IGNORECASE,
 )
 _EXTERNAL_CURRENT_RE = re.compile(
     r"(查一下|搜一下|搜索|网上|上网|联网|外网|最新|新闻|交通|说明书|错误码|固件|兼容|价格|电价|发布)"
@@ -239,6 +250,43 @@ class Capability:
     requires_location: bool = False
     requires_live_home_context: bool = False
     requires_external_info: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class CapabilityContract:
+    """Auditable execution contract for one concrete capability."""
+
+    capability: str
+    domain: str
+    operation: str
+    examples: tuple[str, ...]
+    required_user_slots: tuple[str, ...] = ()
+    required_system_capabilities: tuple[str, ...] = ()
+    allowed_tools: tuple[str, ...] = ()
+    forbidden_tools: tuple[str, ...] = ()
+    forbidden_data: tuple[str, ...] = ()
+    missing_user_slot_state: str = "awaiting_user_info"
+    policy_block_state: str = "blocked"
+    renderer_guard: str = ""
+    answerability_guard: str = ""
+
+    def as_dict(self) -> dict[str, object]:
+        """Return trace-safe contract metadata."""
+        return {
+            "capability": self.capability,
+            "domain": self.domain,
+            "operation": self.operation,
+            "examples": list(self.examples),
+            "required_user_slots": list(self.required_user_slots),
+            "required_system_capabilities": list(self.required_system_capabilities),
+            "allowed_tools": list(self.allowed_tools),
+            "forbidden_tools": list(self.forbidden_tools),
+            "forbidden_data": list(self.forbidden_data),
+            "missing_user_slot_state": self.missing_user_slot_state,
+            "policy_block_state": self.policy_block_state,
+            "renderer_guard": self.renderer_guard,
+            "answerability_guard": self.answerability_guard,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -547,6 +595,118 @@ CAPABILITY_REGISTRY: tuple[Capability, ...] = (
 )
 
 
+CAPABILITY_CONTRACTS: dict[str, CapabilityContract] = {
+    "weather_forecast_query": CapabilityContract(
+        capability="weather_forecast_query",
+        domain="weather",
+        operation="forecast",
+        examples=(
+            "明天的天气怎么样？",
+            "明天的天气是什么样的？你能搜索一下吗？",
+            "后天会下雨吗？",
+            "What is the weather tomorrow?",
+            "What is the weather? Not today.",
+            "Tomorrow weather forecast",
+        ),
+        required_user_slots=("location_hint",),
+        required_system_capabilities=(
+            "weather_forecast_provider",
+            "search_web",
+        ),
+        allowed_tools=("search_web",),
+        forbidden_tools=("GetLiveContext",),
+        forbidden_data=(
+            "indoor_current_sensor_snapshot",
+            "home_inventory_weather_entities",
+            "current_room_temperature",
+            "current_home_air_quality_snapshot",
+        ),
+        missing_user_slot_state="awaiting_user_info",
+        policy_block_state="capability_missing",
+        renderer_guard="forecast_required_requires_forecast_data",
+        answerability_guard="forecast_required_never_uses_current_sensor",
+    ),
+    "bare_search_query": CapabilityContract(
+        capability="bare_search_query",
+        domain="search",
+        operation="search",
+        examples=("搜索一下。", "搜一下", "Search it."),
+        required_user_slots=("query",),
+        required_system_capabilities=("search_web",),
+        allowed_tools=(),
+        forbidden_tools=("search_web",),
+        missing_user_slot_state="awaiting_user_info",
+        policy_block_state="blocked",
+        renderer_guard="missing_query_must_clarify",
+        answerability_guard="search_requires_explicit_query_or_pending_task",
+    ),
+    "ambiguous_entity_query": CapabilityContract(
+        capability="ambiguous_entity_query",
+        domain="knowledge",
+        operation="resolve_entity",
+        examples=("Do you know who is Virginia Hope?", "Who is Xyz Abcdef?"),
+        required_user_slots=("entity_clarification",),
+        forbidden_tools=(
+            "GetLiveContext",
+            "HassTurnOn",
+            "HassTurnOff",
+            "HassCallService",
+        ),
+        missing_user_slot_state="awaiting_user_info",
+        policy_block_state="blocked",
+        renderer_guard="ambiguous_entity_must_not_assert_biography",
+        answerability_guard="unknown_named_entity_must_not_hallucinate",
+    ),
+    "works_by_author_query": CapabilityContract(
+        capability="works_by_author_query",
+        domain="literature",
+        operation="list_works",
+        examples=(
+            "What did Virginia Woolf write?",
+            "Can you tell me more about what Virginia Wolf has written?",
+            "张若虚有什么诗？",
+            "李白有哪些代表作？",
+        ),
+        forbidden_tools=(
+            "GetLiveContext",
+            "HassTurnOn",
+            "HassTurnOff",
+            "HassCallService",
+        ),
+        renderer_guard="stable_known_entity_can_answer_without_search",
+        answerability_guard="entity_resolution_confidence_gate",
+    ),
+    "literary_knowledge_query": CapabilityContract(
+        capability="literary_knowledge_query",
+        domain="literature",
+        operation="answer_literary_fact",
+        examples=("春江花月夜是谁写的？", "某句诗是什么意思？"),
+        forbidden_tools=(
+            "GetLiveContext",
+            "HassTurnOn",
+            "HassTurnOff",
+            "HassCallService",
+        ),
+        renderer_guard="stable_literary_fact_can_answer_without_search",
+        answerability_guard="stable_literary_fact_confidence_gate",
+    ),
+    "person_knowledge_query": CapabilityContract(
+        capability="person_knowledge_query",
+        domain="knowledge",
+        operation="describe_person",
+        examples=("Who is Virginia Woolf?", "Can you tell me about Virginia Woolf?"),
+        forbidden_tools=(
+            "GetLiveContext",
+            "HassTurnOn",
+            "HassTurnOff",
+            "HassCallService",
+        ),
+        renderer_guard="stable_known_entity_can_answer_without_search",
+        answerability_guard="entity_resolution_confidence_gate",
+    ),
+}
+
+
 def decide_route(text: str) -> RouteDecision:  # noqa: PLR0911, PLR0912
     """Return a structured capability route decision for one utterance."""
     value = str(text or "").strip()
@@ -591,6 +751,9 @@ def decide_route(text: str) -> RouteDecision:  # noqa: PLR0911, PLR0912
     if _VOLUME_RE.search(value):
         return _volume_route(value)
 
+    if _looks_like_forecast_query(value):
+        return _environment_route(value, confidence=0.88)
+
     if _looks_like_environment_state_question(value):
         return _environment_route(value, confidence=0.82)
 
@@ -633,6 +796,7 @@ def decide_route(text: str) -> RouteDecision:  # noqa: PLR0911, PLR0912
         )
 
     if _BARE_SEARCH_RE.search(value):
+        contract = _contract_metadata("bare_search_query")
         return RouteDecision(
             task_family="external_current_info",
             task_type="search_needed",
@@ -645,7 +809,12 @@ def decide_route(text: str) -> RouteDecision:  # noqa: PLR0911, PLR0912
             route="local_clarify",
             missing_requirements=("query",),
             matched_capability="external_current_info",
-            metadata={"clarification_reason": "missing_search_query"},
+            metadata={
+                "clarification_reason": "missing_search_query",
+                "capability_contract": contract,
+                "answerability": "missing_user_slot",
+                "data_requirement": "external_search",
+            },
         )
 
     if _EXPLICIT_EXTERNAL_RE.search(value):
@@ -673,6 +842,9 @@ def decide_route(text: str) -> RouteDecision:  # noqa: PLR0911, PLR0912
             matched_capability="automation_planning",
         )
 
+    if _looks_like_english_weather_query(value):
+        return _environment_route(value, confidence=0.8)
+
     if _WEATHER_RE.search(value):
         return _environment_route(value, confidence=0.86)
 
@@ -695,7 +867,40 @@ def decide_route(text: str) -> RouteDecision:  # noqa: PLR0911, PLR0912
     if english_knowledge := _english_stable_knowledge_route(value):
         return english_knowledge
 
-    if _STABLE_KNOWLEDGE_RE.search(value) or _is_literary_knowledge(value):
+    if _is_literary_knowledge(value):
+        task_type = _zh_literary_task_type(value)
+        capability = task_type
+        operation = (
+            "list_works"
+            if task_type == "works_by_author_query"
+            else "answer_literary_fact"
+        )
+        return RouteDecision(
+            task_family="stable_knowledge",
+            task_type=task_type,
+            confidence=0.82,
+            requires_llm=True,
+            allowed_tools=(),
+            forbidden_tools=(
+                "GetLiveContext",
+                "HassTurnOn",
+                "HassTurnOff",
+                "HassCallService",
+            ),
+            next_action="answer_with_llm",
+            route="fast",
+            matched_capability=capability,
+            metadata={
+                "language": "zh",
+                "domain": "literature",
+                "operation": operation,
+                "data_requirement": "stable_knowledge",
+                "answerability": "answerable",
+                "capability_contract": _contract_metadata(capability),
+            },
+        )
+
+    if _STABLE_KNOWLEDGE_RE.search(value):
         return RouteDecision(
             task_family="stable_knowledge",
             task_type="stable_fact",
@@ -703,9 +908,11 @@ def decide_route(text: str) -> RouteDecision:  # noqa: PLR0911, PLR0912
             requires_llm=True,
             next_action="answer_with_llm",
             route="fast",
-            matched_capability="literary_knowledge"
-            if _is_literary_knowledge(value)
-            else "stable_knowledge",
+            matched_capability="stable_knowledge",
+            metadata={
+                "data_requirement": "stable_knowledge",
+                "answerability": "answerable",
+            },
         )
 
     if _HOME_CONTROL_RE.search(value):
@@ -763,6 +970,7 @@ def _environment_route(text: str, *, confidence: float) -> RouteDecision:
     matched_capability = "indoor_environment_query"
     if environment.forecast_required:
         missing = () if environment.location_hint else ("location_hint",)
+        contract = _contract_metadata("weather_forecast_query")
         return RouteDecision(
             task_family="external_current_info",
             task_type="weather_forecast_query",
@@ -779,7 +987,13 @@ def _environment_route(text: str, *, confidence: float) -> RouteDecision:
             forecast_required=True,
             location_hint=environment.location_hint,
             missing_requirements=missing,
-            metadata=environment.as_dict(),
+            metadata={
+                **environment.as_dict(),
+                "capability_contract": contract,
+                "answerability": "missing_user_slot" if missing else "answerable",
+                "data_requirement": "weather_forecast",
+                "forbidden_data": contract.get("forbidden_data", []),
+            },
         )
     if environment.scope == "outdoor_weather":
         task_type = "outdoor_current_weather_query"
@@ -861,11 +1075,11 @@ def classify_environment_query(text: str) -> EnvironmentQuerySpec:
     value = str(text or "")
     normalized = _normalize(value)
     time_horizon: TimeHorizon = "now"
-    if _FORECAST_TOMORROW_RE.search(value):
+    if _FORECAST_TOMORROW_RE.search(value) or _EN_FORECAST_TOMORROW_RE.search(value):
         time_horizon = "tomorrow"
     elif "今天" in value or "今日" in value:
         time_horizon = "today"
-    elif _FORECAST_FUTURE_RE.search(value):
+    elif _FORECAST_FUTURE_RE.search(value) or _EN_FORECAST_FUTURE_RE.search(value):
         time_horizon = "future"
     forecast_required = time_horizon in {"tomorrow", "future"}
     location_hint = _location_hint(value)
@@ -887,6 +1101,7 @@ def classify_environment_query(text: str) -> EnvironmentQuerySpec:
         or "天气" in value
         or "下雨" in value
         or "雨" in value
+        or _EN_WEATHER_RE.search(value)
     ):
         scope = "outdoor_weather"
     elif any(term in normalized for term in any_indoor_metrics):
@@ -939,7 +1154,12 @@ def _semantic_frame(
     elif decision.task_family == "stable_knowledge":
         domain = "knowledge"
         operation = str(decision.metadata.get("operation") or "answer_fact")
-        data_requirement = "none"
+        data_requirement = (
+            str(decision.metadata.get("data_requirement") or "stable_knowledge")
+            if str(decision.metadata.get("data_requirement") or "")
+            in {"stable_knowledge", "entity_resolution", "none"}
+            else "stable_knowledge"
+        )
     elif decision.task_family == "volume_control":
         domain = "control"
         operation = "set_volume"
@@ -948,6 +1168,14 @@ def _semantic_frame(
         domain = "location"
         operation = "nearby_place_search"
         data_requirement = "location"
+    elif decision.task_family == "external_current_info":
+        domain = (
+            "weather" if decision.task_type == "weather_forecast_query" else "unknown"
+        )
+        operation = decision.task_type
+        data_requirement = str(
+            decision.metadata.get("data_requirement") or "external_search"
+        )
     elif decision.task_family == "conversation_control":
         domain = "conversation"
         operation = "control_turn"
@@ -1077,6 +1305,7 @@ def _english_stable_knowledge_route(text: str) -> RouteDecision | None:
             missing_requirements=("entity_clarification",),
             metadata={
                 **metadata,
+                "capability_contract": _contract_metadata("ambiguous_entity_query"),
                 "domain": "person",
                 "operation": "resolve_entity",
                 "data_requirement": "entity_resolution",
@@ -1111,6 +1340,7 @@ def _english_stable_knowledge_route(text: str) -> RouteDecision | None:
         matched_capability=capability,
         metadata={
             **metadata,
+            "capability_contract": _contract_metadata(capability),
             "domain": "literature"
             if is_works or canonical == "Virginia Woolf"
             else "person",
@@ -1128,7 +1358,22 @@ def _split_sentence_subtasks(text: str) -> list[str]:
         for part in _SENTENCE_SPLIT_RE.split(text)
         if part.strip(" ，,")
     ]
-    return parts or [text]
+    return _merge_forecast_continuations(parts) or [text]
+
+
+def _merge_forecast_continuations(parts: list[str]) -> list[str]:
+    """Attach short forecast corrections like "Not today" to the prior query."""
+    merged: list[str] = []
+    for part in parts:
+        if (
+            merged
+            and _EN_FORECAST_FUTURE_RE.search(part)
+            and _EN_WEATHER_RE.search(merged[-1])
+        ):
+            merged[-1] = f"{merged[-1]} {part}"
+            continue
+        merged.append(part)
+    return merged
 
 
 def _normalize_subtask_for_route(text: str) -> str:
@@ -1230,6 +1475,15 @@ def _looks_like_environment_state_question(text: str) -> bool:
     return has_metric and has_value_question
 
 
+def _looks_like_forecast_query(text: str) -> bool:
+    environment = classify_environment_query(text)
+    return environment.forecast_required and environment.scope == "outdoor_weather"
+
+
+def _looks_like_english_weather_query(text: str) -> bool:
+    return _looks_english(text) and bool(_EN_WEATHER_RE.search(text))
+
+
 def _area_hint(text: str) -> str:
     for area in ("卫生间", "卧室", "客厅", "餐厅", "厨房", "书房", "阳台"):
         if area in text:
@@ -1261,6 +1515,17 @@ def _location_hint(text: str) -> str:
 
 def _is_literary_knowledge(text: str) -> bool:
     return bool(_LITERARY_KNOWLEDGE_RE.search(text) and _LITERARY_QUERY_RE.search(text))
+
+
+def _zh_literary_task_type(text: str) -> TaskType:
+    if any(term in text for term in ("有什么", "有哪些", "代表作", "写过")):
+        return "works_by_author_query"
+    return "literary_knowledge_query"
+
+
+def _contract_metadata(capability: str) -> dict[str, object]:
+    contract = CAPABILITY_CONTRACTS.get(capability)
+    return contract.as_dict() if contract is not None else {}
 
 
 def _volume_route(text: str) -> RouteDecision:

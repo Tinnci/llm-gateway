@@ -40,6 +40,9 @@ def test_search_policy_only_forces_voice_path_for_current_or_explicit_search():
     assert should_force_search_in_voice_path("这个设备错误码是什么意思")
     assert not should_force_search_in_voice_path("今天天气。")
     assert not should_force_search_in_voice_path("天气怎么样？")
+    assert not should_force_search_in_voice_path("明天的天气怎么样？")
+    assert not should_force_search_in_voice_path("What is the weather tomorrow?")
+    assert not should_force_search_in_voice_path("What is the weather? Not today.")
     assert not should_force_search_in_voice_path(
         "关关雎鸠，在河之洲，这句话是出自哪里？"
     )

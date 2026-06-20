@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from custom_components.llm_gateway.voice_text import markdown_to_spoken_text
+from custom_components.llm_gateway.voice_text import (
+    TOOL_PROTOCOL_FALLBACK,
+    enforce_output_contract,
+    markdown_to_spoken_text,
+)
 
 
 def test_markdown_to_spoken_text_strips_formatting():
@@ -33,3 +37,23 @@ def test_markdown_to_spoken_text_reads_short_unlabelled_quote_blocks():
 def test_markdown_to_spoken_text_limits_sentences():
     spoken = markdown_to_spoken_text("第一句。第二句！第三句？", max_sentences=2)
     assert spoken == "第一句。第二句！"
+
+
+def test_output_contract_blocks_tool_protocol_leaks():
+    safe, modified, reason = enforce_output_contract(
+        '<toolcall function="search_web" arguments="{\\"query\\":\\"weather\\"}" />'
+    )
+
+    assert modified
+    assert reason == "tool_protocol_leak"
+    assert safe == TOOL_PROTOCOL_FALLBACK
+
+
+def test_output_contract_allows_plain_factual_text():
+    safe, modified, reason = enforce_output_contract(
+        "Virginia Woolf wrote Mrs Dalloway and To the Lighthouse."
+    )
+
+    assert not modified
+    assert reason == ""
+    assert safe.startswith("Virginia Woolf")

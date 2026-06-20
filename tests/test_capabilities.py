@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from custom_components.llm_gateway.capabilities import (
+    CAPABILITY_CONTRACTS,
     CAPABILITY_REGISTRY,
     decide_route,
     plan_multi_intent,
@@ -132,6 +133,61 @@ def test_weather_route_contract_separates_forecast_from_indoor_state():
     assert jingan.location_hint == "静安"
 
 
+def test_weather_forecast_contract_forbids_current_sensor_data():
+    contract = CAPABILITY_CONTRACTS["weather_forecast_query"]
+
+    assert contract.required_user_slots == ("location_hint",)
+    assert "search_web" in contract.allowed_tools
+    assert "GetLiveContext" in contract.forbidden_tools
+    assert "current_room_temperature" in contract.forbidden_data
+    assert contract.answerability_guard == "forecast_required_never_uses_current_sensor"
+
+    decision = decide_route("What is the weather tomorrow?")
+
+    assert decision.task_type == "weather_forecast_query"
+    assert decision.forecast_required
+    assert decision.scope == "outdoor_weather"
+    assert decision.time_horizon == "tomorrow"
+    assert decision.next_action == "clarify"
+    assert decision.requires_external_info
+    assert not decision.requires_llm
+    assert decision.missing_requirements == ("location_hint",)
+    assert decision.metadata["answerability"] == "missing_user_slot"
+    assert (
+        decision.metadata["capability_contract"]["answerability_guard"]
+        == "forecast_required_never_uses_current_sensor"
+    )
+
+
+def test_forecast_arbitration_beats_inventory_and_supports_english_family():
+    utterances = (
+        "明天的天气是什么样的？你能搜索一下吗？",
+        "What is the weather? Not today.",
+        "What is the weather tomorrow?",
+        "Tomorrow weather forecast",
+    )
+
+    for text in utterances:
+        decision = decide_route(text)
+
+        assert decision.task_family == "external_current_info", text
+        assert decision.task_type == "weather_forecast_query", text
+        assert decision.forecast_required, text
+        assert decision.next_action == "clarify", text
+        assert decision.route == "local_clarify", text
+        assert decision.missing_requirements == ("location_hint",), text
+
+
+def test_typed_semantic_plan_merges_english_forecast_correction():
+    plan = plan_typed_semantic("What is the weather? Not today.")
+
+    assert not plan.is_composite
+    frame = plan.frames[0]
+    assert frame.capability == "weather_forecast_query"
+    assert frame.forecast_required
+    assert frame.answerability == "missing_user_slot"
+
+
 def test_location_dependent_paraphrases_require_location_without_explicit_place():
     utterances = (
         "我想知道附近最近的麦当劳在哪里？",
@@ -180,21 +236,24 @@ def test_unknown_uses_llm_generalization_before_clarification():
 
 
 def test_literary_knowledge_routes_to_stable_knowledge():
-    utterances = (
-        "张若虚有什么样的诗？",
-        "李白有什么代表作？",
-        "春江花月夜是谁写的？",
-        "某句诗是什么意思？",
+    expectations = (
+        ("张若虚有什么样的诗？", "works_by_author_query", "list_works"),
+        ("李白有什么代表作？", "works_by_author_query", "list_works"),
+        ("春江花月夜是谁写的？", "literary_knowledge_query", "answer_literary_fact"),
+        ("某句诗是什么意思？", "literary_knowledge_query", "answer_literary_fact"),
     )
 
-    for text in utterances:
+    for text, task_type, operation in expectations:
         decision = decide_route(text)
 
         assert decision.task_family == "stable_knowledge", text
-        assert decision.task_type == "stable_fact"
+        assert decision.task_type == task_type
         assert decision.route == "fast"
         assert decision.requires_llm
         assert decision.next_action == "answer_with_llm"
+        assert decision.metadata["language"] == "zh"
+        assert decision.metadata["operation"] == operation
+        assert decision.metadata["answerability"] == "answerable"
 
 
 def test_english_literary_and_person_knowledge_routes_are_typed():
