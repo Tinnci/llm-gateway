@@ -968,13 +968,13 @@ def _weather_context_path(
     local_state_cache = "local_state_cache" in stages
     weather_entity = "weather_entity" in stages
     search_fallback = bool(search_debug.get("searched"))
-    if not _is_weather_task_type(task_type) and not (
-        live_context_calls or weather_entity or search_fallback
-    ):
+    if not _is_weather_task_type(task_type) and not (weather_entity or search_fallback):
         return {
             "active": False,
             "task_type": task_type,
             "path": "not_weather",
+            "ignored_get_live_context_calls": len(live_context_calls),
+            "ignored_get_live_context_results": len(live_context_results),
         }
 
     if local_state_cache:

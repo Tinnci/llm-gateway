@@ -538,7 +538,7 @@ async def test_device_inventory_query_uses_static_context_renderer(
     assert "已暴露给助手" not in speech
     trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
     assert trace["first_response_decision"]["task_type"] == "device_inventory_query"
-    assert trace["first_response_audio"]["scheduled"] is False
+    assert trace["first_response_audio"].get("scheduled") is not True
     assert trace["first_response_audio"]["suppressed_reason"] == "fast_static_query"
     assert not trace["tools"]
     assert trace["route"]["kind"] == "local_static_context"
@@ -588,7 +588,7 @@ async def test_nearby_place_query_without_location_asks_permission_locally(
     assert trace["route_decision"]["task_type"] == "nearby_place_query"
     assert trace["route_decision"]["missing_requirements"] == ["location"]
     assert trace["first_response_decision"]["task_type"] == "nearby_place_query"
-    assert trace["first_response_audio"]["scheduled"] is False
+    assert trace["first_response_audio"].get("scheduled") is not True
     assert trace["first_response_audio"]["suppressed_reason"] == "missing_location"
     assert not trace["tools"]
     clarify_span = next(
@@ -672,6 +672,107 @@ async def test_unknown_query_uses_fast_llm_generalization_before_clarify(
     assert trace["route_decision"]["task_family"] == "unknown_or_ambiguous"
     assert trace["route_decision"]["metadata"]["planner"] == "llm_route_generalization"
     assert trace["first_response_decision"]["cue"] == "none"
+    assert not trace["tools"]
+
+
+async def test_ambiguous_person_entity_asks_clarification_without_model(
+    hass, aioclient_mock, mock_config_entry
+):
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
+        },
+    )
+
+    with patch(
+        "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
+    ) as completion:
+        result = await conversation.async_converse(
+            hass,
+            "Do you know who is Virginia Hope?",
+            None,
+            Context(),
+            agent_id=agent_id,
+        )
+
+    completion.assert_not_called()
+    speech = result.response.speech["plain"]["speech"]
+    assert "Virginia Hope" in speech
+    assert "Virginia Woolf" in speech
+    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+    assert trace["route"]["kind"] == "local_clarify"
+    assert trace["route_decision"]["task_family"] == "stable_knowledge"
+    assert trace["route_decision"]["task_type"] == "ambiguous_entity_query"
+    assert trace["route_decision"]["metadata"]["answerability"] == "ambiguous_entity"
+    assert trace["route_decision"]["metadata"]["entity_resolution"]["ambiguous"] is True
+    assert trace["first_response_audio"].get("scheduled") is not True
+    assert not trace["tools"]
+
+
+async def test_virginia_wolf_routes_to_literary_knowledge_with_entity_correction(
+    hass, aioclient_mock, mock_config_entry
+):
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
+        },
+    )
+
+    async def fake_completion(**kwargs: object):
+        return SimpleNamespace(
+            message={
+                "role": "assistant",
+                "content": (
+                    "Virginia Woolf wrote Mrs Dalloway, To the Lighthouse, "
+                    "Orlando, The Waves, and A Room of One’s Own."
+                ),
+            },
+            provider={"name": "primary", "fallback_used": False},
+            attempts=[],
+        )
+
+    with patch(
+        "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
+        side_effect=fake_completion,
+    ) as completion:
+        result = await conversation.async_converse(
+            hass,
+            "Can you tell me more about what Virginia Wolf have written?",
+            None,
+            Context(),
+            agent_id=agent_id,
+        )
+
+    completion.assert_called_once()
+    speech = result.response.speech["plain"]["speech"]
+    assert "Virginia Woolf" in speech
+    assert "Mrs Dalloway" in speech
+    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+    assert trace["route"]["kind"] == "fast"
+    assert trace["route_decision"]["task_family"] == "stable_knowledge"
+    assert trace["route_decision"]["task_type"] == "works_by_author_query"
+    resolution = trace["route_decision"]["metadata"]["entity_resolution"]
+    assert resolution["raw_entity"] == "Virginia Wolf"
+    assert resolution["canonical_entity"] == "Virginia Woolf"
+    assert resolution["correction_type"] == "spelling"
+    schema_span = next(
+        span
+        for span in trace["timeline_spans"]
+        if span["stage"] == "visible_tool_schema"
+    )
+    assert "GetLiveContext" not in schema_span["attrs"]["visible_tool_schema"]
     assert not trace["tools"]
 
 

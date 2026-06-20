@@ -7,6 +7,7 @@ from custom_components.llm_gateway.capabilities import (
     decide_route,
     plan_multi_intent,
     plan_typed_semantic,
+    resolve_entity,
 )
 
 
@@ -194,6 +195,62 @@ def test_literary_knowledge_routes_to_stable_knowledge():
         assert decision.route == "fast"
         assert decision.requires_llm
         assert decision.next_action == "answer_with_llm"
+
+
+def test_english_literary_and_person_knowledge_routes_are_typed():
+    woolf = decide_route("Can you tell me more about what Virginia Wolf have written?")
+
+    assert woolf.task_family == "stable_knowledge"
+    assert woolf.task_type == "works_by_author_query"
+    assert woolf.matched_capability == "works_by_author_query"
+    assert woolf.metadata["domain"] == "literature"
+    assert woolf.metadata["operation"] == "list_works"
+    resolution = woolf.metadata["entity_resolution"]
+    assert resolution["raw_entity"] == "Virginia Wolf"
+    assert resolution["canonical_entity"] == "Virginia Woolf"
+    assert resolution["correction_type"] == "spelling"
+    assert resolution["confidence"] >= 0.9
+    assert resolution["ambiguous"] is False
+    assert woolf.metadata["answerability"] == "answerable"
+
+    person = decide_route("Who is Virginia Woolf?")
+    assert person.task_family == "stable_knowledge"
+    assert person.task_type == "person_knowledge_query"
+    assert person.matched_capability == "person_knowledge_query"
+    assert person.metadata["entity_resolution"]["canonical_entity"] == "Virginia Woolf"
+
+
+def test_ambiguous_named_entity_does_not_route_to_freeform_unknown_answer():
+    decision = decide_route("Do you know who is Virginia Hope?")
+
+    assert decision.task_family == "stable_knowledge"
+    assert decision.task_type == "ambiguous_entity_query"
+    assert decision.next_action == "clarify"
+    assert decision.route == "local_clarify"
+    assert not decision.requires_llm
+    assert not decision.allowed_tools
+    assert "Virginia Woolf" in decision.user_visible_prompt
+    resolution = decision.metadata["entity_resolution"]
+    assert resolution["raw_entity"] == "Virginia Hope"
+    assert resolution["canonical_entity_candidates"] == ["Virginia Woolf"]
+    assert resolution["ambiguous"] is True
+    assert resolution["needs_clarification"] is True
+    assert decision.metadata["answerability"] == "ambiguous_entity"
+
+
+def test_entity_resolver_records_canonical_correction_and_ambiguity():
+    wolf = resolve_entity("Virginia Wolf")
+    hope = resolve_entity("Virginia Hope")
+
+    assert wolf.canonical_entity == "Virginia Woolf"
+    assert wolf.correction_type == "spelling"
+    assert wolf.confidence >= 0.9
+    assert not wolf.ambiguous
+
+    assert hope.raw_entity == "Virginia Hope"
+    assert hope.candidates == ("Virginia Woolf",)
+    assert hope.confidence < 0.7
+    assert hope.ambiguous
 
 
 def test_volume_control_gets_targeted_route_or_clarification():

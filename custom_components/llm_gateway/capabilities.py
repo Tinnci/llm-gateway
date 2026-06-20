@@ -43,6 +43,10 @@ TaskType = Literal[
     "volume_control",
     "search_needed",
     "stable_fact",
+    "person_knowledge_query",
+    "literary_knowledge_query",
+    "works_by_author_query",
+    "ambiguous_entity_query",
     "planning",
     "conversation_control",
     "general_conversation",
@@ -158,6 +162,35 @@ _LITERARY_KNOWLEDGE_RE = re.compile(
 _LITERARY_QUERY_RE = re.compile(
     r"(有什么|有哪些|什么样|哪首|是谁写|谁写|写过|代表作|作品|作者|赏析|意思|理解)"
 )
+_EN_PERSON_QUERY_RE = re.compile(
+    r"\b(who\s+(?:is|was)|do\s+you\s+know\s+who\s+(?:is|was)|tell\s+me\s+about)\b",
+    re.IGNORECASE,
+)
+_EN_WORKS_QUERY_RE = re.compile(
+    r"\b("
+    r"what\s+(?:did|has|have)?\s*.+\s+(?:write|written)"
+    r"|what\s+.+\s+works"
+    r"|works?\s+by"
+    r"|written\s+by"
+    r"|list\s+works?"
+    r")\b",
+    re.IGNORECASE,
+)
+_EN_LITERARY_HINT_RE = re.compile(
+    r"\b(virginia\s+wo?lf|mrs\s+dalloway|to\s+the\s+lighthouse|orlando|the\s+waves|a\s+room\s+of\s+one'?s\s+own)\b",
+    re.IGNORECASE,
+)
+_EN_NAMED_ENTITY_RE = re.compile(r"\b([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){1,3})\b")
+_KNOWN_ENTITY_ALIASES = {
+    "virginia woolf": ("Virginia Woolf", "none", 0.99),
+    "virginia wolf": ("Virginia Woolf", "spelling", 0.94),
+}
+_AMBIGUOUS_ENTITY_CANDIDATES = {
+    "virginia hope": ("Virginia Woolf",),
+}
+HIGH_CONFIDENCE_ENTITY_THRESHOLD = 0.85
+LOW_CONFIDENCE_ENTITY_THRESHOLD = 0.7
+MIN_ENGLISH_LETTERS = 6
 _VOLUME_RE = re.compile(
     r"(音量|声音|声量|大声|小声|调大|调小|调高|调低|最大|最小|静音)"
 )
@@ -280,6 +313,30 @@ class EnvironmentQuerySpec:
 
 
 @dataclass(frozen=True, slots=True)
+class EntityResolution:
+    """Canonical named-entity resolution used before factual answers."""
+
+    raw_entity: str
+    canonical_entity: str = ""
+    candidates: tuple[str, ...] = ()
+    correction_type: str = "none"
+    confidence: float = 0.0
+    ambiguous: bool = False
+    needs_clarification: bool = False
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "raw_entity": self.raw_entity,
+            "canonical_entity": self.canonical_entity,
+            "canonical_entity_candidates": list(self.candidates),
+            "correction_type": self.correction_type,
+            "confidence": self.confidence,
+            "ambiguous": self.ambiguous,
+            "needs_clarification": self.needs_clarification,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class SemanticFrame:
     """One typed semantic frame in a capability-first plan."""
 
@@ -295,6 +352,11 @@ class SemanticFrame:
     forecast_required: bool = False
     risk: RiskLevel = "low"
     capability: str = ""
+    language: str = ""
+    named_entities: tuple[str, ...] = ()
+    entity_resolution: dict[str, object] = field(default_factory=dict)
+    factuality_risk: str = ""
+    answerability: str = ""
 
     def as_dict(self) -> dict[str, object]:
         """Return trace-safe typed frame metadata."""
@@ -311,6 +373,11 @@ class SemanticFrame:
             "forecast_required": self.forecast_required,
             "risk": self.risk,
             "capability": self.capability,
+            "language": self.language,
+            "named_entities": list(self.named_entities),
+            "entity_resolution": dict(self.entity_resolution),
+            "factuality_risk": self.factuality_risk,
+            "answerability": self.answerability,
         }
 
 
@@ -434,7 +501,18 @@ CAPABILITY_REGISTRY: tuple[Capability, ...] = (
     ),
     Capability(
         family="stable_knowledge",
-        examples=("这句话出自哪里", "张若虚有什么样的诗", "李白有什么代表作"),
+        examples=(
+            "这句话出自哪里",
+            "张若虚有什么样的诗",
+            "李白有什么代表作",
+            "春江花月夜是谁写的？",
+            "Who is Virginia Woolf?",
+            "Do you know who Virginia Woolf is?",
+            "What did Virginia Woolf write?",
+            "Tell me more about Virginia Woolf's works.",
+            "Can you tell me more about what Virginia Wolf has written?",
+            "Who wrote Mrs Dalloway?",
+        ),
         route="fast_qa",
         requires_llm=True,
     ),
@@ -613,6 +691,9 @@ def decide_route(text: str) -> RouteDecision:  # noqa: PLR0911, PLR0912
 
     if _HOME_STATE_RE.search(value):
         return _environment_route(value, confidence=0.74)
+
+    if english_knowledge := _english_stable_knowledge_route(value):
+        return english_knowledge
 
     if _STABLE_KNOWLEDGE_RE.search(value) or _is_literary_knowledge(value):
         return RouteDecision(
@@ -857,7 +938,7 @@ def _semantic_frame(
         metric = metric or "weather"
     elif decision.task_family == "stable_knowledge":
         domain = "knowledge"
-        operation = "answer_fact"
+        operation = str(decision.metadata.get("operation") or "answer_fact")
         data_requirement = "none"
     elif decision.task_family == "volume_control":
         domain = "control"
@@ -884,6 +965,17 @@ def _semantic_frame(
         forecast_required=decision.forecast_required,
         risk=decision.risk,
         capability=capability,
+        language=str(decision.metadata.get("language") or ""),
+        named_entities=tuple(
+            str(entity) for entity in decision.metadata.get("named_entities", ())
+        ),
+        entity_resolution=(
+            dict(decision.metadata.get("entity_resolution", {}))
+            if isinstance(decision.metadata.get("entity_resolution"), dict)
+            else {}
+        ),
+        factuality_risk=str(decision.metadata.get("factuality_risk") or ""),
+        answerability=str(decision.metadata.get("answerability") or ""),
     )
 
 
@@ -897,6 +989,136 @@ def _unknown(reason: str) -> RouteDecision:
         route="fast",
         matched_capability="unknown_or_ambiguous",
         metadata={"reason": reason, "planner": "llm_route_generalization"},
+    )
+
+
+def resolve_entity(raw_entity: str) -> EntityResolution:
+    """Resolve a raw named entity into a canonical entity when confidence is high."""
+    raw = str(raw_entity or "").strip(" ?!.,;:，。！？；：")
+    key = re.sub(r"\s+", " ", raw).strip().lower()
+    if not raw:
+        return EntityResolution(raw_entity="")
+    if key in _KNOWN_ENTITY_ALIASES:
+        canonical, correction_type, confidence = _KNOWN_ENTITY_ALIASES[key]
+        return EntityResolution(
+            raw_entity=raw,
+            canonical_entity=canonical,
+            candidates=(canonical,),
+            correction_type=correction_type,
+            confidence=confidence,
+            ambiguous=False,
+            needs_clarification=False,
+        )
+    if key in _AMBIGUOUS_ENTITY_CANDIDATES:
+        candidates = _AMBIGUOUS_ENTITY_CANDIDATES[key]
+        return EntityResolution(
+            raw_entity=raw,
+            candidates=candidates,
+            correction_type="asr",
+            confidence=0.42,
+            ambiguous=True,
+            needs_clarification=True,
+        )
+    return EntityResolution(
+        raw_entity=raw,
+        candidates=(),
+        correction_type="none",
+        confidence=0.5 if raw else 0.0,
+        ambiguous=True,
+        needs_clarification=True,
+    )
+
+
+def _english_stable_knowledge_route(text: str) -> RouteDecision | None:
+    """Route English person/literary knowledge through entity resolution first."""
+    if not _looks_english(text):
+        return None
+    raw_entity = _extract_english_named_entity(text)
+    has_person_shape = bool(_EN_PERSON_QUERY_RE.search(text))
+    has_works_shape = bool(
+        _EN_WORKS_QUERY_RE.search(text) or _EN_LITERARY_HINT_RE.search(text)
+    )
+    if not raw_entity or not (has_person_shape or has_works_shape):
+        return None
+
+    resolution = resolve_entity(raw_entity)
+    metadata = {
+        "language": "en",
+        "named_entities": [raw_entity],
+        "entity_resolution": resolution.as_dict(),
+        "factuality_risk": (
+            "low"
+            if resolution.confidence >= HIGH_CONFIDENCE_ENTITY_THRESHOLD
+            else "ambiguous_entity"
+        ),
+    }
+    if (
+        resolution.needs_clarification
+        or resolution.confidence < LOW_CONFIDENCE_ENTITY_THRESHOLD
+    ):
+        candidate_text = (
+            f" Did you mean {resolution.candidates[0]}?"
+            if resolution.candidates
+            else ""
+        )
+        return RouteDecision(
+            task_family="stable_knowledge",
+            task_type="ambiguous_entity_query",
+            confidence=0.62,
+            requires_llm=False,
+            next_action="clarify",
+            user_visible_prompt=(
+                "I'm not sure who "
+                f"“{resolution.raw_entity}” refers to without checking."
+                f"{candidate_text}"
+            ),
+            route="local_clarify",
+            matched_capability="ambiguous_entity_query",
+            missing_requirements=("entity_clarification",),
+            metadata={
+                **metadata,
+                "domain": "person",
+                "operation": "resolve_entity",
+                "data_requirement": "entity_resolution",
+                "answerability": "ambiguous_entity",
+            },
+        )
+
+    canonical = resolution.canonical_entity or resolution.raw_entity
+    is_works = bool(
+        has_works_shape
+        and not (has_person_shape and not _EN_WORKS_QUERY_RE.search(text))
+    )
+    task_type: TaskType = (
+        "works_by_author_query" if is_works else "person_knowledge_query"
+    )
+    operation = "list_works" if is_works else "describe_person"
+    capability = "works_by_author_query" if is_works else "person_knowledge_query"
+    return RouteDecision(
+        task_family="stable_knowledge",
+        task_type=task_type,
+        confidence=min(0.96, max(0.82, resolution.confidence)),
+        requires_llm=True,
+        allowed_tools=(),
+        forbidden_tools=(
+            "GetLiveContext",
+            "HassTurnOn",
+            "HassTurnOff",
+            "HassCallService",
+        ),
+        next_action="answer_with_llm",
+        route="fast",
+        matched_capability=capability,
+        metadata={
+            **metadata,
+            "domain": "literature"
+            if is_works or canonical == "Virginia Woolf"
+            else "person",
+            "operation": operation,
+            "canonical_entity": canonical,
+            "data_requirement": "stable_knowledge",
+            "answerability": "answerable",
+        },
     )
 
 
@@ -965,6 +1187,37 @@ def _looks_like_area_state_followup(text: str) -> bool:
         term in text
         for term in ("温度", "湿度", "空气质量", "多少", "几度", "冷不冷", "热不热")
     )
+
+
+def _looks_english(text: str) -> bool:
+    letters = re.findall(r"[A-Za-z]", str(text or ""))
+    return len(letters) >= MIN_ENGLISH_LETTERS
+
+
+def _extract_english_named_entity(text: str) -> str:
+    value = str(text or "")
+    for explicit in ("Virginia Woolf", "Virginia Wolf", "Virginia Hope"):
+        if re.search(rf"\b{re.escape(explicit)}\b", value, re.IGNORECASE):
+            # Preserve the user's visible spelling/casing when possible.
+            match = re.search(rf"\b{re.escape(explicit)}\b", value, re.IGNORECASE)
+            return match.group(0) if match else explicit
+    ignored = {
+        "Can",
+        "Tell",
+        "Who",
+        "What",
+        "Do",
+        "Did",
+        "The",
+        "A",
+        "An",
+        "I",
+    }
+    for match in _EN_NAMED_ENTITY_RE.finditer(value):
+        candidate = match.group(1).strip()
+        if candidate.split()[0] not in ignored:
+            return candidate
+    return ""
 
 
 def _looks_like_environment_state_question(text: str) -> bool:

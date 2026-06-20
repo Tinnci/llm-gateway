@@ -519,6 +519,64 @@ async def test_trace_store_summarizes_weather_tool_loop_debug_fields(hass):
     assert record["completion"]["last_active_stage"] == "complete"
 
 
+async def test_trace_store_ignores_live_context_residue_for_non_weather_tasks(hass):
+    store = TraceStore(hass, "entry-non-weather-live-context-residue")
+    await store.async_load()
+
+    await store.async_record_turn(
+        {
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_MAX_RUNS: 30,
+            CONF_TRACE_RETENTION_HOURS: 24,
+        },
+        TraceTurn(
+            conversation_id="conv-literature",
+            user_text="Can you tell me more about what Virginia Wolf have written?",
+            assistant_text="Virginia Woolf wrote Mrs Dalloway.",
+            route={"kind": "fast", "model": "fast"},
+            latency_ms=700,
+            status="complete",
+            timeline=[
+                {
+                    "stage": "first_response",
+                    "t_ms": 10,
+                    "status": "ok",
+                    "attrs": {
+                        "task_type": "works_by_author_query",
+                        "cue": "none",
+                        "spoken_hint": "",
+                        "reason": "stable_knowledge",
+                    },
+                },
+                {"stage": "complete", "t_ms": 700, "status": "complete", "attrs": {}},
+            ],
+            raw_payload={
+                "input": {
+                    "text": (
+                        "Can you tell me more about what Virginia Wolf have written?"
+                    )
+                },
+                "speech": {"final": "Virginia Woolf wrote Mrs Dalloway."},
+                "tool_events": [
+                    {
+                        "phase": "call",
+                        "tool_call_id": "stale-live-1",
+                        "name": "GetLiveContext",
+                        "args": {},
+                    }
+                ],
+                "grounding": {"status": "not_required", "verifier": {}},
+                "messages": [],
+            },
+        ),
+    )
+
+    record = store.snapshot()["records"][0]
+    assert record["weather_context_path"]["active"] is False
+    assert record["weather_context_path"]["path"] == "not_weather"
+    assert record["weather_context_path"]["ignored_get_live_context_calls"] == 1
+
+
 async def test_trace_store_marks_captured_earcon_degraded_without_aec_reference(hass):
     store = TraceStore(hass, "entry-audio-graph")
     await store.async_load()
