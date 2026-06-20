@@ -519,6 +519,149 @@ async def test_trace_store_summarizes_weather_tool_loop_debug_fields(hass):
     assert record["completion"]["last_active_stage"] == "complete"
 
 
+async def test_trace_store_marks_captured_earcon_degraded_without_aec_reference(hass):
+    store = TraceStore(hass, "entry-audio-graph")
+    await store.async_load()
+
+    await store.async_record_turn(
+        {
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_MAX_RUNS: 30,
+            CONF_TRACE_RETENTION_HOURS: 24,
+        },
+        TraceTurn(
+            conversation_id="conv-earcon",
+            user_text="卧室温度是多少？",
+            assistant_text="卧室现在 24 度。",
+            route={"kind": "local_live_context", "model": "live_context_renderer"},
+            latency_ms=180,
+            status="complete",
+            timeline=[
+                {"stage": "received", "t_ms": 0, "status": "ok", "attrs": {}},
+                {
+                    "stage": "feedback",
+                    "t_ms": 5,
+                    "status": "ok",
+                    "attrs": {
+                        "earcon_name": "captured",
+                        "audio_playback_joined_critical_path": False,
+                    },
+                },
+                {
+                    "stage": "local_live_context_call",
+                    "t_ms": 20,
+                    "status": "ok",
+                    "attrs": {"name": "GetLiveContext"},
+                },
+                {"stage": "complete", "t_ms": 180, "status": "complete", "attrs": {}},
+            ],
+            raw_payload={
+                "earcon_events": [
+                    {
+                        "turn_id": "conv-earcon",
+                        "earcon_name": "captured",
+                        "semantic_state": "captured",
+                        "scheduled_at_ms": 5,
+                        "played_at_ms": 5,
+                        "duration_ms": 148,
+                        "priority": 40,
+                        "can_play_while_listening": True,
+                        "quiet_hours_behavior": "suppress_noncritical",
+                        "trace_event_name": "earcon_captured",
+                        "suppressed_reason": "",
+                        "volume_profile": "normal",
+                        "microphone_hot": False,
+                        "quiet_hours_applied": False,
+                    }
+                ],
+                "messages": [],
+            },
+        ),
+    )
+
+    record = store.snapshot()["records"][0]
+    assert record["audio_graph"]["aec_enabled"] is False
+    assert record["audio_graph"]["aec_reference_active"] is False
+    assert record["audio_graph"]["earcon_in_aec_reference"] is False
+    assert record["earcon_diagnostics"]["earcon_name"] == "captured"
+    assert record["earcon_diagnostics"]["can_play_while_listening"] is True
+    assert record["earcon_diagnostics"]["full_duplex_mode"] == "degraded"
+    assert record["earcon_diagnostics"]["ignore_window_ms"] == 148
+    assert record["critical_path_flags"] == {
+        "feedback_blocking_critical_path": False,
+        "audio_playback_joined_critical_path": False,
+    }
+
+
+async def test_trace_store_uses_provided_full_duplex_audio_diagnostics(hass):
+    store = TraceStore(hass, "entry-audio-graph-provided")
+    await store.async_load()
+
+    await store.async_record_turn(
+        {
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_MAX_RUNS: 30,
+            CONF_TRACE_RETENTION_HOURS: 24,
+        },
+        TraceTurn(
+            conversation_id="conv-aec",
+            user_text="停",
+            assistant_text="已停止。",
+            route={"kind": "local_control", "model": "voice_runtime_control"},
+            latency_ms=90,
+            status="complete",
+            timeline=[
+                {
+                    "stage": "earcon_diagnostics",
+                    "t_ms": 10,
+                    "status": "ok",
+                    "attrs": {
+                        "earcon_name": "captured",
+                        "can_play_while_listening": True,
+                        "mic_open_during_earcon": True,
+                        "vad_threshold_profile": "normal",
+                        "ignore_window_ms": 0,
+                        "false_vad_during_earcon": False,
+                        "asr_partial_during_earcon": "",
+                        "full_duplex_mode": "full",
+                    },
+                }
+            ],
+            raw_payload={
+                "audio_graph": {
+                    "raw_mic_source": "alsa:hw:0",
+                    "aec_mic_source": "pipewire:echo-cancel",
+                    "vad_source": "pipewire:echo-cancel",
+                    "endpoint_source": "pipewire:echo-cancel",
+                    "asr_source": "pipewire:echo-cancel",
+                    "wake_word_source": "pipewire:echo-cancel",
+                    "playback_sink": "pipewire:voice-playback",
+                    "render_reference_source": "pipewire:voice-playback.monitor",
+                    "aec_enabled": True,
+                    "aec_reference_active": True,
+                    "earcon_in_aec_reference": True,
+                    "tts_in_aec_reference": True,
+                    "container_bypasses_host_audio_processing": False,
+                },
+                "aec_diagnostics": {
+                    "raw_echo_rms": 120.0,
+                    "aec_echo_rms": 12.0,
+                    "echo_suppression_db": 20.0,
+                    "double_talk_detected": False,
+                    "residual_echo_likelihood": "low",
+                },
+                "messages": [],
+            },
+        ),
+    )
+
+    record = store.snapshot()["records"][0]
+    assert record["audio_graph"]["aec_enabled"] is True
+    assert record["audio_graph"]["earcon_in_aec_reference"] is True
+    assert record["earcon_diagnostics"]["full_duplex_mode"] == "full"
+    assert record["aec_diagnostics"]["echo_suppression_db"] == 20.0
+
+
 async def test_trace_store_keeps_polluted_evidence_out_of_quote_origin(hass):
     store = TraceStore(hass, "entry-polluted-evidence")
     await store.async_load()

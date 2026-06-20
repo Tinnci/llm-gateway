@@ -110,6 +110,11 @@ const I18N = {
     "runs.route": "Route",
     "runs.first_response": "First response",
     "runs.first_response_audio": "First response audio",
+    "runs.audio_graph": "Audio graph / AEC",
+    "runs.earcon_diagnostics": "Earcon diagnostics",
+    "runs.aec_diagnostics": "AEC diagnostics",
+    "runs.full_duplex": "Full duplex",
+    "runs.degraded": "degraded",
     "runs.final_speech": "Final speech",
     "runs.debug_flags": "Debug flags",
     "runs.search": "Search",
@@ -390,6 +395,11 @@ const I18N = {
     "runs.route": "路由",
     "runs.first_response": "首反馈",
     "runs.first_response_audio": "首反馈音频",
+    "runs.audio_graph": "音频图 / AEC",
+    "runs.earcon_diagnostics": "提示音诊断",
+    "runs.aec_diagnostics": "AEC 诊断",
+    "runs.full_duplex": "全双工",
+    "runs.degraded": "降级",
     "runs.final_speech": "最终语音",
     "runs.debug_flags": "调试标记",
     "runs.search": "搜索",
@@ -1571,6 +1581,7 @@ class VoiceHarnessPanel extends HTMLElement {
             ])}
           </div>
           ${this._firstResponsePanel(firstResponse, record.first_response_audio || {})}
+          ${this._audioGraphPanel(record)}
           ${this._inventoryPanel(record)}
           <div class="traceText">
             <strong>${escapeHtml(this._t("runs.user"))}</strong>
@@ -1696,6 +1707,62 @@ class VoiceHarnessPanel extends HTMLElement {
         </div>
         ${this._jsonDetails(this._t("runs.first_response_detail"), decision)}
         ${this._jsonDetails(this._t("runs.first_response_audio"), audio)}
+      </div>
+    `;
+  }
+
+  _audioGraphPanel(record) {
+    const graph = record.audio_graph || {};
+    const earcon = record.earcon_diagnostics || {};
+    const aec = record.aec_diagnostics || {};
+    const flags = record.critical_path_flags || {};
+    if (!Object.keys(graph).length && !Object.keys(earcon).length && !Object.keys(aec).length) {
+      return "";
+    }
+    const mode = String(earcon.full_duplex_mode || "");
+    const tone = mode === "full" ? "ok" : (mode === "degraded" ? "warning" : "muted");
+    return `
+      <div class="debugSection">
+        <h3>${escapeHtml(this._t("runs.audio_graph"))}</h3>
+        <div class="runFlags">
+          ${mode ? `<span class="chip ${tone}">${escapeHtml(this._t("runs.full_duplex"))}: ${escapeHtml(mode === "degraded" ? this._t("runs.degraded") : mode)}</span>` : ""}
+          <span class="chip ${graph.aec_enabled ? "ok" : "muted"}">AEC: ${escapeHtml(graph.aec_enabled ? this._t("common.enabled") : this._t("common.disabled"))}</span>
+          <span class="chip ${graph.aec_reference_active ? "ok" : "warning"}">reference: ${escapeHtml(graph.aec_reference_active ? "active" : "inactive")}</span>
+          <span class="chip ${flags.feedback_blocking_critical_path ? "bad" : "ok"}">feedback blocking: ${escapeHtml(String(Boolean(flags.feedback_blocking_critical_path)))}</span>
+        </div>
+        <div class="detailGrid">
+          ${this._detailItem("Input sources", [
+            graph.raw_mic_source ? `raw=${graph.raw_mic_source}` : "",
+            graph.aec_mic_source ? `aec=${graph.aec_mic_source}` : "",
+            graph.vad_source ? `vad=${graph.vad_source}` : "",
+            graph.endpoint_source ? `endpoint=${graph.endpoint_source}` : "",
+            graph.asr_source ? `asr=${graph.asr_source}` : "",
+            graph.wake_word_source ? `wake=${graph.wake_word_source}` : "",
+          ])}
+          ${this._detailItem("Playback / reference", [
+            graph.playback_sink ? `sink=${graph.playback_sink}` : "",
+            graph.render_reference_source ? `reference=${graph.render_reference_source}` : "",
+            `earcon_ref=${Boolean(graph.earcon_in_aec_reference)}`,
+            `tts_ref=${Boolean(graph.tts_in_aec_reference)}`,
+          ])}
+          ${this._detailItem(this._t("runs.earcon_diagnostics"), [
+            earcon.earcon_name || "",
+            earcon.can_play_while_listening === undefined ? "" : `can_play_while_listening=${Boolean(earcon.can_play_while_listening)}`,
+            earcon.mic_open_during_earcon === undefined || earcon.mic_open_during_earcon === null ? "mic_open=unknown" : `mic_open=${Boolean(earcon.mic_open_during_earcon)}`,
+            earcon.ignore_window_ms === undefined ? "" : `ignore_window=${Number(earcon.ignore_window_ms || 0)} ms`,
+            earcon.false_vad_during_earcon === undefined || earcon.false_vad_during_earcon === null ? "false_vad=unknown" : `false_vad=${Boolean(earcon.false_vad_during_earcon)}`,
+            earcon.degraded_reason || "",
+          ])}
+          ${this._detailItem(this._t("runs.aec_diagnostics"), [
+            aec.echo_suppression_db === undefined || aec.echo_suppression_db === null ? "echo_suppression=unknown" : `echo_suppression=${aec.echo_suppression_db} dB`,
+            aec.raw_echo_rms === undefined || aec.raw_echo_rms === null ? "" : `raw_rms=${aec.raw_echo_rms}`,
+            aec.aec_echo_rms === undefined || aec.aec_echo_rms === null ? "" : `aec_rms=${aec.aec_echo_rms}`,
+            aec.residual_echo_likelihood ? `residual=${aec.residual_echo_likelihood}` : "",
+          ])}
+        </div>
+        ${this._jsonDetails(this._t("runs.audio_graph"), graph)}
+        ${this._jsonDetails(this._t("runs.earcon_diagnostics"), earcon)}
+        ${this._jsonDetails(this._t("runs.aec_diagnostics"), aec)}
       </div>
     `;
   }

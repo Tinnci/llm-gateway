@@ -126,6 +126,7 @@ class TraceStore:
             "timeline": turn.timeline,
             "timeline_spans": timeline_spans,
             "critical_path": _critical_path(timeline_spans, verifier_mode),
+            "critical_path_flags": _critical_path_flags(timeline_spans),
             "first_response_decision": first_response,
             "first_response_text": _first_response_text(
                 first_response,
@@ -157,6 +158,17 @@ class TraceStore:
                 timeline_spans,
                 search_debug,
             ),
+            "audio_graph": _audio_graph_summary(
+                turn.raw_payload,
+                earcons,
+                first_response_audio,
+                timeline_spans,
+            ),
+            "earcon_diagnostics": _earcon_diagnostics_summary(
+                earcons,
+                timeline_spans,
+            ),
+            "aec_diagnostics": _aec_diagnostics_summary(turn.raw_payload),
             "actions": actions,
             "earcons": earcons,
             "display_status": display_status,
@@ -638,6 +650,26 @@ def _critical_path(
     return path
 
 
+def _critical_path_flags(timeline_spans: list[dict[str, Any]]) -> dict[str, bool]:
+    """Return explicit audio/feedback critical-path booleans."""
+    feedback_stages = {"feedback", "first_response_audio", "display_status"}
+    feedback_blocking = False
+    audio_joined = False
+    for span in timeline_spans:
+        stage = str(span.get("stage") or "")
+        if stage not in feedback_stages:
+            continue
+        attrs = _mapping_value(span.get("attrs"))
+        if bool(attrs.get("blocking")):
+            feedback_blocking = True
+        if bool(attrs.get("audio_playback_joined_critical_path")):
+            audio_joined = True
+    return {
+        "feedback_blocking_critical_path": feedback_blocking,
+        "audio_playback_joined_critical_path": audio_joined,
+    }
+
+
 def _evidence_summary(value: object) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
@@ -665,6 +697,128 @@ def _earcon_summary(raw_payload: dict[str, Any]) -> list[dict[str, Any]]:
     return [
         _bound_mapping(event, limit=600) for event in events if isinstance(event, dict)
     ][:16]
+
+
+def _audio_graph_summary(
+    raw_payload: dict[str, Any],
+    earcons: list[dict[str, Any]],
+    first_response_audio: dict[str, Any],
+    timeline_spans: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Return the best-known audio graph without claiming unproven AEC."""
+    provided = raw_payload.get("audio_graph")
+    if isinstance(provided, dict):
+        return _audio_graph_defaults() | _bound_mapping(provided, limit=1600)
+
+    graph = _audio_graph_defaults()
+    if any(_earcon_can_play_while_listening(event) for event in earcons):
+        graph["playback_sink"] = _playback_sink_from_feedback(first_response_audio)
+    if _has_tts_or_first_response_audio(first_response_audio, timeline_spans):
+        graph["tts_in_aec_reference"] = False
+    return graph
+
+
+def _audio_graph_defaults() -> dict[str, Any]:
+    return {
+        "raw_mic_source": "unknown",
+        "aec_mic_source": "",
+        "vad_source": "unknown",
+        "endpoint_source": "unknown",
+        "asr_source": "unknown",
+        "wake_word_source": "unknown",
+        "playback_sink": "unknown",
+        "render_reference_source": "",
+        "aec_enabled": False,
+        "aec_reference_active": False,
+        "earcon_in_aec_reference": False,
+        "tts_in_aec_reference": False,
+        "container_bypasses_host_audio_processing": None,
+    }
+
+
+def _earcon_diagnostics_summary(
+    earcons: list[dict[str, Any]],
+    timeline_spans: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Return conservative full-duplex diagnostics for the latest earcon."""
+    provided = _provided_earcon_diagnostics(timeline_spans)
+    if provided:
+        return provided
+    event = _latest_played_earcon(earcons)
+    if not event:
+        return {}
+    can_play = _earcon_can_play_while_listening(event)
+    ignore_window = int(event.get("duration_ms") or 0) if can_play else 0
+    return {
+        "earcon_name": str(event.get("earcon_name") or ""),
+        "can_play_while_listening": can_play,
+        "mic_open_during_earcon": None,
+        "vad_threshold_profile": "degraded_ignore_window" if can_play else "",
+        "ignore_window_ms": min(250, max(0, ignore_window)),
+        "false_vad_during_earcon": None,
+        "asr_partial_during_earcon": "",
+        "full_duplex_mode": "degraded" if can_play else "disabled",
+        "degraded_reason": (
+            "aec_reference_not_verified" if can_play else "not_listening_safe"
+        ),
+    }
+
+
+def _aec_diagnostics_summary(raw_payload: dict[str, Any]) -> dict[str, Any]:
+    """Return AEC measurements when supplied by the satellite layer."""
+    provided = raw_payload.get("aec_diagnostics")
+    if isinstance(provided, dict):
+        return _bound_mapping(provided, limit=1000)
+    return {
+        "raw_echo_rms": None,
+        "aec_echo_rms": None,
+        "echo_suppression_db": None,
+        "double_talk_detected": None,
+        "residual_echo_likelihood": None,
+    }
+
+
+def _provided_earcon_diagnostics(
+    timeline_spans: list[dict[str, Any]],
+) -> dict[str, Any]:
+    for span in timeline_spans:
+        if str(span.get("stage") or "") != "earcon_diagnostics":
+            continue
+        return _bound_mapping(span.get("attrs"), limit=1000)
+    return {}
+
+
+def _latest_played_earcon(earcons: list[dict[str, Any]]) -> dict[str, Any]:
+    for event in reversed(earcons):
+        if event.get("played_at_ms") is not None and not event.get("suppressed_reason"):
+            return event
+    return earcons[-1] if earcons else {}
+
+
+def _earcon_can_play_while_listening(event: dict[str, Any]) -> bool:
+    return bool(event.get("can_play_while_listening"))
+
+
+def _has_tts_or_first_response_audio(
+    first_response_audio: dict[str, Any],
+    timeline_spans: list[dict[str, Any]],
+) -> bool:
+    if bool(first_response_audio.get("scheduled")):
+        return True
+    return any(
+        str(span.get("stage") or "") == "first_response_audio"
+        for span in timeline_spans
+    )
+
+
+def _playback_sink_from_feedback(first_response_audio: dict[str, Any]) -> str:
+    backend = str(first_response_audio.get("backend") or "")
+    adapter = str(first_response_audio.get("adapter") or "")
+    if backend:
+        return backend
+    if adapter:
+        return adapter
+    return "unknown"
 
 
 def _display_status_summary(raw_payload: dict[str, Any]) -> dict[str, Any]:
