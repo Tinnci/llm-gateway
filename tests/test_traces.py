@@ -74,6 +74,96 @@ async def test_trace_store_records_bounded_summary_without_raw(hass):
     assert snapshot["storage"]["compressed_bytes"] == 0
 
 
+async def test_trace_store_attaches_satellite_diagnostic_snapshot(hass):
+    hass.states.async_set(
+        "sensor.kukui_diagnostic_snapshot",
+        "warning",
+        {
+            "snapshot": {
+                "schema_version": 1,
+                "generated_at": "2026-06-21T08:00:00+00:00",
+                "dependency_edges": [
+                    {"from": "pipewire.graph", "to": "systemd_user.wyoming_satellite"}
+                ],
+                "startup_order": [
+                    {
+                        "id": "pipewire.graph",
+                        "requires": ["kernel.audio_devices"],
+                    }
+                ],
+                "state_roots": {"runtime": "/run/user/1000"},
+                "pipewire_graph": {
+                    "aec_enabled": True,
+                    "aec_reference_active": False,
+                },
+                "asr": {"metrics": {"phase": "complete"}},
+                "tts": {
+                    "last_synthesis_trace": {
+                        "status": "success",
+                        "message_chars": 8,
+                    }
+                },
+                "acoustic_measurement": {
+                    "echo_suppression_db": 14.2,
+                    "false_vad_during_tts": False,
+                },
+                "checks": [
+                    {
+                        "id": "pipewire.nodes.visible",
+                        "status": "warning",
+                        "layer": "pipewire",
+                        "evidence": [{"kukui_aec_source_visible": False}],
+                        "repair_hint": "Inspect pactl list sources.",
+                    },
+                    {
+                        "id": "voice.entities.available",
+                        "status": "error",
+                        "layer": "homeassistant",
+                        "depends_on": ["pipewire.nodes.visible"],
+                        "evidence": ["conversation.llm_gateway"],
+                        "repair_hint": "Check HA entities.",
+                    },
+                ],
+            },
+        },
+    )
+    store = TraceStore(hass, "entry-diagnostic-snapshot")
+    await store.async_load()
+
+    await store.async_record_turn(
+        {
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_MAX_RUNS: 2,
+            CONF_TRACE_RETENTION_HOURS: 24,
+        },
+        TraceTurn(
+            conversation_id="conv-diagnostic",
+            user_text="打开客厅灯",
+            assistant_text="好了。",
+            route={"kind": "fast", "model": "fast-model"},
+            latency_ms=90,
+            status="complete",
+            raw_payload={"messages": []},
+        ),
+    )
+
+    diagnostic = store.snapshot()["records"][0]["diagnostic_snapshot"]
+    assert diagnostic["available"] is True
+    assert diagnostic["schema_version"] == 1
+    assert diagnostic["status"] == "error"
+    assert diagnostic["check_counts"] == {"ok": 0, "warning": 1, "error": 1}
+    assert diagnostic["first_failing_check"]["id"] == "pipewire.nodes.visible"
+    assert "voice.entities.available" in diagnostic["first_failing_check"][
+        "blocking_dependents"
+    ]
+    assert diagnostic["checks"][0]["evidence"] == [
+        {"kukui_aec_source_visible": False}
+    ]
+    assert diagnostic["pipewire_graph"]["aec_enabled"] is True
+    assert diagnostic["tts"]["last_synthesis_trace"]["message_chars"] == 8
+    assert diagnostic["acoustic_measurement"]["echo_suppression_db"] == 14.2
+
+
 async def test_trace_timeline_spans_keep_structured_inventory_attrs(hass):
     store = TraceStore(hass, "entry-inventory")
     await store.async_load()

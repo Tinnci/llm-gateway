@@ -7,10 +7,11 @@ trace data, in the Voice Harness UI, and through a manual debugging step.
 ## Consensus mapping
 
 Earcons are short, abstract, structured status sounds. The v0 pack keeps the
-surface small: `wake`, `captured`, `thinking`, `search`, `confirmation`,
-`success`, `failure`, and `cancel`. The manifest records the semantic state,
-priority, microphone safety, quiet-hours behavior, and trace event name for
-each sound.
+surface small but covers the maintained voice states: `wake`, `captured`,
+`listening_start`, `listening_end`, `processing_loop`, `thinking`, `search`,
+`confirmation`, `clarification`, `provider_fallback`, `deep_task`, `success`,
+`failure`, and `cancel`. The manifest records the semantic state, priority,
+microphone safety, quiet-hours behavior, and trace event name for each sound.
 
 Sound product behavior is deterministic and local. The model does not decide
 when to play sounds. `VoiceFeedbackPolicy` maps pipeline events to earcons,
@@ -19,13 +20,14 @@ hot, and records the decision in the trace.
 
 Lock-screen and floating display state uses a platform-neutral schema. A
 `display_status_event` contains `turn_id`, short state, privacy level, progress,
-action buttons, source, and a Voice Harness deep link. The current adapter is
-the Voice Harness live banner plus JSON trace data; Phosh, Android, and iOS can
-consume the same schema later.
+action buttons, source, and a Voice Harness deep link. The maintained adapters
+are the Voice Harness live banner/trace JSON and the local
+Phosh/kukui-display-agent path. Android, iOS, and browser surfaces should
+consume the same schema later instead of adding new status models.
 
 Observability requires one shared turn id. `voice_runs`, diagnostic traces,
-earcon events, display status events, and `/voice-harness/runs/{run_id}` use the
-same `run_id`.
+earcon events, display status events, and
+`/api/llm_gateway/harness/runs/{run_id}` use the same `run_id`.
 
 ## Runtime evidence
 
@@ -107,13 +109,14 @@ Expected result: every wav reports `OK`.
    `thinking` earcon.
 8. For a failure request, confirm `failure` earcon and trace error reason.
 
-## Adapter backlog
+## Adapter matrix
 
-The current real adapter is the Voice Harness live banner and trace JSON. Future
-platform adapters should consume the same `display_status_event` without
-changing the schema:
+Adapters should consume the same `display_status_event` without changing the
+schema:
 
-- Phosh/display-agent: lock-screen/AOD text and short state indicator.
+- Voice Harness: live banner, run detail, trace JSON, and deep links.
+- Phosh/kukui-display-agent: local status event endpoint, lock-screen/AOD text,
+  short state indicator, local cue playback, and playback stop/barge-in hooks.
 - Android: notification or heads-up notification with lock-screen visibility.
 - iOS: Live Activity when available, notification fallback otherwise.
 - Browser: optional notification permission and floating overlay page.

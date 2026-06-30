@@ -44,6 +44,32 @@ def test_voice_run_recorder_reports_running_stage() -> None:
     assert run["running_duration_ms"] >= 0
 
 
+def test_voice_run_recorder_expires_stale_running_runs(monkeypatch) -> None:
+    recorder = VoiceRunRecorder(limit=2)
+    monkeypatch.setattr(
+        "custom_components.llm_gateway.voice_runs.time.time",
+        lambda: 1000.0,
+    )
+    run_id = recorder.start(conversation_id="conv-1", user_text="打开空调")
+    recorder.mark(run_id, "first_response")
+
+    monkeypatch.setattr(
+        "custom_components.llm_gateway.voice_runs.time.time",
+        lambda: 1000.0 + 601,
+    )
+
+    [run] = recorder.snapshot()
+
+    assert run["id"] == run_id
+    assert run["status"] == "stale"
+    assert run["last_active_stage"] == "stale_expired"
+    assert run["last_active_status"] == "stale"
+    assert run["running_duration_ms"] == 601000
+    assert run["events"][-1]["attrs"]["reason"] == (
+        "run_exceeded_observable_voice_budget"
+    )
+
+
 def test_voice_run_recorder_prunes_old_runs() -> None:
     recorder = VoiceRunRecorder(limit=1)
 

@@ -9,6 +9,7 @@ from typing import Any
 from homeassistant.util import ulid
 
 RUN_LIMIT = 40
+STALE_RUNNING_MS = 10 * 60 * 1000
 
 
 @dataclass(slots=True)
@@ -136,6 +137,7 @@ class VoiceRunRecorder:
 
     def timeline(self, run_id: str) -> list[dict[str, Any]]:
         """Return the current run timeline."""
+        self._expire_stale_runs()
         run = self._runs.get(run_id)
         if run is None:
             return []
@@ -143,6 +145,7 @@ class VoiceRunRecorder:
 
     def snapshot(self) -> list[dict[str, Any]]:
         """Return recent runs newest first."""
+        self._expire_stale_runs()
         return [
             self._runs[run_id].as_dict()
             for run_id in self._order
@@ -154,3 +157,25 @@ class VoiceRunRecorder:
         self._order = self._order[: self._limit]
         for run_id in extra:
             self._runs.pop(run_id, None)
+
+    def _expire_stale_runs(self) -> None:
+        now = time.time()
+        for run in self._runs.values():
+            if run.status != "running":
+                continue
+            elapsed_ms = max(0, round((now - run.created_at) * 1000))
+            if elapsed_ms < STALE_RUNNING_MS:
+                continue
+            run.status = "stale"
+            run.latency_ms = elapsed_ms
+            run.events.append(
+                VoiceRunEvent(
+                    stage="stale_expired",
+                    t_ms=elapsed_ms,
+                    status="stale",
+                    attrs={
+                        "max_running_ms": STALE_RUNNING_MS,
+                        "reason": "run_exceeded_observable_voice_budget",
+                    },
+                )
+            )

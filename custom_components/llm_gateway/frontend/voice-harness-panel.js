@@ -25,7 +25,7 @@
  * @typedef {{ path?: string, url?: string, duration_ms?: number, lufs?: number, peak_dbfs?: number, purpose?: string, purpose_i18n?: Record<string, string>, semantic_state?: string, priority?: number, can_play_while_listening?: boolean, quiet_hours_behavior?: string, trace_event_name?: string }} EarconFile
  * @typedef {{ pack?: string, sample_rate?: number, target_lufs?: number, true_peak_dbfs?: number, files?: Record<string, EarconFile> }} EarconPack
  * @typedef {{ entity_id: string, state: string, available: boolean, name?: string, unit?: string, attributes?: Record<string, unknown> }} SatelliteEntityState
- * @typedef {{ states?: Record<string, SatelliteEntityState>, services?: Record<string, boolean> }} SatelliteStatus
+ * @typedef {{ states?: Record<string, SatelliteEntityState>, services?: Record<string, boolean>, diagnostic_snapshot?: Record<string, any> }} SatelliteStatus
  * @typedef {{ entries: HarnessEntry[], editable: EditableSchema, satellite?: SatelliteStatus, earcons?: EarconPack, prompt_policies?: PromptPolicy[], sample_scenarios?: SampleScenario[] }} HarnessStatus
  * @typedef {{ entry_id: string, options: { routing_mode: RouteKind, models: TierTextMap, max_tokens: TierNumberMap, timeouts: TierNumberMap, trace: TraceOptions, first_response_audio?: FirstResponseAudioOptions } }} OptionsUpdateRequest
  * @typedef {{ user: string, response: string, expected: string }} ScenarioDraft
@@ -219,6 +219,15 @@ const I18N = {
     "satellite.fallback_clip_volume": "Local clip volume",
     "satellite.voice_config": "Applied voice config",
     "satellite.asr_metrics": "ASR metrics",
+    "satellite.asr_phase": "phase",
+    "satellite.asr_interim": "interim",
+    "satellite.asr_final": "final",
+    "satellite.asr_frames": "frames",
+    "satellite.asr_first_latency": "first",
+    "satellite.diagnostic_snapshot": "Diagnostic snapshot",
+    "satellite.diagnostic_checks": "Diagnostic checks",
+    "satellite.aec_reference": "AEC reference",
+    "satellite.first_failing": "First failing",
     "satellite.unavailable": "HA satellite entities are not available.",
     "satellite.voice_pipeline": "Voice pipeline",
     "satellite.voice_paused": "Voice paused",
@@ -504,6 +513,15 @@ const I18N = {
     "satellite.fallback_clip_volume": "本地片段音量",
     "satellite.voice_config": "已应用语音配置",
     "satellite.asr_metrics": "ASR 指标",
+    "satellite.asr_phase": "阶段",
+    "satellite.asr_interim": "中间",
+    "satellite.asr_final": "最终",
+    "satellite.asr_frames": "帧",
+    "satellite.asr_first_latency": "首包",
+    "satellite.diagnostic_snapshot": "诊断快照",
+    "satellite.diagnostic_checks": "诊断检查",
+    "satellite.aec_reference": "AEC 参考",
+    "satellite.first_failing": "最早失败",
     "satellite.unavailable": "HA 卫星端实体不可用。",
     "satellite.voice_pipeline": "语音管线",
     "satellite.voice_paused": "语音暂停",
@@ -1333,6 +1351,7 @@ class VoiceHarnessPanel extends HTMLElement {
       "display_awake",
       "voice_config",
       "asr_metrics",
+      "diagnostic_snapshot",
       "ambient_light",
       "screen_brightness",
     ];
@@ -1389,7 +1408,43 @@ class VoiceHarnessPanel extends HTMLElement {
           <div class="stateList">
             ${stateKeys.map((key) => this._satelliteStateRow(key, states[key])).join("")}
           </div>
+          ${this._satelliteDiagnosticPanel(satellite.diagnostic_snapshot || states.diagnostic_snapshot?.attributes?.snapshot || {})}
         </article>
+      </div>
+    `;
+  }
+
+  _satelliteDiagnosticPanel(snapshot) {
+    if (!snapshot || !Object.keys(snapshot).length) {
+      return "";
+    }
+    const graph = snapshot.pipewire_graph || {};
+    const checks = Array.isArray(snapshot.checks) ? snapshot.checks : [];
+    const first = snapshot.first_failing_check || {};
+    const bad = checks.filter((check) => check.status === "error").length;
+    const warnings = checks.filter((check) => check.status === "warning").length;
+    return `
+      <div class="debugSection">
+        <h3>${escapeHtml(this._t("satellite.diagnostic_snapshot"))}</h3>
+        <div class="chipRow">
+          <span class="chip muted">schema ${escapeHtml(snapshot.schema_version || "")}</span>
+          <span class="chip ${graph.aec_enabled ? "ok" : "warning"}">AEC: ${escapeHtml(graph.aec_enabled ? this._t("common.enabled") : this._t("common.disabled"))}</span>
+          <span class="chip ${graph.aec_reference_active ? "ok" : "warning"}">${escapeHtml(this._t("satellite.aec_reference"))}: ${escapeHtml(graph.aec_reference_active ? "active" : "inactive")}</span>
+          <span class="chip ${bad ? "error" : warnings ? "warning" : "ok"}">${escapeHtml(this._t("satellite.diagnostic_checks"))}: ${checks.length}</span>
+          ${first.id ? `<span class="chip ${first.status === "error" ? "error" : "warning"}">${escapeHtml(this._t("satellite.first_failing"))}: ${escapeHtml(first.id)}</span>` : ""}
+        </div>
+        <div class="stateList">
+          ${checks.map((check) => `
+            <div class="stateRow">
+              <div>
+                <strong>${escapeHtml(check.id || "")}</strong>
+                <span>${escapeHtml([check.layer ? `layer=${check.layer}` : "", ...(check.evidence || []).map((item) => typeof item === "string" ? item : JSON.stringify(item))].filter(Boolean).join(" · "))}</span>
+              </div>
+              <span class="chip ${check.status === "ok" ? "ok" : check.status === "warning" ? "warning" : "error"}">${escapeHtml(check.status || "")}</span>
+            </div>
+          `).join("")}
+        </div>
+        ${this._jsonDetails(this._t("satellite.diagnostic_snapshot"), snapshot)}
       </div>
     `;
   }
@@ -1418,15 +1473,37 @@ class VoiceHarnessPanel extends HTMLElement {
     const value = available
       ? `${state.state}${state.unit ? ` ${state.unit}` : ""}`
       : this._t("satellite.missing");
+    const detail = this._satelliteStateDetail(key, state);
     return `
       <div class="stateRow">
         <div>
           <strong>${escapeHtml(this._t(`satellite.${key}`))}</strong>
-          <span>${escapeHtml(state?.entity_id || "")}</span>
+          <span>${escapeHtml(detail)}</span>
         </div>
         <span class="chip ${available ? "ok" : "error"}">${escapeHtml(value)}</span>
       </div>
     `;
+  }
+
+  _satelliteStateDetail(key, state) {
+    if (key !== "asr_metrics" || !state?.available) {
+      return state?.entity_id || "";
+    }
+    const attrs = state.attributes || {};
+    const metrics = attrs.metrics || {};
+    const phase = metrics.phase || attrs.phase || state.state || "";
+    const interim = metrics.interim_results ?? attrs.interim_results;
+    const final = metrics.final_results ?? attrs.final_results;
+    const frames = metrics.frames ?? attrs.frames;
+    const firstLatency = metrics.first_result_latency_ms ?? attrs.first_result_latency_ms;
+    const parts = [
+      phase ? `${this._t("satellite.asr_phase")} ${phase}` : "",
+      Number.isFinite(Number(interim)) ? `${this._t("satellite.asr_interim")} ${Number(interim)}` : "",
+      Number.isFinite(Number(final)) ? `${this._t("satellite.asr_final")} ${Number(final)}` : "",
+      Number.isFinite(Number(frames)) ? `${this._t("satellite.asr_frames")} ${Number(frames)}` : "",
+      Number.isFinite(Number(firstLatency)) ? `${this._t("satellite.asr_first_latency")} ${Number(firstLatency)} ms` : "",
+    ].filter(Boolean);
+    return parts.join(" · ") || state.entity_id || "";
   }
 
   _renderTracePanel(entry) {

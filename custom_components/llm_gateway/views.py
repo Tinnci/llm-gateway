@@ -60,6 +60,7 @@ from .harness import evaluate_scenario
 from .policy import should_allow_search
 from .providers import normalize_provider_profiles_json, provider_profiles_from_options
 from .router import select_model_route
+from .satellite_diagnostics import satellite_diagnostic_snapshot
 from .search import search_providers_from_options
 from .voice_text import markdown_to_spoken_text
 
@@ -683,6 +684,7 @@ SATELLITE_STATE_ENTITIES = {
     "fallback_clip_volume": "input_number.kukui_fallback_clip_volume",
     "voice_config": "sensor.kukui_voice_config",
     "asr_metrics": "sensor.kukui_asr_metrics",
+    "diagnostic_snapshot": "sensor.kukui_diagnostic_snapshot",
     "ambient_light": "sensor.kukui_ambient_light",
     "screen_brightness": "sensor.kukui_display_brightness",
 }
@@ -696,6 +698,7 @@ def _satellite_status(hass: HomeAssistant) -> dict[str, Any]:
     }
     return {
         "states": states,
+        "diagnostic_snapshot": _satellite_diagnostic_snapshot(hass),
         "services": {
             "pause": hass.services.has_service("script", "kukui_voice_pause"),
             "resume": hass.services.has_service("script", "kukui_voice_resume"),
@@ -706,6 +709,10 @@ def _satellite_status(hass: HomeAssistant) -> dict[str, Any]:
             "set_number": hass.services.has_service("input_number", "set_value"),
         },
     }
+
+
+def _satellite_diagnostic_snapshot(hass: HomeAssistant) -> dict[str, Any]:
+    return satellite_diagnostic_snapshot(hass)
 
 
 def _entity_state(hass: HomeAssistant, entity_id: str) -> dict[str, Any]:
@@ -742,10 +749,23 @@ def _entity_state(hass: HomeAssistant, entity_id: str) -> dict[str, Any]:
                 "tts_volume_night",
                 "fallback_volume",
                 "metrics",
+                "snapshot",
+                "checks",
+                "pipewire_graph",
+                "schema_version",
+                "generated_at",
+                "phase",
                 "total_latency_ms",
                 "first_result_latency_ms",
                 "final_result_latency_ms",
                 "audio_bytes",
+                "frames",
+                "response_events",
+                "vad_events",
+                "interim_results",
+                "final_results",
+                "vad_start_seen",
+                "vad_finished_seen",
                 "transcript_chars",
             }
         },

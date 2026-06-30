@@ -11,12 +11,13 @@ satellite/ASR/display boundaries so operational decisions stay clear.
 3. Doubao ASR returns transcript text.
 4. Home Assistant local intents run first when possible.
 5. `conversation.llm_gateway` handles open-ended, routed, or tool-assisted turns.
-6. The final speech text is cleaned for TTS and played by the satellite while
-   the tablet microphone is muted.
+6. The final speech text is cleaned for TTS and played by the satellite through
+   the local voice playback sink.
 
-The satellite side is responsible for wake cue playback, microphone gating, and
-local audio behavior. LLM Gateway is responsible for routing, prompt policy, HA
-tool policy, search gating, short memory, and Voice Harness visibility.
+The satellite side is responsible for wake cue playback, local audio behavior,
+AEC source/sink selection, and playback stop/barge-in mechanics. LLM Gateway is
+responsible for routing, prompt policy, HA tool policy, search gating, short
+memory, and Voice Harness visibility.
 
 ## Model routing
 
@@ -108,6 +109,27 @@ Current enforced invariants:
 
 The current contract families include weather forecast, bare search,
 ambiguous-entity resolution, person knowledge, and literary works queries.
+
+## Weather context provider
+
+Outdoor weather is a first-class weather-provider path, not a sensor-inventory
+answer. For current outdoor weather and forecasts, LLM Gateway first resolves a
+Home Assistant `weather` entity and asks the HA weather service when forecast
+rows are required:
+
+```text
+weather_forecast_query / outdoor_current_weather_query
+→ WeatherContextProvider
+→ weather.<location> entity
+→ weather.get_forecasts when forecast rows are needed
+→ concise local renderer
+```
+
+This is intentionally separate from `GetLiveContext(domain=sensor)`.
+`GetLiveContext` remains a fallback for installations that expose only scalar
+weather sensors, but it must not answer forecast-required turns. Forecast
+rendering selects rows by the requested horizon/date so stale leading provider
+rows do not become "tomorrow".
 
 ## Reference resolution and commitment
 
@@ -211,7 +233,8 @@ Stop conditions:
 - stop the loop before TTS starts,
 - stop the loop when a provider fallback cue is played,
 - stop the loop on pipeline cancellation,
-- never play the loop while the microphone is unmuted for user speech.
+- route the loop through the same voice playback sink used as the AEC playback
+  reference.
 
 This keeps long waits audible without turning the assistant into a repeating
 chatty status announcer.
@@ -278,9 +301,10 @@ summary. Current Gateway-owned stages include request receipt, HA LLM data
 preparation, route selection, provider attempts, tool calls/results, search
 results, TTS Markdown cleanup, and completion.
 
-Wake word, ASR, playback, and microphone-gate events still originate in the
-satellite/display layer. They are surfaced through the lock-screen status and HA
-entities, and can be correlated with Gateway timelines by timestamp.
+Wake word, ASR, playback, AEC graph state, and any microphone safety events
+originate in the satellite/display layer. They are surfaced through the
+lock-screen status and HA entities, and can be correlated with Gateway timelines
+by timestamp.
 
 ## Spoken output
 
@@ -405,6 +429,7 @@ renders deterministic WAV earcons from YAML packs and lints loudness/peak levels
 Current deployed earcon pack:
 
 - wake
+- captured
 - listening_start
 - listening_end
 - processing_loop
@@ -415,6 +440,7 @@ Current deployed earcon pack:
 - search
 - provider_fallback
 - deep_task
+- cancel
 
 The integration serves these WAV assets to the panel and Home Assistant
 frontend. Local OPUS spoken fallback clips, such as "网络连接失败" or
@@ -439,13 +465,14 @@ Satellite work owned outside this integration:
 - play `processing_loop.wav` when a remote LLM/search request crosses the soft
   latency threshold,
 - play `provider_fallback.wav` once when model provider fallback is triggered,
-- keep microphone mute gates around wake cues and TTS playback,
+- keep all voice playback routed to the AEC reference sink,
+- keep capture open during TTS when the AEC graph is active,
 - log enough audio-chain telemetry for Voice Harness or lock-screen display.
 
 Audio processing that should stay local:
 
 - wake word detection,
-- VAD and echo/mic gating,
+- VAD, AEC, echo policy, and playback reference routing,
 - capture gain and noise suppression,
 - resampling to the ASR provider's expected format,
 - local earcons and fallback OPUS clips,
@@ -490,5 +517,5 @@ Each remote/acoustic run should capture:
 - Gateway request metrics,
 - tool names and success/error flags,
 - entity state before/after,
-- microphone mute state after completion,
+- audio graph, AEC reference state, and mic-open state after completion,
 - final spoken text.

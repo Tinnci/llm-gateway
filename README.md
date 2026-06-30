@@ -24,6 +24,10 @@ Voice Harness panel, and a small earcon toolchain.
   in diagnostic traces without exposing API keys.
 - **Home Assistant tool control**: Assist LLM API tools can be enabled from the
   options flow. High-risk actions are blocked until the user explicitly confirms.
+- **Weather provider routing**: outdoor current-weather and forecast turns first
+  use Home Assistant `weather` entities and `weather.get_forecasts`, including
+  providers such as `tianqi`; sensor snapshots remain a fallback for installations
+  without a weather entity.
 - **Search gating**: `search_web` is only exposed when search is enabled, a
   provider key exists, and the user request actually needs current external
   information. Provider priority is Tavily, Serper, Firecrawl, then Brave.
@@ -35,6 +39,10 @@ Voice Harness panel, and a small earcon toolchain.
 - **Diagnostic run traces**: when explicitly enabled, completed turns are stored
   as bounded Voice Harness records. Summary fields are readable in the panel;
   optional raw chat/tool payloads are redacted and stored as `json+zlib+base64`.
+- **Satellite diagnostics ingestion**: Voice Harness reads
+  `sensor.kukui_diagnostic_snapshot`, shows layered checks and PipeWire/AEC
+  state, and stores a bounded trace-safe diagnostic summary on each recorded
+  run.
 - **Voice Harness panel**: the integration auto-registers an admin-only sidebar
   panel named `Voice Harness`; no manual `panel_custom` YAML is required. Panel
   chrome, prompt policies, scenarios, and earcon descriptions render in English
@@ -49,6 +57,10 @@ Voice Harness panel, and a small earcon toolchain.
   timing, raw audio, VAD chunks, and OPUS clips are satellite/ASR-layer signals;
   those should be ingested from the satellite rather than reconstructed inside
   the conversation agent.
+- On the maintained postmarketOS satellite, capture and playback are routed
+  through PipeWire WebRTC AEC (`kukui_aec_source` and `kukui_voice_sink`).
+  LLM Gateway should expose and consume that telemetry; it should not own PCM
+  processing, capture muting, or satellite playback policy.
 - Local OPUS spoken fallback clips for network/TTS/port failures belong in the
   satellite playback chain. The Gateway ships the earcon pack and provider
   fallback trace fields; the playback wrapper lives with the satellite service.
@@ -149,7 +161,8 @@ Current panel views:
 - `Runs / 运行记录`: config entries, model routes, provider state, recent
   diagnostic text traces, latency, tool event counts, and optional compressed
   raw payloads. Provider attempts and fallback reasons are visible when a run
-  crosses provider boundaries.
+  crosses provider boundaries. Weather path and audio/AEC graph summaries are
+  shown when the trace includes them.
 - `Settings / 配置`: editable safe options for routing mode, Fast/Mid/Deep
   model ids, token budgets, request timeouts, and bounded diagnostic trace
   retention.

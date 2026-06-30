@@ -23,6 +23,10 @@ from .const import (
     RECOMMENDED_TRACE_MAX_RUNS,
     RECOMMENDED_TRACE_RETENTION_HOURS,
 )
+from .satellite_diagnostics import (
+    SATELLITE_DIAGNOSTIC_SNAPSHOT_ENTITY_ID,
+    satellite_diagnostic_snapshot,
+)
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -63,6 +67,7 @@ class TraceStore:
     """Persistent, bounded diagnostic traces for admin debugging."""
 
     def __init__(self, hass: HomeAssistant, entry_id: str) -> None:
+        self._hass = hass
         self._store: Store[dict[str, Any]] = Store(
             hass, 1, f"{DOMAIN}.{entry_id}.traces"
         )
@@ -97,6 +102,9 @@ class TraceStore:
         first_response = _first_response_summary(turn.raw_payload, turn.timeline)
         first_response_audio = _first_response_audio_summary(turn.raw_payload)
         search_debug = _search_debug(tools, grounding, timeline_spans)
+        diagnostic_snapshot = _diagnostic_snapshot_summary(
+            satellite_diagnostic_snapshot(self._hass)
+        )
         record = {
             "id": record_id,
             "run_id": record_id,
@@ -169,6 +177,7 @@ class TraceStore:
                 timeline_spans,
             ),
             "aec_diagnostics": _aec_diagnostics_summary(turn.raw_payload),
+            "diagnostic_snapshot": diagnostic_snapshot,
             "actions": actions,
             "earcons": earcons,
             "display_status": display_status,
@@ -776,6 +785,95 @@ def _aec_diagnostics_summary(raw_payload: dict[str, Any]) -> dict[str, Any]:
         "double_talk_detected": None,
         "residual_echo_likelihood": None,
     }
+
+
+def _diagnostic_snapshot_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Return a trace-safe view of the latest satellite diagnostic snapshot."""
+    if not snapshot:
+        return {
+            "available": False,
+            "entity_id": SATELLITE_DIAGNOSTIC_SNAPSHOT_ENTITY_ID,
+        }
+    checks = [
+        _diagnostic_check_summary(check)
+        for check in snapshot.get("checks") or []
+        if isinstance(check, dict)
+    ][:32]
+    counts = {"ok": 0, "warning": 0, "error": 0}
+    for check in checks:
+        status = str(check.get("status") or "")
+        if status in counts:
+            counts[status] += 1
+    return {
+        "available": True,
+        "entity_id": SATELLITE_DIAGNOSTIC_SNAPSHOT_ENTITY_ID,
+        "schema_version": snapshot.get("schema_version"),
+        "generated_at": str(snapshot.get("generated_at") or ""),
+        "status": _diagnostic_snapshot_status(checks),
+        "check_counts": counts,
+        "first_failing_check": _diagnostic_check_summary(
+            snapshot.get("first_failing_check")
+        ),
+        "checks": checks,
+        "dependency_edges": _bound_value(
+            snapshot.get("dependency_edges") or [],
+            limit=400,
+            depth=2,
+        ),
+        "startup_order": _bound_value(
+            snapshot.get("startup_order") or [],
+            limit=600,
+            depth=3,
+        ),
+        "state_roots": _bound_mapping(snapshot.get("state_roots"), limit=800),
+        "pipewire_graph": _bound_mapping(snapshot.get("pipewire_graph"), limit=1200),
+        "asr": _bound_mapping(snapshot.get("asr"), limit=1200),
+        "tts": _bound_mapping(snapshot.get("tts"), limit=1200),
+        "acoustic_measurement": _bound_mapping(
+            snapshot.get("acoustic_measurement"),
+            limit=1200,
+        ),
+    }
+
+
+def _diagnostic_check_summary(check: object) -> dict[str, Any]:
+    if not isinstance(check, dict):
+        return {}
+    dependencies = check.get("depends_on")
+    evidence = check.get("evidence")
+    return {
+        "id": str(check.get("id") or ""),
+        "status": str(check.get("status") or ""),
+        "layer": str(check.get("layer") or ""),
+        "depends_on": [
+            str(item) for item in dependencies[:12] if item is not None
+        ]
+        if isinstance(dependencies, list)
+        else [],
+        "evidence": _bound_value(
+            evidence if isinstance(evidence, list) else [],
+            limit=800,
+            depth=2,
+        ),
+        "repair_hint": _truncate(str(check.get("repair_hint") or ""), 320),
+        "blocking_dependents": [
+            str(item)
+            for item in (
+                check.get("blocking_dependents")
+                if isinstance(check.get("blocking_dependents"), list)
+                else []
+            )[:12]
+        ],
+    }
+
+
+def _diagnostic_snapshot_status(checks: list[dict[str, Any]]) -> str:
+    statuses = {str(check.get("status") or "") for check in checks}
+    if "error" in statuses:
+        return "error"
+    if "warning" in statuses:
+        return "warning"
+    return "ok" if checks else "unknown"
 
 
 def _provided_earcon_diagnostics(

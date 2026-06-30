@@ -61,6 +61,56 @@ async def test_harness_status_api(hass, hass_client):
         "30",
         {"friendly_name": "Kukui 语音暂停分钟数", "unit_of_measurement": "min"},
     )
+    hass.states.async_set(
+        "sensor.kukui_asr_metrics",
+        "streaming",
+        {
+            "friendly_name": "Kukui ASR 指标",
+            "phase": "streaming",
+            "interim_results": 1,
+            "final_results": 0,
+            "frames": 3,
+            "first_result_latency_ms": 120,
+            "metrics": {
+                "phase": "streaming",
+                "interim_results": 1,
+                "final_results": 0,
+                "frames": 3,
+                "first_result_latency_ms": 120,
+            },
+        },
+    )
+    hass.states.async_set(
+        "sensor.kukui_diagnostic_snapshot",
+        "ok",
+        {
+            "schema_version": 1,
+            "generated_at": "2026-06-21T00:00:00+00:00",
+            "snapshot": {
+                "schema_version": 1,
+                "pipewire_graph": {"aec_enabled": True},
+                "checks": [
+                    {
+                        "id": "pipewire.nodes.visible",
+                        "status": "warning",
+                        "layer": "pipewire",
+                    },
+                    {
+                        "id": "voice.entities.available",
+                        "status": "error",
+                        "layer": "homeassistant",
+                        "depends_on": ["pipewire.nodes.visible"],
+                    },
+                    {
+                        "id": "tts.entity.available",
+                        "status": "error",
+                        "layer": "tts",
+                        "depends_on": ["voice.entities.available"],
+                    },
+                ],
+            },
+        },
+    )
     await async_setup_panel(hass)
     client = await hass_client()
 
@@ -90,6 +140,33 @@ async def test_harness_status_api(hass, hass_client):
     assert (
         data["satellite"]["states"]["pause_requested"]["entity_id"]
         == "input_boolean.kukui_voice_pause_requested"
+    )
+    assert data["satellite"]["states"]["asr_metrics"]["state"] == "streaming"
+    assert (
+        data["satellite"]["states"]["asr_metrics"]["attributes"]["interim_results"]
+        == 1
+    )
+    assert (
+        data["satellite"]["states"]["asr_metrics"]["attributes"]["metrics"]["phase"]
+        == "streaming"
+    )
+    assert data["satellite"]["diagnostic_snapshot"]["schema_version"] == 1
+    assert data["satellite"]["diagnostic_snapshot"]["pipewire_graph"]["aec_enabled"]
+    assert (
+        data["satellite"]["states"]["diagnostic_snapshot"]["attributes"]["snapshot"][
+            "checks"
+        ][0]["id"]
+        == "pipewire.nodes.visible"
+    )
+    assert (
+        data["satellite"]["diagnostic_snapshot"]["first_failing_check"]["id"]
+        == "pipewire.nodes.visible"
+    )
+    assert (
+        "voice.entities.available"
+        in data["satellite"]["diagnostic_snapshot"]["first_failing_check"][
+            "blocking_dependents"
+        ]
     )
 
 
