@@ -203,6 +203,37 @@ const I18N = {
     "settings.saved": "Settings saved.",
     "satellite.title": "Satellite and voice controls",
     "satellite.description": "These controls use HA entities and the typed local apply API exposed by the display agent. Applying wake or mic changes restarts the local satellite path.",
+    "satellite.overview": "Runtime overview",
+    "satellite.quick_pause": "Quick pause",
+    "satellite.controls": "Controls",
+    "satellite.tuning": "Wake and audio tuning",
+    "satellite.state": "Live state",
+    "satellite.available_entities": "{count} available",
+    "satellite.missing_entities": "{count} missing",
+    "satellite.missing_details": "Missing entities",
+    "satellite.services": "Services",
+    "satellite.asr_panel": "ASR progress",
+    "satellite.tts_panel": "Latest TTS",
+    "satellite.acoustic_panel": "Acoustic measurement",
+    "satellite.dependency_layers": "Dependency layers",
+    "satellite.failed_checks": "{count} failing",
+    "satellite.warning_checks": "{count} warnings",
+    "satellite.ok_checks": "{count} ok",
+    "satellite.all_checks_ok": "All checks currently pass",
+    "satellite.repair_hint": "Repair hint",
+    "satellite.blocking_dependents": "Blocking",
+    "satellite.generated": "Generated",
+    "satellite.raw_snapshot": "Raw snapshot",
+    "satellite.pipeline_ready": "Pipeline",
+    "satellite.capture": "Capture",
+    "satellite.playback": "Playback",
+    "satellite.no_snapshot": "No diagnostic snapshot yet.",
+    "satellite.no_asr": "No ASR metrics yet.",
+    "satellite.no_tts": "No TTS trace yet.",
+    "satellite.no_acoustic": "No acoustic measurement report yet.",
+    "satellite.echo_suppression": "Echo suppression",
+    "satellite.false_vad": "False VAD",
+    "satellite.barge_in": "Barge-in",
     "satellite.pause": "Pause voice",
     "satellite.resume": "Resume voice",
     "satellite.save_minutes": "Save minutes",
@@ -497,6 +528,37 @@ const I18N = {
     "settings.saved": "配置已保存。",
     "satellite.title": "卫星端与语音控制",
     "satellite.description": "这些控件使用 HA 实体和 display-agent 暴露的 typed apply API。应用唤醒或麦克风改动会重启本地 satellite 链路。",
+    "satellite.overview": "运行概览",
+    "satellite.quick_pause": "快速暂停",
+    "satellite.controls": "控制",
+    "satellite.tuning": "唤醒和音频调校",
+    "satellite.state": "实时状态",
+    "satellite.available_entities": "{count} 个可用",
+    "satellite.missing_entities": "{count} 个缺失",
+    "satellite.missing_details": "缺失实体",
+    "satellite.services": "服务",
+    "satellite.asr_panel": "ASR 进度",
+    "satellite.tts_panel": "最近 TTS",
+    "satellite.acoustic_panel": "声学测量",
+    "satellite.dependency_layers": "依赖层",
+    "satellite.failed_checks": "{count} 个失败",
+    "satellite.warning_checks": "{count} 个警告",
+    "satellite.ok_checks": "{count} 个正常",
+    "satellite.all_checks_ok": "当前所有检查通过",
+    "satellite.repair_hint": "修复提示",
+    "satellite.blocking_dependents": "阻塞",
+    "satellite.generated": "生成时间",
+    "satellite.raw_snapshot": "原始快照",
+    "satellite.pipeline_ready": "管线",
+    "satellite.capture": "采集",
+    "satellite.playback": "播放",
+    "satellite.no_snapshot": "还没有诊断快照。",
+    "satellite.no_asr": "还没有 ASR 指标。",
+    "satellite.no_tts": "还没有 TTS trace。",
+    "satellite.no_acoustic": "还没有声学测量报告。",
+    "satellite.echo_suppression": "回声抑制",
+    "satellite.false_vad": "误触发 VAD",
+    "satellite.barge_in": "打断",
     "satellite.pause": "暂停语音",
     "satellite.resume": "恢复语音",
     "satellite.save_minutes": "保存分钟数",
@@ -874,6 +936,13 @@ class VoiceHarnessPanel extends HTMLElement {
     }
     if (button.dataset.action === "refresh") {
       this._load();
+      return;
+    }
+    if (button.dataset.pausePreset) {
+      const input = this.shadowRoot.querySelector("[data-satellite-minutes]");
+      if (input instanceof HTMLInputElement) {
+        input.value = button.dataset.pausePreset;
+      }
       return;
     }
     if (button.dataset.satelliteAction) {
@@ -1344,17 +1413,7 @@ class VoiceHarnessPanel extends HTMLElement {
     const states = satellite.states || {};
     const services = satellite.services || {};
     const pauseMinutes = Number(states.pause_minutes?.state || 30);
-    const stateKeys = [
-      "voice_pipeline",
-      "voice_paused",
-      "pause_requested",
-      "display_awake",
-      "voice_config",
-      "asr_metrics",
-      "diagnostic_snapshot",
-      "ambient_light",
-      "screen_brightness",
-    ];
+    const snapshot = satellite.diagnostic_snapshot || states.diagnostic_snapshot?.attributes?.snapshot || {};
     const configKeys = [
       ["wake_threshold", 0.1, 0.95, 0.01],
       ["wake_trigger_level", 1, 5, 1],
@@ -1365,12 +1424,13 @@ class VoiceHarnessPanel extends HTMLElement {
       ["fallback_clip_volume", 0.2, 1.25, 0.01],
     ];
     return `
-      <div class="satelliteGrid">
-        <article class="surface satellitePanel">
+      <div class="satelliteLayout">
+        ${this._satelliteOverviewPanel(states, services, snapshot)}
+        <article class="surface satellitePanel satelliteControlsPanel">
           <div class="sectionHead">
             <div>
-              <h2>${escapeHtml(this._t("satellite.title"))}</h2>
-              <div class="meta">${escapeHtml(this._t("satellite.description"))}</div>
+              <h2>${escapeHtml(this._t("satellite.controls"))}</h2>
+              <div class="meta">${escapeHtml(this._t("satellite.quick_pause"))}</div>
             </div>
           </div>
           <div class="satelliteControls">
@@ -1378,6 +1438,11 @@ class VoiceHarnessPanel extends HTMLElement {
               <span>${escapeHtml(this._t("satellite.minutes"))}</span>
               <input data-satellite-minutes type="number" min="1" max="120" step="1" value="${pauseMinutes}">
             </label>
+            <div class="presetRow" aria-label="${escapeHtml(this._t("satellite.quick_pause"))}">
+              ${[10, 30, 60].map((minutes) => `
+                <button type="button" class="presetButton" data-pause-preset="${minutes}">${minutes}</button>
+              `).join("")}
+            </div>
             <button type="button" data-satellite-action="save-minutes" ${services.set_pause_minutes ? "" : "disabled"}>
               <ha-icon icon="mdi:content-save-outline"></ha-icon>
               <span>${escapeHtml(this._t("satellite.save_minutes"))}</span>
@@ -1391,7 +1456,15 @@ class VoiceHarnessPanel extends HTMLElement {
               <span>${escapeHtml(this._t("satellite.resume"))}</span>
             </button>
           </div>
-          <h3>${escapeHtml(this._t("satellite.config"))}</h3>
+          ${this._satelliteServiceChips(services)}
+        </article>
+        <article class="surface satellitePanel satelliteTuningPanel">
+          <div class="sectionHead">
+            <div>
+              <h2>${escapeHtml(this._t("satellite.tuning"))}</h2>
+              <div class="meta">${escapeHtml(this._t("satellite.description"))}</div>
+            </div>
+          </div>
           <div class="settingsTriples">
             ${configKeys.map(([key, min, max, step]) => this._satelliteConfigInput(key, states[key], min, max, step)).join("")}
           </div>
@@ -1405,27 +1478,265 @@ class VoiceHarnessPanel extends HTMLElement {
               <span>${escapeHtml(this._t("satellite.apply_config"))}</span>
             </button>
           </div>
-          <div class="stateList">
-            ${stateKeys.map((key) => this._satelliteStateRow(key, states[key])).join("")}
-          </div>
-          ${this._satelliteDiagnosticPanel(satellite.diagnostic_snapshot || states.diagnostic_snapshot?.attributes?.snapshot || {})}
         </article>
+        ${this._satelliteStatePanel(states)}
+        ${this._satelliteAsrPanel(states.asr_metrics, snapshot)}
+        ${this._satelliteTtsPanel(snapshot)}
+        ${this._satelliteAcousticPanel(snapshot)}
+        ${this._satelliteDiagnosticPanel(snapshot)}
       </div>
+    `;
+  }
+
+  _satelliteOverviewPanel(states, services, snapshot) {
+    const checks = Array.isArray(snapshot.checks) ? snapshot.checks : [];
+    const bad = checks.filter((check) => check.status === "error").length;
+    const warnings = checks.filter((check) => check.status === "warning").length;
+    const graph = snapshot.pipewire_graph || {};
+    const first = snapshot.first_failing_check || {};
+    const pipelineTone = this._satelliteEntityTone("voice_pipeline", states.voice_pipeline);
+    const pausedTone = this._satelliteEntityTone("voice_paused", states.voice_paused);
+    const diagnosticTone = bad ? "bad" : warnings ? "warning" : checks.length ? "ok" : "muted";
+    return `
+      <article class="surface satelliteHero">
+        <div class="sectionHead">
+          <div>
+            <h2>${escapeHtml(this._t("satellite.title"))}</h2>
+            <div class="meta">${escapeHtml(this._t("satellite.description"))}</div>
+          </div>
+          <button class="iconButton" data-action="refresh" title="${escapeHtml(this._t("common.refresh"))}">
+            <ha-icon icon="mdi:refresh"></ha-icon>
+          </button>
+        </div>
+        <div class="satelliteSummaryGrid">
+          ${this._satelliteSummaryTile("mdi:access-point", this._t("satellite.pipeline_ready"), this._satelliteValue(states.voice_pipeline), pipelineTone, states.voice_pipeline?.entity_id)}
+          ${this._satelliteSummaryTile("mdi:microphone-off", this._t("satellite.voice_paused"), this._satelliteValue(states.voice_paused), pausedTone, states.voice_paused?.attributes?.remaining_seconds ? `${states.voice_paused.attributes.remaining_seconds}s` : states.voice_paused?.entity_id)}
+          ${this._satelliteSummaryTile("mdi:waveform", "AEC", graph.aec_enabled ? this._t("common.enabled") : this._t("common.disabled"), graph.aec_enabled ? "ok" : "warning", graph.aec_reference_active ? `${this._t("satellite.aec_reference")}: active` : `${this._t("satellite.aec_reference")}: inactive`)}
+          ${this._satelliteSummaryTile("mdi:alert-decagram-outline", this._t("satellite.diagnostic_checks"), checks.length ? `${bad}/${warnings}/${checks.length}` : "-", diagnosticTone, first.id || this._t(checks.length ? "satellite.all_checks_ok" : "satellite.no_snapshot"))}
+        </div>
+        <div class="summaryChips satelliteHeroChips">
+          ${this._serviceChip("pause", services.pause)}
+          ${this._serviceChip("resume", services.resume)}
+          ${this._serviceChip("apply_config", services.apply_config)}
+          ${snapshot.generated_at ? `<span class="chip muted">${escapeHtml(this._t("satellite.generated"))}: ${escapeHtml(this._formatTime(snapshot.generated_at))}</span>` : ""}
+        </div>
+      </article>
+    `;
+  }
+
+  _satelliteSummaryTile(icon, label, value, tone, detail = "") {
+    return `
+      <div class="summaryTile ${escapeHtml(tone)}">
+        <ha-icon icon="${escapeHtml(icon)}"></ha-icon>
+        <div>
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(value || "-")}</strong>
+          ${detail ? `<small>${escapeHtml(detail)}</small>` : ""}
+        </div>
+      </div>
+    `;
+  }
+
+  _satelliteServiceChips(services) {
+    return `
+      <div class="debugSection">
+        <h3>${escapeHtml(this._t("satellite.services"))}</h3>
+        <div class="summaryChips serviceChips">
+          ${Object.entries(services || {}).map(([key, value]) => this._serviceChip(key, Boolean(value))).join("")}
+        </div>
+      </div>
+    `;
+  }
+
+  _serviceChip(key, available) {
+    return `<span class="chip ${available ? "ok" : "muted"}">${escapeHtml(key)}: ${escapeHtml(available ? "ready" : "missing")}</span>`;
+  }
+
+  _satelliteStatePanel(states) {
+    const visibleKeys = [
+      "voice_pipeline",
+      "voice_paused",
+      "pause_requested",
+      "display_awake",
+      "voice_config",
+      "ambient_light",
+      "screen_brightness",
+    ];
+    const rows = visibleKeys
+      .map((key) => [key, states[key]])
+      .filter(([, state]) => state?.available);
+    const missing = Object.entries(states || {})
+      .filter(([, state]) => !state?.available)
+      .map(([key, state]) => `${this._t(`satellite.${key}`)} · ${state?.entity_id || key}`);
+    const availableCount = Object.values(states || {}).filter((state) => state?.available).length;
+    return `
+      <article class="surface satellitePanel">
+        <div class="sectionHead">
+          <div>
+            <h2>${escapeHtml(this._t("satellite.state"))}</h2>
+            <div class="meta">${escapeHtml(this._t("satellite.available_entities", { count: availableCount }))} · ${escapeHtml(this._t("satellite.missing_entities", { count: missing.length }))}</div>
+          </div>
+        </div>
+        <div class="stateList compactStateList">
+          ${rows.map(([key, state]) => this._satelliteStateRow(key, state)).join("")}
+        </div>
+        ${missing.length ? `
+          <details class="jsonDetails">
+            <summary>${escapeHtml(this._t("satellite.missing_details"))}</summary>
+            <div class="missingList">
+              ${missing.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}
+            </div>
+          </details>
+        ` : ""}
+      </article>
+    `;
+  }
+
+  _satelliteAsrPanel(state, snapshot) {
+    const attrs = state?.attributes || {};
+    const entityMetrics = attrs.metrics || {};
+    const snapshotMetrics = snapshot.asr?.metrics || {};
+    const metrics = Object.keys(entityMetrics).length ? entityMetrics : snapshotMetrics;
+    if (!state?.available && !Object.keys(metrics).length) {
+      return "";
+    }
+    const phase = metrics.phase || attrs.phase || state?.state || "";
+    const firstLatency = metrics.first_result_latency_ms ?? attrs.first_result_latency_ms;
+    const finalLatency = metrics.final_result_latency_ms ?? attrs.final_result_latency_ms;
+    const totalLatency = metrics.total_latency_ms ?? attrs.total_latency_ms;
+    const frames = metrics.frames ?? attrs.frames;
+    const audioBytes = metrics.audio_bytes ?? attrs.audio_bytes;
+    return `
+      <article class="surface satellitePanel">
+        <div class="sectionHead">
+          <div>
+            <h2>${escapeHtml(this._t("satellite.asr_panel"))}</h2>
+            <div class="meta">${escapeHtml(state?.entity_id || "")}</div>
+          </div>
+          <span class="chip ${phase === "error" ? "bad" : phase === "streaming" || phase === "starting" ? "warning" : "ok"}">${escapeHtml(phase || state?.state || "")}</span>
+        </div>
+        <div class="detailGrid">
+          ${this._detailItem(this._t("runs.timing"), [
+            Number.isFinite(Number(firstLatency)) ? `${this._t("satellite.asr_first_latency")}: ${Number(firstLatency)} ms` : "",
+            Number.isFinite(Number(finalLatency)) ? `final: ${Number(finalLatency)} ms` : "",
+            Number.isFinite(Number(totalLatency)) ? `total: ${Number(totalLatency)} ms` : "",
+          ])}
+          ${this._detailItem(this._t("satellite.capture"), [
+            Number.isFinite(Number(frames)) ? `${this._t("satellite.asr_frames")}: ${Number(frames)}` : "",
+            Number.isFinite(Number(audioBytes)) ? `audio: ${Number(audioBytes)} B` : "",
+            metrics.vad_start_seen === undefined ? "" : `vad_start=${Boolean(metrics.vad_start_seen)}`,
+            metrics.vad_finished_seen === undefined ? "" : `vad_done=${Boolean(metrics.vad_finished_seen)}`,
+          ])}
+          ${this._detailItem(this._t("satellite.asr_metrics"), [
+            Number.isFinite(Number(metrics.interim_results ?? attrs.interim_results)) ? `${this._t("satellite.asr_interim")}: ${Number(metrics.interim_results ?? attrs.interim_results)}` : "",
+            Number.isFinite(Number(metrics.final_results ?? attrs.final_results)) ? `${this._t("satellite.asr_final")}: ${Number(metrics.final_results ?? attrs.final_results)}` : "",
+            Number.isFinite(Number(metrics.response_events ?? attrs.response_events)) ? `events: ${Number(metrics.response_events ?? attrs.response_events)}` : "",
+          ])}
+        </div>
+      </article>
+    `;
+  }
+
+  _satelliteTtsPanel(snapshot) {
+    const trace = snapshot.tts?.last_synthesis_trace || snapshot.tts || {};
+    if (!Object.keys(trace).length) {
+      return "";
+    }
+    const status = String(trace.status || "");
+    const tone = status === "error" || status === "failed" ? "bad" : "ok";
+    return `
+      <article class="surface satellitePanel">
+        <div class="sectionHead">
+          <div>
+            <h2>${escapeHtml(this._t("satellite.tts_panel"))}</h2>
+            <div class="meta">${escapeHtml([trace.provider, trace.voice, trace.language].filter(Boolean).join(" · "))}</div>
+          </div>
+          <span class="chip ${tone}">${escapeHtml(status || "ok")}</span>
+        </div>
+        <div class="detailGrid">
+          ${this._detailItem(this._t("runs.timing"), [
+            Number.isFinite(Number(trace.elapsed_ms)) ? `${Number(trace.elapsed_ms)} ms` : "",
+            trace.phase || "",
+          ])}
+          ${this._detailItem(this._t("runs.final_speech"), [
+            Number.isFinite(Number(trace.message_chars)) ? `${Number(trace.message_chars)} chars` : "",
+            Number.isFinite(Number(trace.mp3_bytes)) ? `${Number(trace.mp3_bytes)} B mp3` : "",
+            Number.isFinite(Number(trace.chunk_count)) ? `${Number(trace.chunk_count)} chunks` : "",
+          ])}
+          ${this._detailItem(this._t("runs.errors"), [
+            trace.failure_type || "",
+            trace.error || "",
+          ])}
+        </div>
+      </article>
+    `;
+  }
+
+  _satelliteAcousticPanel(snapshot) {
+    const report = snapshot.acoustic_measurement || {};
+    if (!Object.keys(report).length) {
+      return "";
+    }
+    const echo = report.echo_suppression_db;
+    const falseVad = report.false_vad_during_tts;
+    const bargeIn = report.barge_in_detected ?? report.barge_in_ok;
+    return `
+      <article class="surface satellitePanel">
+        <div class="sectionHead">
+          <div>
+            <h2>${escapeHtml(this._t("satellite.acoustic_panel"))}</h2>
+            <div class="meta">${escapeHtml(report.generated_at ? this._formatTime(report.generated_at) : report.source || "")}</div>
+          </div>
+        </div>
+        <div class="detailGrid">
+          ${this._detailItem(this._t("satellite.echo_suppression"), [
+            echo === undefined || echo === null ? "" : `${echo} dB`,
+            report.residual_echo_likelihood ? `residual=${report.residual_echo_likelihood}` : "",
+          ])}
+          ${this._detailItem(this._t("satellite.false_vad"), [
+            falseVad === undefined || falseVad === null ? "" : String(Boolean(falseVad)),
+            report.false_vad_events === undefined ? "" : `events=${Number(report.false_vad_events || 0)}`,
+          ])}
+          ${this._detailItem(this._t("satellite.barge_in"), [
+            bargeIn === undefined || bargeIn === null ? "" : String(Boolean(bargeIn)),
+            report.barge_in_latency_ms === undefined ? "" : `${Number(report.barge_in_latency_ms || 0)} ms`,
+          ])}
+        </div>
+      </article>
     `;
   }
 
   _satelliteDiagnosticPanel(snapshot) {
     if (!snapshot || !Object.keys(snapshot).length) {
-      return "";
+      return `
+        <article class="surface satellitePanel satelliteDiagnosticPanel">
+          <div class="sectionHead">
+            <div>
+              <h2>${escapeHtml(this._t("satellite.diagnostic_snapshot"))}</h2>
+              <div class="meta">${escapeHtml(this._t("satellite.no_snapshot"))}</div>
+            </div>
+          </div>
+        </article>
+      `;
     }
     const graph = snapshot.pipewire_graph || {};
     const checks = Array.isArray(snapshot.checks) ? snapshot.checks : [];
     const first = snapshot.first_failing_check || {};
     const bad = checks.filter((check) => check.status === "error").length;
     const warnings = checks.filter((check) => check.status === "warning").length;
+    const ok = checks.filter((check) => check.status === "ok").length;
+    const visibleChecks = checks.filter((check) => check.status !== "ok").slice(0, 8);
+    const fallbackChecks = !visibleChecks.length ? checks.slice(0, 5) : visibleChecks;
+    const layers = this._diagnosticLayerCounts(checks);
     return `
-      <div class="debugSection">
-        <h3>${escapeHtml(this._t("satellite.diagnostic_snapshot"))}</h3>
+      <article class="surface satellitePanel satelliteDiagnosticPanel">
+        <div class="sectionHead">
+          <div>
+            <h2>${escapeHtml(this._t("satellite.diagnostic_snapshot"))}</h2>
+            <div class="meta">${escapeHtml(snapshot.generated_at ? `${this._t("satellite.generated")}: ${this._formatTime(snapshot.generated_at)}` : "")}</div>
+          </div>
+          <span class="chip ${bad ? "bad" : warnings ? "warning" : "ok"}">${escapeHtml(bad ? this._t("satellite.failed_checks", { count: bad }) : warnings ? this._t("satellite.warning_checks", { count: warnings }) : this._t("satellite.ok_checks", { count: ok }))}</span>
+        </div>
         <div class="chipRow">
           <span class="chip muted">schema ${escapeHtml(snapshot.schema_version || "")}</span>
           <span class="chip ${graph.aec_enabled ? "ok" : "warning"}">AEC: ${escapeHtml(graph.aec_enabled ? this._t("common.enabled") : this._t("common.disabled"))}</span>
@@ -1433,20 +1744,65 @@ class VoiceHarnessPanel extends HTMLElement {
           <span class="chip ${bad ? "error" : warnings ? "warning" : "ok"}">${escapeHtml(this._t("satellite.diagnostic_checks"))}: ${checks.length}</span>
           ${first.id ? `<span class="chip ${first.status === "error" ? "error" : "warning"}">${escapeHtml(this._t("satellite.first_failing"))}: ${escapeHtml(first.id)}</span>` : ""}
         </div>
-        <div class="stateList">
-          ${checks.map((check) => `
-            <div class="stateRow">
+        ${layers.length ? `
+          <div class="layerStrip" aria-label="${escapeHtml(this._t("satellite.dependency_layers"))}">
+            ${layers.map((layer) => `<span class="chip ${layer.tone}">${escapeHtml(layer.layer)} ${layer.bad}/${layer.warnings}/${layer.total}</span>`).join("")}
+          </div>
+        ` : ""}
+        ${first.id ? `
+          <div class="firstFailure">
+            <div>
+              <strong>${escapeHtml(first.id || "")}</strong>
+              <span>${escapeHtml([first.layer, ...(first.depends_on || []).map((item) => `dep=${item}`)].filter(Boolean).join(" · "))}</span>
+            </div>
+            ${first.repair_hint ? `<p><strong>${escapeHtml(this._t("satellite.repair_hint"))}</strong> ${escapeHtml(first.repair_hint)}</p>` : ""}
+            ${(first.blocking_dependents || []).length ? `<p><strong>${escapeHtml(this._t("satellite.blocking_dependents"))}</strong> ${escapeHtml(first.blocking_dependents.join(", "))}</p>` : ""}
+          </div>
+        ` : ""}
+        <div class="stateList diagnosticCheckList">
+          ${fallbackChecks.map((check) => `
+            <div class="stateRow diagnosticCheck">
               <div>
                 <strong>${escapeHtml(check.id || "")}</strong>
-                <span>${escapeHtml([check.layer ? `layer=${check.layer}` : "", ...(check.evidence || []).map((item) => typeof item === "string" ? item : JSON.stringify(item))].filter(Boolean).join(" · "))}</span>
+                <span>${escapeHtml(this._diagnosticCheckDetail(check))}</span>
               </div>
               <span class="chip ${check.status === "ok" ? "ok" : check.status === "warning" ? "warning" : "error"}">${escapeHtml(check.status || "")}</span>
             </div>
-          `).join("")}
+          `).join("") || `<div class="empty mini">${escapeHtml(this._t("satellite.all_checks_ok"))}</div>`}
         </div>
-        ${this._jsonDetails(this._t("satellite.diagnostic_snapshot"), snapshot)}
-      </div>
+        ${this._jsonDetails(this._t("satellite.raw_snapshot"), snapshot)}
+      </article>
     `;
+  }
+
+  _diagnosticLayerCounts(checks) {
+    const layers = new Map();
+    for (const check of checks) {
+      const layer = String(check.layer || "unknown");
+      const current = layers.get(layer) || { layer, total: 0, bad: 0, warnings: 0 };
+      current.total += 1;
+      if (check.status === "error") {
+        current.bad += 1;
+      } else if (check.status === "warning") {
+        current.warnings += 1;
+      }
+      layers.set(layer, current);
+    }
+    return [...layers.values()].map((layer) => ({
+      ...layer,
+      tone: layer.bad ? "bad" : layer.warnings ? "warning" : "ok",
+    }));
+  }
+
+  _diagnosticCheckDetail(check) {
+    const evidence = Array.isArray(check.evidence) ? check.evidence : [];
+    const depends = Array.isArray(check.depends_on) ? check.depends_on : [];
+    return [
+      check.layer ? `layer=${check.layer}` : "",
+      depends.length ? `depends=${depends.join(",")}` : "",
+      ...evidence.slice(0, 2).map((item) => typeof item === "string" ? item : JSON.stringify(item)),
+      check.repair_hint ? `${this._t("satellite.repair_hint")}: ${check.repair_hint}` : "",
+    ].filter(Boolean).join(" · ");
   }
 
   _satelliteConfigInput(key, state, min, max, step) {
@@ -1475,17 +1831,20 @@ class VoiceHarnessPanel extends HTMLElement {
       : this._t("satellite.missing");
     const detail = this._satelliteStateDetail(key, state);
     return `
-      <div class="stateRow">
+      <div class="stateRow ${this._satelliteEntityTone(key, state)}">
         <div>
           <strong>${escapeHtml(this._t(`satellite.${key}`))}</strong>
           <span>${escapeHtml(detail)}</span>
         </div>
-        <span class="chip ${available ? "ok" : "error"}">${escapeHtml(value)}</span>
+        <span class="chip ${this._satelliteEntityTone(key, state)}">${escapeHtml(value)}</span>
       </div>
     `;
   }
 
   _satelliteStateDetail(key, state) {
+    if (state?.attributes?.summary || state?.attributes?.detail) {
+      return state.attributes.summary || state.attributes.detail;
+    }
     if (key !== "asr_metrics" || !state?.available) {
       return state?.entity_id || "";
     }
@@ -1504,6 +1863,27 @@ class VoiceHarnessPanel extends HTMLElement {
       Number.isFinite(Number(firstLatency)) ? `${this._t("satellite.asr_first_latency")} ${Number(firstLatency)} ms` : "",
     ].filter(Boolean);
     return parts.join(" · ") || state.entity_id || "";
+  }
+
+  _satelliteValue(state) {
+    if (!state?.available) {
+      return this._t("satellite.missing");
+    }
+    return `${state.state}${state.unit ? ` ${state.unit}` : ""}`;
+  }
+
+  _satelliteEntityTone(key, state) {
+    if (!state?.available) {
+      return "bad";
+    }
+    const value = String(state.state || "").toLowerCase();
+    if (key === "voice_paused" || key === "pause_requested") {
+      return ["on", "true", "paused"].includes(value) ? "warning" : "ok";
+    }
+    if (key === "voice_pipeline" || key === "display_awake") {
+      return ["on", "true", "ready", "ok"].includes(value) ? "ok" : "warning";
+    }
+    return "ok";
   }
 
   _renderTracePanel(entry) {
@@ -3005,11 +3385,107 @@ const styles = `
     gap: 14px;
   }
 
+  .satelliteLayout {
+    display: grid;
+    grid-template-columns: minmax(320px, 0.9fr) minmax(360px, 1.1fr);
+    gap: 14px;
+    align-items: start;
+  }
+
+  .satelliteHero,
+  .satelliteDiagnosticPanel {
+    grid-column: 1 / -1;
+  }
+
+  .satelliteSummaryGrid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .summaryTile {
+    min-height: 92px;
+    border: 1px solid var(--divider-color);
+    border-radius: 8px;
+    padding: 12px;
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr);
+    gap: 10px;
+    align-items: start;
+    background: var(--primary-background-color);
+  }
+
+  .summaryTile ha-icon {
+    width: 26px;
+    height: 26px;
+    margin-top: 2px;
+    color: var(--secondary-text-color);
+  }
+
+  .summaryTile div {
+    min-width: 0;
+    display: grid;
+    gap: 3px;
+  }
+
+  .summaryTile span,
+  .summaryTile small {
+    color: var(--secondary-text-color);
+    font-size: 12px;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+
+  .summaryTile strong {
+    min-width: 0;
+    font-size: 18px;
+    line-height: 1.2;
+    overflow-wrap: anywhere;
+  }
+
+  .summaryTile.ok {
+    border-color: color-mix(in srgb, var(--success-color) 34%, var(--divider-color));
+  }
+
+  .summaryTile.warning {
+    border-color: color-mix(in srgb, var(--warning-color) 44%, var(--divider-color));
+  }
+
+  .summaryTile.bad,
+  .summaryTile.error {
+    border-color: color-mix(in srgb, var(--error-color) 38%, var(--divider-color));
+  }
+
+  .satelliteHeroChips,
+  .serviceChips,
+  .chipRow,
+  .layerStrip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
   .satelliteControls {
     align-items: end;
     display: grid;
     gap: 10px;
-    grid-template-columns: minmax(140px, 1fr) repeat(3, max-content);
+    grid-template-columns: minmax(120px, 0.8fr) minmax(118px, 0.7fr) repeat(3, max-content);
+  }
+
+  .satelliteControls.compact {
+    grid-template-columns: repeat(2, max-content);
+    justify-content: end;
+  }
+
+  .presetRow {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(36px, 1fr));
+    gap: 6px;
+  }
+
+  .presetButton {
+    min-height: 40px;
+    padding: 0 8px;
   }
 
   .stateList {
@@ -3028,6 +3504,19 @@ const styles = `
     padding: 8px 10px;
   }
 
+  .stateRow.ok {
+    border-color: color-mix(in srgb, var(--success-color) 28%, var(--divider-color));
+  }
+
+  .stateRow.warning {
+    border-color: color-mix(in srgb, var(--warning-color) 42%, var(--divider-color));
+  }
+
+  .stateRow.bad,
+  .stateRow.error {
+    border-color: color-mix(in srgb, var(--error-color) 38%, var(--divider-color));
+  }
+
   .stateRow div {
     display: grid;
     gap: 3px;
@@ -3043,6 +3532,57 @@ const styles = `
     font-size: 12px;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .compactStateList .stateRow {
+    min-height: 50px;
+  }
+
+  .missingList {
+    border-top: 1px solid var(--divider-color);
+    display: grid;
+    gap: 6px;
+    padding: 10px;
+  }
+
+  .missingList span {
+    color: var(--secondary-text-color);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+  }
+
+  .firstFailure {
+    border: 1px solid color-mix(in srgb, var(--warning-color) 44%, var(--divider-color));
+    border-radius: 8px;
+    display: grid;
+    gap: 8px;
+    padding: 10px;
+    background: color-mix(in srgb, var(--warning-color) 8%, var(--card-background-color));
+  }
+
+  .firstFailure div {
+    display: grid;
+    gap: 3px;
+  }
+
+  .firstFailure strong {
+    font-size: 13px;
+  }
+
+  .firstFailure span,
+  .firstFailure p {
+    color: var(--secondary-text-color);
+    font-size: 12px;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+
+  .diagnosticCheckList {
+    margin-top: 2px;
+  }
+
+  .diagnosticCheck {
+    min-height: 52px;
   }
 
   fieldset {
@@ -3739,6 +4279,17 @@ const styles = `
 
     .candidateGrid {
       grid-template-columns: 1fr;
+    }
+
+    .satelliteLayout,
+    .satelliteSummaryGrid {
+      grid-template-columns: 1fr;
+    }
+
+    .satelliteControls,
+    .satelliteControls.compact {
+      grid-template-columns: 1fr;
+      justify-content: stretch;
     }
 
     .attempt {
