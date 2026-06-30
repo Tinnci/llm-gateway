@@ -153,12 +153,11 @@ async def test_trace_store_attaches_satellite_diagnostic_snapshot(hass):
     assert diagnostic["status"] == "error"
     assert diagnostic["check_counts"] == {"ok": 0, "warning": 1, "error": 1}
     assert diagnostic["first_failing_check"]["id"] == "pipewire.nodes.visible"
-    assert "voice.entities.available" in diagnostic["first_failing_check"][
-        "blocking_dependents"
-    ]
-    assert diagnostic["checks"][0]["evidence"] == [
-        {"kukui_aec_source_visible": False}
-    ]
+    assert (
+        "voice.entities.available"
+        in diagnostic["first_failing_check"]["blocking_dependents"]
+    )
+    assert diagnostic["checks"][0]["evidence"] == [{"kukui_aec_source_visible": False}]
     assert diagnostic["pipewire_graph"]["aec_enabled"] is True
     assert diagnostic["tts"]["last_synthesis_trace"]["message_chars"] == 8
     assert diagnostic["acoustic_measurement"]["echo_suppression_db"] == 14.2

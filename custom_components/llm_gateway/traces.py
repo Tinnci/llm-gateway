@@ -845,9 +845,7 @@ def _diagnostic_check_summary(check: object) -> dict[str, Any]:
         "id": str(check.get("id") or ""),
         "status": str(check.get("status") or ""),
         "layer": str(check.get("layer") or ""),
-        "depends_on": [
-            str(item) for item in dependencies[:12] if item is not None
-        ]
+        "depends_on": [str(item) for item in dependencies[:12] if item is not None]
         if isinstance(dependencies, list)
         else [],
         "evidence": _bound_value(

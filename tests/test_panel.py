@@ -143,8 +143,7 @@ async def test_harness_status_api(hass, hass_client):
     )
     assert data["satellite"]["states"]["asr_metrics"]["state"] == "streaming"
     assert (
-        data["satellite"]["states"]["asr_metrics"]["attributes"]["interim_results"]
-        == 1
+        data["satellite"]["states"]["asr_metrics"]["attributes"]["interim_results"] == 1
     )
     assert (
         data["satellite"]["states"]["asr_metrics"]["attributes"]["metrics"]["phase"]
