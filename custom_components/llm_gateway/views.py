@@ -766,6 +766,7 @@ def _entity_state(hass: HomeAssistant, entity_id: str) -> dict[str, Any]:
                 "final_results",
                 "vad_start_seen",
                 "vad_finished_seen",
+                "endpoint",
                 "transcript_chars",
             }
         },

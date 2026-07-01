@@ -1717,6 +1717,7 @@ class VoiceHarnessPanel extends HTMLElement {
     const totalLatency = metrics.total_latency_ms ?? attrs.total_latency_ms;
     const frames = metrics.frames ?? attrs.frames;
     const audioBytes = metrics.audio_bytes ?? attrs.audio_bytes;
+    const endpoint = metrics.endpoint || attrs.endpoint || {};
     return `
       <article class="surface satellitePanel">
         <div class="sectionHead">
@@ -1737,6 +1738,8 @@ class VoiceHarnessPanel extends HTMLElement {
             Number.isFinite(Number(audioBytes)) ? `audio: ${Number(audioBytes)} B` : "",
             metrics.vad_start_seen === undefined ? "" : `vad_start=${Boolean(metrics.vad_start_seen)}`,
             metrics.vad_finished_seen === undefined ? "" : `vad_done=${Boolean(metrics.vad_finished_seen)}`,
+            endpoint.state ? `endpoint=${endpoint.state}` : "",
+            endpoint.interrupt_ready === undefined ? "" : `interrupt=${Boolean(endpoint.interrupt_ready)}`,
           ])}
           ${this._detailItem(this._t("satellite.asr_metrics"), [
             Number.isFinite(Number(metrics.interim_results ?? attrs.interim_results)) ? `${this._t("satellite.asr_interim")}: ${Number(metrics.interim_results ?? attrs.interim_results)}` : "",
