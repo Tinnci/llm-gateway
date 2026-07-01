@@ -157,6 +157,14 @@ async def test_harness_status_api(hass, hass_client):
     assert data["panel"]["title_i18n"]["zh-Hans"] == "语音测试台"
     assert data["panel"]["title_i18n"]["en"] == PANEL_TITLE
     assert data["earcons"]["pack"] == "ha_voice_minimal_v0"
+    assert data["earcons"]["base_url"].startswith("/llm_gateway/static/")
+    assert not data["earcons"]["base_url"].startswith("/api/")
+    for file in data["earcons"]["files"].values():
+        assert file["url"].startswith("/llm_gateway/static/")
+        assert not file["url"].startswith("/api/")
+    assert data["earcons"]["files"]["confirmation"]["url"].startswith(
+        "/llm_gateway/static/"
+    )
     assert data["earcons"]["files"]["confirmation"]["url"].endswith("/confirmation.wav")
     assert data["earcons"]["files"]["processing_loop"]["url"].endswith(
         "/processing_loop.wav"

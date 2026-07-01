@@ -51,8 +51,9 @@ import {
  * @typedef {{ routing_modes: RouteKind[], max_tokens: { min: number, max: number }, timeouts: { min: number, max: number }, trace_max_runs: { min: number, max: number }, trace_retention_hours: { min: number, max: number }, first_response_playback_adapters?: FirstResponsePlaybackAdapter[] }} EditableSchema
  * @typedef {{ id: string, risk?: string, title?: string, title_i18n?: Record<string, string>, spoken?: string, spoken_i18n?: Record<string, string>, rules?: string[] }} PromptPolicy
  * @typedef {{ id: string, name?: string, name_i18n?: Record<string, string>, user?: string, user_i18n?: Record<string, string>, response?: string, response_i18n?: Record<string, string>, expected?: Record<string, unknown>, expected_i18n?: Record<string, Record<string, unknown>> }} SampleScenario
- * @typedef {{ path?: string, url?: string, duration_ms?: number, lufs?: number, peak_dbfs?: number, purpose?: string, purpose_i18n?: Record<string, string>, semantic_state?: string, priority?: number, can_play_while_listening?: boolean, quiet_hours_behavior?: string, trace_event_name?: string }} EarconFile
- * @typedef {{ pack?: string, sample_rate?: number, target_lufs?: number, true_peak_dbfs?: number, files?: Record<string, EarconFile> }} EarconPack
+ * @typedef {`/llm_gateway/static/${string}`} StaticAssetUrl
+ * @typedef {{ path?: string, url?: StaticAssetUrl, duration_ms?: number, lufs?: number, peak_dbfs?: number, purpose?: string, purpose_i18n?: Record<string, string>, semantic_state?: string, priority?: number, can_play_while_listening?: boolean, quiet_hours_behavior?: string, trace_event_name?: string }} EarconFile
+ * @typedef {{ pack?: string, base_url?: StaticAssetUrl, sample_rate?: number, target_lufs?: number, true_peak_dbfs?: number, files?: Record<string, EarconFile> }} EarconPack
  * @typedef {{ entity_id: string, state: string, available: boolean, name?: string, unit?: string, attributes?: Record<string, unknown> }} SatelliteEntityState
  * @typedef {{ states?: Record<string, SatelliteEntityState>, services?: Record<string, boolean>, diagnostic_snapshot?: Record<string, any> }} SatelliteStatus
  * @typedef {{ entries: HarnessEntry[], editable: EditableSchema, satellite?: SatelliteStatus, earcons?: EarconPack, prompt_policies?: PromptPolicy[], sample_scenarios?: SampleScenario[] }} HarnessStatus

@@ -72,7 +72,7 @@ if TYPE_CHECKING:
     from .router import ModelRoute
 
 API_BASE = f"/api/{DOMAIN}"
-STATIC_BASE = f"{API_BASE}/static"
+STATIC_BASE = f"/{DOMAIN}/static"
 EARCON_PACK = "ha_voice_minimal_v0"
 MAX_MODEL_ID_LENGTH = 256
 EARCON_MANIFEST = (
