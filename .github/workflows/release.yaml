@@ -5,6 +5,15 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      bump:
+        description: Version segment to bump automatically
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
 
 permissions:
   contents: write
@@ -15,8 +24,114 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prepare automatic release version
+        id: prepare
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          BUMP: ${{ inputs.bump }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
+
+          bump = os.environ["BUMP"]
+          pyproject_path = Path("pyproject.toml")
+          manifest_path = Path("custom_components/llm_gateway/manifest.json")
+          lock_path = Path("uv.lock")
+
+          pyproject = pyproject_path.read_text(encoding="utf-8")
+          manifest = manifest_path.read_text(encoding="utf-8")
+          lock = lock_path.read_text(encoding="utf-8")
+
+          py_match = re.search(r'(?m)^version = "([0-9]+\.[0-9]+\.[0-9]+)"$', pyproject)
+          manifest_match = re.search(r'"version": "([0-9]+\.[0-9]+\.[0-9]+)"', manifest)
+          lock_match = re.search(
+              r'(?m)(\[\[package\]\]\nname = "llm-gateway"\nversion = ")([0-9]+\.[0-9]+\.[0-9]+)(")',
+              lock,
+          )
+          if not py_match or not manifest_match or not lock_match:
+              raise SystemExit("Could not find synchronized llm-gateway version fields")
+
+          versions = {py_match.group(1), manifest_match.group(1), lock_match.group(2)}
+          if len(versions) != 1:
+              raise SystemExit(f"Version files are out of sync: {sorted(versions)}")
+
+          major, minor, patch = (int(part) for part in versions.pop().split("."))
+          if bump == "major":
+              major, minor, patch = major + 1, 0, 0
+          elif bump == "minor":
+              minor, patch = minor + 1, 0
+          elif bump == "patch":
+              patch += 1
+          else:
+              raise SystemExit(f"Unsupported bump type: {bump}")
+
+          next_version = f"{major}.{minor}.{patch}"
+          next_tag = f"v{next_version}"
+          existing_tags = subprocess.check_output(
+              ["git", "tag", "--list", next_tag],
+              text=True,
+          ).splitlines()
+          if existing_tags:
+              raise SystemExit(f"Tag {next_tag} already exists")
+
+          pyproject_path.write_text(
+              re.sub(
+                  r'(?m)^version = "[0-9]+\.[0-9]+\.[0-9]+"$',
+                  f'version = "{next_version}"',
+                  pyproject,
+                  count=1,
+              ),
+              encoding="utf-8",
+          )
+          manifest_path.write_text(
+              re.sub(
+                  r'"version": "[0-9]+\.[0-9]+\.[0-9]+"',
+                  f'"version": "{next_version}"',
+                  manifest,
+                  count=1,
+              ),
+              encoding="utf-8",
+          )
+          lock_path.write_text(
+              re.sub(
+                  r'(?m)(\[\[package\]\]\nname = "llm-gateway"\nversion = ")([0-9]+\.[0-9]+\.[0-9]+)(")',
+                  rf"\g<1>{next_version}\3",
+                  lock,
+                  count=1,
+              ),
+              encoding="utf-8",
+          )
+
+          output = Path(os.environ["GITHUB_OUTPUT"])
+          with output.open("a", encoding="utf-8") as handle:
+              handle.write(f"version={next_version}\n")
+              handle.write(f"tag={next_tag}\n")
+          PY
+
+      - name: Commit automatic release version
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml custom_components/llm_gateway/manifest.json uv.lock
+          git commit -m "Release ${{ steps.prepare.outputs.tag }}"
+          git tag -a "${{ steps.prepare.outputs.tag }}" -m "${{ steps.prepare.outputs.tag }}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+          git push origin "${{ steps.prepare.outputs.tag }}"
 
       - name: Validate tag and manifest version
+        if: github.event_name == 'push'
         shell: bash
         run: |
           set -euo pipefail
@@ -25,6 +140,17 @@ jobs:
           if [[ "$tag" != "$version" ]]; then
             echo "Tag v$tag does not match manifest version $version" >&2
             exit 1
+          fi
+
+      - name: Resolve release tag
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            echo "tag=${{ steps.prepare.outputs.tag }}" >> "${GITHUB_OUTPUT}"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "${GITHUB_OUTPUT}"
           fi
 
       - name: Build HACS component zip
@@ -39,6 +165,7 @@ jobs:
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.release.outputs.tag }}
           files: llm_gateway.zip
           generate_release_notes: true
           fail_on_unmatched_files: true

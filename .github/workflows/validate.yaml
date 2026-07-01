@@ -13,6 +13,54 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  version-source-guard:
+    runs-on: ubuntu-latest
+    if: github.ref_type != 'tag'
+    steps:
+      - name: 📥 Checkout the repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: 🚦 Reject manual version changes
+        env:
+          ACTOR: ${{ github.actor }}
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_MESSAGE: ${{ github.event.head_commit.message }}
+          BEFORE_SHA: ${{ github.event.before }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${EVENT_NAME}" == "pull_request" ]]; then
+            range="${BASE_SHA}...${HEAD_SHA}"
+          elif [[ "${BEFORE_SHA}" =~ ^0+$ ]]; then
+            range="${HEAD_SHA}^..${HEAD_SHA}"
+          else
+            range="${BEFORE_SHA}..${HEAD_SHA}"
+          fi
+
+          changed="$(git diff --name-only "${range}" -- \
+            pyproject.toml \
+            custom_components/llm_gateway/manifest.json \
+            uv.lock || true)"
+
+          if [[ -z "${changed}" ]]; then
+            exit 0
+          fi
+
+          if [[ "${ACTOR}" == "github-actions[bot]" && "${HEAD_MESSAGE}" == Release\ v* ]]; then
+            exit 0
+          fi
+
+          {
+            echo "Version files must not be edited manually."
+            echo "Use the Release workflow_dispatch input so GitHub Actions bumps, commits, tags, and publishes the version."
+            echo "Changed version files:"
+            echo "${changed}"
+          } >&2
+          exit 1
+
   lint-and-test:
     runs-on: ubuntu-latest
     timeout-minutes: 20
