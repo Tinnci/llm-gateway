@@ -75,7 +75,7 @@
           "fast_extra_body": "合并到 Fast chat/completions 请求的额外 OpenAI 兼容 JSON。",
           "mid_extra_body": "合并到 Mid chat/completions 请求的额外 OpenAI 兼容 JSON。",
           "deep_extra_body": "合并到 Deep chat/completions 请求的额外 OpenAI 兼容 JSON，例如 reasoning_budget 或 chat_template_kwargs。",
-          "provider_profiles": "可选的有序备用 provider。JSON 格式：{\"providers\":[{\"name\":\"fallback\",\"base_url\":\"https://example.invalid/v1\",\"api_key\":\"...\",\"models\":{\"fast\":\"provider/model\"}}]}。API 密钥保存在 Home Assistant options 中，不会显示到 trace。",
+          "provider_profiles": "可选的有序备用 provider，使用 JSON。填写 providers 数组，包含 name、base_url、api_key 和可选的分档模型覆盖。API 密钥保存在 Home Assistant options 中，不会显示到 trace。",
           "chat_timeout": "兼容旧配置；未设置 Fast 超时时使用。",
           "fast_chat_timeout": "Fast 非流式 chat/completions 请求最多等待秒数。",
           "mid_chat_timeout": "Mid 非流式 chat/completions 请求最多等待秒数。",

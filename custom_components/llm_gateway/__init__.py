@@ -6,10 +6,11 @@ from typing import TYPE_CHECKING
 
 from homeassistant.const import CONF_API_KEY, Platform
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import LLMGatewayAuthError, LLMGatewayClient, LLMGatewayError
-from .const import CONF_BASE_URL, DEFAULT_BASE_URL
+from .const import CONF_BASE_URL, DEFAULT_BASE_URL, DOMAIN
 from .feedback import VoiceFeedbackStore
 from .first_response_audio import FirstResponsePlayer
 from .memory import VoiceMemory
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
     from .config_entry import LLMGatewayConfigEntry
 
 PLATFORMS = [Platform.CONVERSATION]
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
 async def async_setup(hass: HomeAssistant, _config: ConfigType) -> bool:

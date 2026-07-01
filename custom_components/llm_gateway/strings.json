@@ -75,7 +75,7 @@
           "fast_extra_body": "Additional OpenAI-compatible JSON merged into fast chat/completions requests.",
           "mid_extra_body": "Additional OpenAI-compatible JSON merged into mid chat/completions requests.",
           "deep_extra_body": "Additional OpenAI-compatible JSON merged into deep chat/completions requests, such as reasoning_budget or chat_template_kwargs.",
-          "provider_profiles": "Optional ordered fallback providers. JSON format: {\"providers\":[{\"name\":\"fallback\",\"base_url\":\"https://example.invalid/v1\",\"api_key\":\"...\",\"models\":{\"fast\":\"provider/model\"}}]}. API keys are stored in Home Assistant options and never shown in traces.",
+          "provider_profiles": "Optional ordered fallback providers as JSON. Use a providers array with name, base_url, api_key, and optional tier model overrides. API keys are stored in Home Assistant options and never shown in traces.",
           "chat_timeout": "Backward-compatible timeout used when no fast tier timeout is set.",
           "fast_chat_timeout": "Maximum seconds to wait for fast non-streaming chat/completions requests.",
           "mid_chat_timeout": "Maximum seconds to wait for mid non-streaming chat/completions requests.",
