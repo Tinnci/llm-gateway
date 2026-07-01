@@ -151,7 +151,12 @@ async def test_trace_store_attaches_satellite_diagnostic_snapshot(hass):
     assert diagnostic["available"] is True
     assert diagnostic["schema_version"] == 1
     assert diagnostic["status"] == "error"
-    assert diagnostic["check_counts"] == {"ok": 0, "warning": 1, "error": 1}
+    assert diagnostic["check_counts"] == {
+        "ok": 0,
+        "warning": 1,
+        "error": 1,
+        "blocked": 0,
+    }
     assert diagnostic["first_failing_check"]["id"] == "pipewire.nodes.visible"
     assert (
         "voice.entities.available"
@@ -161,6 +166,60 @@ async def test_trace_store_attaches_satellite_diagnostic_snapshot(hass):
     assert diagnostic["pipewire_graph"]["aec_enabled"] is True
     assert diagnostic["tts"]["last_synthesis_trace"]["message_chars"] == 8
     assert diagnostic["acoustic_measurement"]["echo_suppression_db"] == 14.2
+
+
+async def test_trace_store_keeps_blocked_diagnostics_distinct(hass):
+    hass.states.async_set(
+        "sensor.kukui_diagnostic_snapshot",
+        "ok",
+        {
+            "snapshot": {
+                "schema_version": 1,
+                "checks": [
+                    {
+                        "id": "acoustic.measurement.available",
+                        "status": "warning",
+                        "layer": "acoustic",
+                    },
+                    {
+                        "id": "acoustic.barge_in.measured",
+                        "status": "blocked",
+                        "layer": "acoustic",
+                        "depends_on": ["acoustic.measurement.available"],
+                    },
+                ],
+            },
+        },
+    )
+    store = TraceStore(hass, "entry-diagnostic-blocked")
+    await store.async_load()
+
+    await store.async_record_turn(
+        {
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_MAX_RUNS: 2,
+            CONF_TRACE_RETENTION_HOURS: 24,
+        },
+        TraceTurn(
+            conversation_id="conv-diagnostic-blocked",
+            user_text="测试",
+            assistant_text="好了。",
+            route={"kind": "fast"},
+            latency_ms=10,
+            status="complete",
+            raw_payload={},
+        ),
+    )
+
+    diagnostic = store.snapshot()["records"][0]["diagnostic_snapshot"]
+    assert diagnostic["status"] == "warning"
+    assert diagnostic["check_counts"] == {
+        "ok": 0,
+        "warning": 1,
+        "error": 0,
+        "blocked": 1,
+    }
+    assert diagnostic["first_failing_check"]["id"] == "acoustic.measurement.available"
 
 
 async def test_trace_timeline_spans_keep_structured_inventory_attrs(hass):

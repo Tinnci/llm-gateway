@@ -799,7 +799,7 @@ def _diagnostic_snapshot_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
         for check in snapshot.get("checks") or []
         if isinstance(check, dict)
     ][:32]
-    counts = {"ok": 0, "warning": 0, "error": 0}
+    counts = {"ok": 0, "warning": 0, "error": 0, "blocked": 0}
     for check in checks:
         status = str(check.get("status") or "")
         if status in counts:
@@ -871,6 +871,8 @@ def _diagnostic_snapshot_status(checks: list[dict[str, Any]]) -> str:
         return "error"
     if "warning" in statuses:
         return "warning"
+    if "blocked" in statuses:
+        return "blocked"
     return "ok" if checks else "unknown"
 
 

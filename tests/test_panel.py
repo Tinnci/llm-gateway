@@ -88,12 +88,18 @@ async def test_harness_status_api(hass, hass_client):
             "final_results": 0,
             "frames": 3,
             "first_result_latency_ms": 120,
+            "stale": False,
+            "observed_stable_for_ms": 0,
+            "stale_after_ms": 30000,
             "metrics": {
                 "phase": "streaming",
                 "interim_results": 1,
                 "final_results": 0,
                 "frames": 3,
                 "first_result_latency_ms": 120,
+                "stale": False,
+                "observed_stable_for_ms": 0,
+                "stale_after_ms": 30000,
                 "endpoint": {
                     "state": "partial",
                     "speech_started": True,
@@ -181,6 +187,13 @@ async def test_harness_status_api(hass, hass_client):
     assert data["satellite"]["states"]["asr_metrics"]["attributes"]["endpoint"][
         "interrupt_ready"
     ]
+    assert data["satellite"]["states"]["asr_metrics"]["attributes"]["stale"] is False
+    assert (
+        data["satellite"]["states"]["asr_metrics"]["attributes"][
+            "observed_stable_for_ms"
+        ]
+        == 0
+    )
     assert data["satellite"]["diagnostic_snapshot"]["schema_version"] == 1
     assert data["satellite"]["diagnostic_snapshot"]["pipewire_graph"]["aec_enabled"]
     assert (

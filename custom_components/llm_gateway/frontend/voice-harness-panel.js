@@ -256,6 +256,7 @@ const I18N = {
     "satellite.dependency_layers": "Dependency layers",
     "satellite.failed_checks": "{count} failing",
     "satellite.warning_checks": "{count} warnings",
+    "satellite.blocked_checks": "{count} blocked",
     "satellite.ok_checks": "{count} ok",
     "satellite.all_checks_ok": "All checks currently pass",
     "satellite.repair_hint": "Repair hint",
@@ -296,7 +297,7 @@ const I18N = {
     "satellite.diagnostic_snapshot": "Diagnostic snapshot",
     "satellite.diagnostic_checks": "Diagnostic checks",
     "satellite.aec_reference": "AEC reference",
-    "satellite.first_failing": "First failing",
+    "satellite.first_failing": "First issue",
     "satellite.unavailable": "HA satellite entities are not available.",
     "satellite.voice_pipeline": "Voice pipeline",
     "satellite.voice_paused": "Voice paused",
@@ -615,6 +616,7 @@ const I18N = {
     "satellite.dependency_layers": "依赖层",
     "satellite.failed_checks": "{count} 个失败",
     "satellite.warning_checks": "{count} 个警告",
+    "satellite.blocked_checks": "{count} 个等待证据",
     "satellite.ok_checks": "{count} 个正常",
     "satellite.all_checks_ok": "当前所有检查通过",
     "satellite.repair_hint": "修复提示",
@@ -655,7 +657,7 @@ const I18N = {
     "satellite.diagnostic_snapshot": "诊断快照",
     "satellite.diagnostic_checks": "诊断检查",
     "satellite.aec_reference": "AEC 参考",
-    "satellite.first_failing": "最早失败",
+    "satellite.first_failing": "最早异常",
     "satellite.unavailable": "HA 卫星端实体不可用。",
     "satellite.voice_pipeline": "语音管线",
     "satellite.voice_paused": "语音暂停",
@@ -1602,11 +1604,12 @@ class VoiceHarnessPanel extends HTMLElement {
     const checks = Array.isArray(snapshot.checks) ? snapshot.checks : [];
     const bad = checks.filter((check) => check.status === "error").length;
     const warnings = checks.filter((check) => check.status === "warning").length;
+    const blocked = checks.filter((check) => check.status === "blocked").length;
     const graph = snapshot.pipewire_graph || {};
     const first = snapshot.first_failing_check || {};
     const pipelineTone = this._satelliteEntityTone("voice_pipeline", states.voice_pipeline);
     const pausedTone = this._satelliteEntityTone("voice_paused", states.voice_paused);
-    const diagnosticTone = bad ? "bad" : warnings ? "warning" : checks.length ? "ok" : "muted";
+    const diagnosticTone = bad ? "bad" : warnings ? "warning" : blocked ? "muted" : checks.length ? "ok" : "muted";
     return `
       <article class="surface satelliteHero">
         <div class="sectionHead">
@@ -1624,7 +1627,7 @@ class VoiceHarnessPanel extends HTMLElement {
           ${this._satelliteSummaryTile("mdi:access-point", this._t("satellite.pipeline_ready"), this._satelliteValue(states.voice_pipeline), pipelineTone, states.voice_pipeline?.entity_id)}
           ${this._satelliteSummaryTile("mdi:microphone-off", this._t("satellite.voice_paused"), this._satelliteValue(states.voice_paused), pausedTone, states.voice_paused?.attributes?.remaining_seconds ? `${states.voice_paused.attributes.remaining_seconds}s` : states.voice_paused?.entity_id)}
           ${this._satelliteSummaryTile("mdi:waveform", "AEC", graph.aec_enabled ? this._t("common.enabled") : this._t("common.disabled"), graph.aec_enabled ? "ok" : "warning", graph.aec_reference_active ? `${this._t("satellite.aec_reference")}: active` : `${this._t("satellite.aec_reference")}: inactive`)}
-          ${this._satelliteSummaryTile("mdi:alert-decagram-outline", this._t("satellite.diagnostic_checks"), checks.length ? `${bad}/${warnings}/${checks.length}` : "-", diagnosticTone, first.id || this._t(checks.length ? "satellite.all_checks_ok" : "satellite.no_snapshot"))}
+          ${this._satelliteSummaryTile("mdi:alert-decagram-outline", this._t("satellite.diagnostic_checks"), checks.length ? `${bad}/${warnings}/${blocked}/${checks.length}` : "-", diagnosticTone, first.id || this._t(checks.length ? "satellite.all_checks_ok" : "satellite.no_snapshot"))}
         </div>
         <div class="summaryChips satelliteHeroChips">
           ${this._serviceChip("pause", services.pause)}
@@ -1739,9 +1742,14 @@ class VoiceHarnessPanel extends HTMLElement {
             Number.isFinite(Number(audioBytes)) ? `audio: ${Number(audioBytes)} B` : "",
             metrics.vad_start_seen === undefined ? "" : `vad_start=${Boolean(metrics.vad_start_seen)}`,
             metrics.vad_finished_seen === undefined ? "" : `vad_done=${Boolean(metrics.vad_finished_seen)}`,
+            metrics.stale === undefined ? "" : `stale=${Boolean(metrics.stale)}`,
+            Number.isFinite(Number(metrics.observed_stable_for_ms)) ? `stable ${Number(metrics.observed_stable_for_ms)} ms` : "",
             endpoint.state ? `endpoint=${endpoint.state}` : "",
+            endpoint.reason ? `reason=${endpoint.reason}` : "",
+            endpoint.failurePhase ? `failure=${endpoint.failurePhase}` : "",
             endpoint.source ? `source=${endpoint.source}` : "",
             endpoint.interruptReady === null ? "" : `interrupt=${endpoint.interruptReady}`,
+            endpoint.terminal === null ? "" : `terminal=${endpoint.terminal}`,
             endpoint.speechStarted === null ? "" : `speech=${endpoint.speechStarted}`,
             endpoint.firstSpeechLatencyMs === null ? "" : `speech ${endpoint.firstSpeechLatencyMs} ms`,
             endpoint.endpointLatencyMs === null ? "" : `endpoint ${endpoint.endpointLatencyMs} ms`,
@@ -1843,9 +1851,13 @@ class VoiceHarnessPanel extends HTMLElement {
     const first = snapshot.first_failing_check || {};
     const bad = checks.filter((check) => check.status === "error").length;
     const warnings = checks.filter((check) => check.status === "warning").length;
+    const blocked = checks.filter((check) => check.status === "blocked").length;
     const ok = checks.filter((check) => check.status === "ok").length;
-    const visibleChecks = checks.filter((check) => check.status !== "ok").slice(0, 8);
-    const fallbackChecks = !visibleChecks.length ? checks.slice(0, 5) : visibleChecks;
+    const issueChecks = checks.filter((check) => check.status === "error" || check.status === "warning");
+    const blockedChecks = checks.filter((check) => check.status === "blocked");
+    const fallbackChecks = issueChecks.length
+      ? issueChecks.slice(0, 8)
+      : (blockedChecks.length ? blockedChecks.slice(0, 5) : checks.slice(0, 5));
     const layers = this._diagnosticLayerCounts(checks);
     return `
       <article class="surface satellitePanel satelliteDiagnosticPanel">
@@ -1854,18 +1866,19 @@ class VoiceHarnessPanel extends HTMLElement {
             <h2>${escapeHtml(this._t("satellite.diagnostic_snapshot"))}</h2>
             <div class="meta">${escapeHtml(snapshot.generated_at ? `${this._t("satellite.generated")}: ${this._formatTime(snapshot.generated_at)}` : "")}</div>
           </div>
-          <span class="chip ${bad ? "bad" : warnings ? "warning" : "ok"}">${escapeHtml(bad ? this._t("satellite.failed_checks", { count: bad }) : warnings ? this._t("satellite.warning_checks", { count: warnings }) : this._t("satellite.ok_checks", { count: ok }))}</span>
+          <span class="chip ${bad ? "bad" : warnings ? "warning" : blocked ? "muted" : "ok"}">${escapeHtml(bad ? this._t("satellite.failed_checks", { count: bad }) : warnings ? this._t("satellite.warning_checks", { count: warnings }) : blocked ? this._t("satellite.blocked_checks", { count: blocked }) : this._t("satellite.ok_checks", { count: ok }))}</span>
         </div>
         <div class="chipRow">
           <span class="chip muted">schema ${escapeHtml(snapshot.schema_version || "")}</span>
           <span class="chip ${graph.aec_enabled ? "ok" : "warning"}">AEC: ${escapeHtml(graph.aec_enabled ? this._t("common.enabled") : this._t("common.disabled"))}</span>
           <span class="chip ${graph.aec_reference_active ? "ok" : "warning"}">${escapeHtml(this._t("satellite.aec_reference"))}: ${escapeHtml(graph.aec_reference_active ? "active" : "inactive")}</span>
-          <span class="chip ${bad ? "error" : warnings ? "warning" : "ok"}">${escapeHtml(this._t("satellite.diagnostic_checks"))}: ${checks.length}</span>
+          <span class="chip ${bad ? "error" : warnings ? "warning" : blocked ? "muted" : "ok"}">${escapeHtml(this._t("satellite.diagnostic_checks"))}: ${checks.length}</span>
+          ${blocked ? `<span class="chip muted">${escapeHtml(this._t("satellite.blocked_checks", { count: blocked }))}</span>` : ""}
           ${first.id ? `<span class="chip ${first.status === "error" ? "error" : "warning"}">${escapeHtml(this._t("satellite.first_failing"))}: ${escapeHtml(first.id)}</span>` : ""}
         </div>
         ${layers.length ? `
           <div class="layerStrip" aria-label="${escapeHtml(this._t("satellite.dependency_layers"))}">
-            ${layers.map((layer) => `<span class="chip ${layer.tone}">${escapeHtml(layer.layer)} ${layer.bad}/${layer.warnings}/${layer.total}</span>`).join("")}
+            ${layers.map((layer) => `<span class="chip ${layer.tone}">${escapeHtml(layer.layer)} ${layer.bad}/${layer.warnings}/${layer.blocked || 0}/${layer.total}</span>`).join("")}
           </div>
         ` : ""}
         ${first.id ? `
@@ -1885,7 +1898,7 @@ class VoiceHarnessPanel extends HTMLElement {
                 <strong>${escapeHtml(check.id || "")}</strong>
                 <span>${escapeHtml(this._diagnosticCheckDetail(check))}</span>
               </div>
-              <span class="chip ${check.status === "ok" ? "ok" : check.status === "warning" ? "warning" : "error"}">${escapeHtml(check.status || "")}</span>
+              <span class="chip ${this._diagnosticStatusTone(check.status)}">${escapeHtml(check.status || "")}</span>
             </div>
           `).join("") || `<div class="empty mini">${escapeHtml(this._t("satellite.all_checks_ok"))}</div>`}
         </div>
@@ -1900,6 +1913,13 @@ class VoiceHarnessPanel extends HTMLElement {
 
   _diagnosticCheckDetail(check) {
     return diagnosticCheckDetail(check, this._t("satellite.repair_hint"));
+  }
+
+  _diagnosticStatusTone(status) {
+    if (status === "ok") return "ok";
+    if (status === "warning") return "warning";
+    if (status === "blocked") return "muted";
+    return "error";
   }
 
   _satelliteConfigInput(key, state, min, max, step) {

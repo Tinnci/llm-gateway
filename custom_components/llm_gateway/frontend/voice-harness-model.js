@@ -16,18 +16,26 @@ function diagnosticLayerCounts(checks) {
   const layers = new Map;
   for (const check of checks) {
     const layer = String(check.layer || "unknown");
-    const current = layers.get(layer) || { layer, total: 0, bad: 0, warnings: 0 };
+    const current = layers.get(layer) || {
+      layer,
+      total: 0,
+      bad: 0,
+      warnings: 0,
+      blocked: 0
+    };
     current.total += 1;
     if (check.status === "error") {
       current.bad += 1;
     } else if (check.status === "warning") {
       current.warnings += 1;
+    } else if (check.status === "blocked") {
+      current.blocked += 1;
     }
     layers.set(layer, current);
   }
   return [...layers.values()].map((layer) => ({
     ...layer,
-    tone: layer.bad ? "bad" : layer.warnings ? "warning" : "ok"
+    tone: layer.bad ? "bad" : layer.warnings ? "warning" : layer.blocked ? "muted" : "ok"
   }));
 }
 function diagnosticCheckDetail(check, repairLabel) {
@@ -73,6 +81,9 @@ function asrEndpointFromSources(...sources) {
       speechStarted: optionalBoolean(source.speech_started),
       endpointDetected: optionalBoolean(source.endpoint_detected),
       interruptReady: optionalBoolean(source.interrupt_ready),
+      terminal: optionalBoolean(source.terminal),
+      reason: optionalString(source.reason),
+      failurePhase: optionalString(source.failure_phase),
       firstSpeechLatencyMs: optionalNumber(source.first_speech_latency_ms),
       endpointLatencyMs: optionalNumber(source.endpoint_latency_ms),
       source: String(source.source || "native")
@@ -83,6 +94,9 @@ function asrEndpointFromSources(...sources) {
     speechStarted: null,
     endpointDetected: null,
     interruptReady: null,
+    terminal: null,
+    reason: "",
+    failurePhase: "",
     firstSpeechLatencyMs: null,
     endpointLatencyMs: null,
     source: ""
@@ -100,6 +114,9 @@ function optionalBoolean(value) {
 function optionalNumber(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+function optionalString(value) {
+  return typeof value === "string" ? value : "";
 }
 export {
   satelliteValue,
