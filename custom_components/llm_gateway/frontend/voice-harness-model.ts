@@ -23,6 +23,16 @@ type SatelliteEntityState = {
   unit?: string;
 };
 
+export type AsrEndpointSummary = {
+  state: string;
+  speechStarted: boolean | null;
+  endpointDetected: boolean | null;
+  interruptReady: boolean | null;
+  firstSpeechLatencyMs: number | null;
+  endpointLatencyMs: number | null;
+  source: string;
+};
+
 export function runSummary(records: RunRecord[], liveRuns: LiveRun[]): RunSummary {
   const latencies = records
     .map((record) => Number(record.latency_ms || 0))
@@ -112,4 +122,52 @@ export function satelliteValue(
     return missingLabel;
   }
   return `${state.state}${state.unit ? ` ${state.unit}` : ""}`;
+}
+
+export function asrEndpointFromSources(
+  ...sources: unknown[]
+): AsrEndpointSummary {
+  for (const source of sources) {
+    if (!isRecord(source)) {
+      continue;
+    }
+    const state = String(source.state || "");
+    if (!state) {
+      continue;
+    }
+    return {
+      state,
+      speechStarted: optionalBoolean(source.speech_started),
+      endpointDetected: optionalBoolean(source.endpoint_detected),
+      interruptReady: optionalBoolean(source.interrupt_ready),
+      firstSpeechLatencyMs: optionalNumber(source.first_speech_latency_ms),
+      endpointLatencyMs: optionalNumber(source.endpoint_latency_ms),
+      source: String(source.source || "native"),
+    };
+  }
+  return {
+    state: "",
+    speechStarted: null,
+    endpointDetected: null,
+    interruptReady: null,
+    firstSpeechLatencyMs: null,
+    endpointLatencyMs: null,
+    source: "",
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function optionalBoolean(value: unknown): boolean | null {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  return null;
+}
+
+function optionalNumber(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }

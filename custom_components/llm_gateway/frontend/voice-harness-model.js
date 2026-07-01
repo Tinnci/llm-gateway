@@ -59,10 +59,53 @@ function satelliteValue(state, missingLabel) {
   }
   return `${state.state}${state.unit ? ` ${state.unit}` : ""}`;
 }
+function asrEndpointFromSources(...sources) {
+  for (const source of sources) {
+    if (!isRecord(source)) {
+      continue;
+    }
+    const state = String(source.state || "");
+    if (!state) {
+      continue;
+    }
+    return {
+      state,
+      speechStarted: optionalBoolean(source.speech_started),
+      endpointDetected: optionalBoolean(source.endpoint_detected),
+      interruptReady: optionalBoolean(source.interrupt_ready),
+      firstSpeechLatencyMs: optionalNumber(source.first_speech_latency_ms),
+      endpointLatencyMs: optionalNumber(source.endpoint_latency_ms),
+      source: String(source.source || "native")
+    };
+  }
+  return {
+    state: "",
+    speechStarted: null,
+    endpointDetected: null,
+    interruptReady: null,
+    firstSpeechLatencyMs: null,
+    endpointLatencyMs: null,
+    source: ""
+  };
+}
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function optionalBoolean(value) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  return null;
+}
+function optionalNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
 export {
   satelliteValue,
   satelliteEntityTone,
   runSummary,
   diagnosticLayerCounts,
-  diagnosticCheckDetail
+  diagnosticCheckDetail,
+  asrEndpointFromSources
 };
