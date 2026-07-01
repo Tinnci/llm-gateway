@@ -406,11 +406,10 @@ Current views:
 - `配置`: safe editable options for routing, model ids, budgets, timeouts, and
   bounded trace retention.
 - `提示策略`: spoken prompt policies and risk levels.
-- `场景测试`: ad hoc scenario evaluation.
-- `搜索实验室`: search gate evaluation.
+- `场景测试`: ad hoc scenario evaluation, search gate visibility, draft
+  preflight checks, and sample scenario runner.
 - `记忆实验室`: active short-memory sessions.
 - `提示音`: rendered earcon pack playback and metadata.
-- `回归测试`: sample scenario runner.
 
 Current APIs:
 

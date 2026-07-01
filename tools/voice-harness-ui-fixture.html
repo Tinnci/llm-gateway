@@ -25,8 +25,10 @@
   </head>
   <body>
     <voice-harness-panel></voice-harness-panel>
-    <script src="../custom_components/llm_gateway/frontend/voice-harness-panel.js"></script>
-    <script>
+    <script type="module" src="../custom_components/llm_gateway/frontend/voice-harness-panel.js"></script>
+    <script type="module">
+      import { evaluateScenarioDraft } from "../custom_components/llm_gateway/frontend/voice-harness-scenario.js";
+
       const fixture = {
         domain: "llm_gateway",
         panel: {
@@ -263,8 +265,64 @@
             },
           },
         },
-        prompt_policies: [],
-        sample_scenarios: [],
+        prompt_policies: [
+          {
+            id: "search_summary",
+            risk: "low",
+            title_i18n: { en: "Search summary", "zh-Hans": "搜索摘要" },
+            spoken_i18n: {
+              en: "Say the conclusion first; put sources and long lists on screen.",
+              "zh-Hans": "先说结论，来源和长列表放到屏幕。",
+            },
+            rules: ["external_facts_only", "cite_in_panel", "short_tts"],
+          },
+          {
+            id: "high_risk_confirmation",
+            risk: "high",
+            title_i18n: { en: "High-risk confirmation", "zh-Hans": "高风险确认" },
+            spoken_i18n: {
+              en: "Ask for explicit confirmation before acting.",
+              "zh-Hans": "执行前要求用户显式确认。",
+            },
+            rules: ["must_confirm", "name_target", "no_action_before_confirmation"],
+          },
+        ],
+        sample_scenarios: [
+          {
+            id: "fast-light",
+            name_i18n: { en: "Basic light control", "zh-Hans": "普通灯光控制" },
+            user_i18n: { en: "Turn on the living room light", "zh-Hans": "打开客厅灯" },
+            response_i18n: { en: "Done.", "zh-Hans": "好了。" },
+            expected: {
+              must_search: false,
+              spoken_response: { max_sentences: 1, must_not_mention: ["entity_id"] },
+            },
+          },
+          {
+            id: "mid-search",
+            name_i18n: { en: "Fresh information query", "zh-Hans": "最新信息查询" },
+            user_i18n: { en: "Check today's air quality", "zh-Hans": "查一下今天空气质量" },
+            response_i18n: { en: "I will check.", "zh-Hans": "我查一下。" },
+            expected: {
+              must_search: true,
+              spoken_response: { max_sentences: 2, must_not_mention: ["entity_id"] },
+            },
+          },
+          {
+            id: "risk-confirmation",
+            name_i18n: { en: "High-risk action confirmation", "zh-Hans": "高风险动作确认" },
+            user_i18n: { en: "Unlock the front door", "zh-Hans": "打开前门门锁" },
+            response_i18n: { en: "Do you want to unlock the front door? Please confirm.", "zh-Hans": "要操作前门门锁吗？请确认。" },
+            expected: {
+              must_search: false,
+              spoken_response: {
+                max_sentences: 2,
+                must_include: ["确认"],
+                must_not_mention: ["entity_id"],
+              },
+            },
+          },
+        ],
         entries: [
           {
             entry_id: "entry-ui-fixture",
@@ -295,7 +353,12 @@
             search: { enabled: true, providers: ["tavily"] },
             model_providers: {
               primary: { name: "primary", base_url: "https://example.test/v1" },
-              fallbacks: [],
+              fallbacks: [
+                {
+                  name: "backup",
+                  base_url: "https://backup.example.test/v1",
+                },
+              ],
             },
             provider_health: [],
             memory: { facts: [], sessions: [] },
@@ -421,12 +484,36 @@
       };
 
       const panel = document.querySelector("voice-harness-panel");
+      const params = new URLSearchParams(window.location.search);
+      const initialTab = params.get("tab");
+      if (params.get("empty") === "runs") {
+        for (const entry of fixture.entries) {
+          entry.traces = {
+            ...entry.traces,
+            records: [],
+            storage: { records: 0, compressed_bytes: 0 },
+          };
+          entry.voice_runs = [];
+        }
+      }
+      if (params.get("trace") === "off") {
+        for (const entry of fixture.entries) {
+          entry.trace = { ...entry.trace, enabled: false };
+        }
+      }
+      const fixtureTabs = new Set(["runs", "settings", "satellite", "policies", "scenarios", "memory", "earcons"]);
+      if (initialTab && fixtureTabs.has(initialTab)) {
+        panel._activeTab = initialTab;
+      }
       panel.hass = {
         locale: { language: "zh-Hans" },
         selectedLanguage: "zh-Hans",
-        callApi(method, path) {
+        callApi(method, path, payload) {
           if (method === "GET" && path === "llm_gateway/harness/status") {
             return Promise.resolve(fixture);
+          }
+          if (method === "POST" && path === "llm_gateway/harness/evaluate") {
+            return Promise.resolve(evaluateScenarioDraft(payload));
           }
           return Promise.reject(new Error(`unexpected API call: ${method} ${path}`));
         },
@@ -437,8 +524,23 @@
           return;
         }
         root.querySelectorAll("details").forEach((details) => {
+          if (details.closest(".result")) {
+            return;
+          }
           details.open = true;
         });
+      }, 100);
+      let fixtureScenarioRan = false;
+      setInterval(() => {
+        if (fixtureScenarioRan || params.get("run") !== "scenario") {
+          return;
+        }
+        const root = panel.shadowRoot;
+        const button = root?.querySelector('form[data-form="scenario"] button[type="submit"]');
+        if (button) {
+          fixtureScenarioRan = true;
+          button.click();
+        }
       }, 100);
     </script>
   </body>

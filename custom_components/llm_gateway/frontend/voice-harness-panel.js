@@ -1,5 +1,33 @@
 // @ts-check
 
+import {
+  diagnosticCheckDetail,
+  diagnosticLayerCounts,
+  runSummary,
+  satelliteEntityTone,
+  satelliteValue,
+} from "./voice-harness-model.js";
+import {
+  parseScenarioExpected,
+  scenarioPreflight,
+  searchProviders,
+} from "./voice-harness-scenario.js";
+import {
+  chip,
+  iconButton,
+  tabButton,
+} from "./voice-harness-ui.js";
+import {
+  escapeHtml,
+  firstResponseAdapter,
+  formatTime,
+  groundingTone,
+  localize,
+  routeKind,
+  safeId,
+  translate,
+} from "./voice-harness-utils.js";
+
 /**
  * @typedef {"auto" | "fast" | "mid" | "deep"} RouteKind
  * @typedef {"local" | "ha_media_player" | "auto"} FirstResponsePlaybackAdapter
@@ -37,11 +65,11 @@ const TABS = [
   ["satellite", "tab.satellite", "mdi:microphone-settings"],
   ["policies", "tab.policies", "mdi:shield-check-outline"],
   ["scenarios", "tab.scenarios", "mdi:clipboard-text-search-outline"],
-  ["search", "tab.search", "mdi:web"],
   ["memory", "tab.memory", "mdi:database-eye-outline"],
   ["earcons", "tab.earcons", "mdi:music-note-outline"],
-  ["regression", "tab.regression", "mdi:chart-timeline-variant"],
 ];
+
+const TAB_IDS = new Set(TABS.map(([id]) => id));
 
 const DEFAULT_EXPECTED = {
   must_search: false,
@@ -75,10 +103,8 @@ const I18N = {
     "tab.satellite": "Satellite",
     "tab.policies": "Prompt Policies",
     "tab.scenarios": "Scenarios",
-    "tab.search": "Search Lab",
     "tab.memory": "Memory Lab",
     "tab.earcons": "Earcons",
-    "tab.regression": "Regression",
     "status.loading": "Reading integration status",
     "status.waiting": "Waiting for Home Assistant",
     "status.no_entries": "No LLM Gateway config entries loaded yet",
@@ -87,6 +113,17 @@ const I18N = {
     "runs.trace_disabled": "Diagnostic traces are disabled",
     "runs.trace_empty": "No recorded runs yet.",
     "runs.trace_enabled": "Traces on",
+    "runs.summary": "Run summary",
+    "runs.recorded": "Recorded",
+    "runs.live_running": "Live running",
+    "runs.error_count": "Errors",
+    "runs.avg_latency": "Avg latency",
+    "runs.latest_route": "Latest route",
+    "runs.trace_ready": "Trace capture is ready",
+    "runs.trace_disabled_hint": "Enable diagnostic traces before expecting recorded runs.",
+    "runs.trace_waiting_hint": "Run a voice turn to populate recorded and live run detail.",
+    "runs.open_settings": "Open settings",
+    "runs.live_idle": "No live run is active.",
     "runs.live": "Recent live runs",
     "runs.live_empty": "No live run snapshots yet.",
     "runs.live_status": "Live status",
@@ -274,9 +311,34 @@ const I18N = {
     "scenario.response": "Assistant response",
     "scenario.expected": "Expected JSON",
     "scenario.run": "Run scenario",
+    "scenario.samples": "Sample scenarios",
+    "scenario.preflight": "Draft preflight",
+    "scenario.search_providers": "Search providers",
+    "scenario.provider_count": "{count} available",
+    "scenario.required_fields": "Required fields",
+    "scenario.required_ready": "Input and response are ready",
+    "scenario.required_missing": "Add user input and assistant response",
+    "scenario.expected_json": "Expected JSON",
+    "scenario.expected_valid": "Valid JSON",
+    "scenario.expected_invalid": "Invalid JSON",
+    "scenario.search_gate": "Search gate",
+    "scenario.search_required": "Search required",
+    "scenario.search_not_required": "Search not required",
+    "scenario.spoken_length": "Spoken length",
+    "scenario.sentences_with_limit": "{count}/{limit} sentences",
+    "scenario.question_length": "Question count",
+    "scenario.questions_with_limit": "{count}/{limit} questions",
+    "scenario.hidden_internals": "Hidden internals",
+    "scenario.no_forbidden_terms": "No forbidden terms",
+    "scenario.forbidden_terms": "Mentions {terms}",
+    "scenario.required_phrase": "Required phrase",
+    "scenario.required_phrase_ok": "Present",
+    "scenario.required_phrase_missing": "Missing {terms}",
+    "scenario.sample_runs": "Scenario samples",
+    "scenario.run_sample": "Run",
+    "scenario.load": "Load",
     "search.gating": "Search gating",
     "search.no_providers": "No search provider key exposed",
-    "search.evaluate": "Evaluate gating",
     "providers.title": "Model providers",
     "providers.primary": "Primary",
     "providers.fallbacks": "{count} fallback providers",
@@ -294,13 +356,13 @@ const I18N = {
     "earcon.play": "Play {name}",
     "earcon.peak": "{peak} dBFS peak",
     "earcon.empty": "No rendered earcons.",
-    "regression.run": "Run",
     "route.timeout": "{seconds}s timeout",
     "route.tokens": "{count} tokens",
     "result.empty": "No run result yet.",
     "result.passed": "Passed",
     "result.failed": "Failed",
     "result.meta": "Route: {route} · Search: {search}",
+    "result.raw": "Raw result",
     "search.allowed": "allowed",
     "search.blocked": "blocked",
     "mode.auto": "Auto",
@@ -400,10 +462,8 @@ const I18N = {
     "tab.satellite": "卫星端",
     "tab.policies": "提示策略",
     "tab.scenarios": "场景测试",
-    "tab.search": "搜索实验室",
     "tab.memory": "记忆实验室",
     "tab.earcons": "提示音",
-    "tab.regression": "回归测试",
     "status.loading": "正在读取集成状态",
     "status.waiting": "等待 Home Assistant",
     "status.no_entries": "尚未加载 LLM Gateway 配置项",
@@ -412,6 +472,17 @@ const I18N = {
     "runs.trace_disabled": "诊断记录未开启",
     "runs.trace_empty": "还没有运行记录。",
     "runs.trace_enabled": "诊断记录已开启",
+    "runs.summary": "运行摘要",
+    "runs.recorded": "已记录",
+    "runs.live_running": "运行中",
+    "runs.error_count": "错误",
+    "runs.avg_latency": "平均延迟",
+    "runs.latest_route": "最近路由",
+    "runs.trace_ready": "诊断记录已就绪",
+    "runs.trace_disabled_hint": "需要先启用诊断记录，才会保存运行记录。",
+    "runs.trace_waiting_hint": "执行一次语音对话后，这里会显示记录和实时运行细节。",
+    "runs.open_settings": "打开配置",
+    "runs.live_idle": "当前没有实时运行。",
     "runs.live": "最近实时运行",
     "runs.live_empty": "还没有实时运行快照。",
     "runs.live_status": "实时状态",
@@ -599,9 +670,34 @@ const I18N = {
     "scenario.response": "助手回复",
     "scenario.expected": "期望 JSON",
     "scenario.run": "运行场景",
+    "scenario.samples": "样例场景",
+    "scenario.preflight": "草稿预检",
+    "scenario.search_providers": "搜索 provider",
+    "scenario.provider_count": "{count} 个可用",
+    "scenario.required_fields": "必填字段",
+    "scenario.required_ready": "输入和回复已就绪",
+    "scenario.required_missing": "补充用户输入和助手回复",
+    "scenario.expected_json": "期望 JSON",
+    "scenario.expected_valid": "JSON 有效",
+    "scenario.expected_invalid": "JSON 无效",
+    "scenario.search_gate": "搜索门控",
+    "scenario.search_required": "需要搜索",
+    "scenario.search_not_required": "不需要搜索",
+    "scenario.spoken_length": "口播长度",
+    "scenario.sentences_with_limit": "{count}/{limit} 句",
+    "scenario.question_length": "问题数量",
+    "scenario.questions_with_limit": "{count}/{limit} 个问题",
+    "scenario.hidden_internals": "隐藏内部细节",
+    "scenario.no_forbidden_terms": "未暴露禁用词",
+    "scenario.forbidden_terms": "提到了 {terms}",
+    "scenario.required_phrase": "必需短语",
+    "scenario.required_phrase_ok": "已包含",
+    "scenario.required_phrase_missing": "缺少 {terms}",
+    "scenario.sample_runs": "样例运行",
+    "scenario.run_sample": "运行",
+    "scenario.load": "载入",
     "search.gating": "搜索门控",
     "search.no_providers": "未暴露搜索 provider key",
-    "search.evaluate": "评估门控",
     "providers.title": "模型 provider",
     "providers.primary": "主 provider",
     "providers.fallbacks": "{count} 个备用 provider",
@@ -619,13 +715,13 @@ const I18N = {
     "earcon.play": "播放 {name}",
     "earcon.peak": "{peak} dBFS 峰值",
     "earcon.empty": "没有已渲染的提示音。",
-    "regression.run": "运行",
     "route.timeout": "{seconds}s 超时",
     "route.tokens": "{count} 个令牌",
     "result.empty": "还没有运行结果。",
     "result.passed": "通过",
     "result.failed": "失败",
     "result.meta": "路由：{route} · 搜索：{search}",
+    "result.raw": "原始结果",
     "search.allowed": "允许",
     "search.blocked": "阻止",
     "mode.auto": "自动",
@@ -930,7 +1026,9 @@ class VoiceHarnessPanel extends HTMLElement {
     }
     const tab = button.dataset.tab;
     if (tab) {
-      this._activeTab = tab;
+      if (TAB_IDS.has(tab)) {
+        this._activeTab = tab;
+      }
       this._render();
       return;
     }
@@ -951,6 +1049,20 @@ class VoiceHarnessPanel extends HTMLElement {
     }
     if (button.dataset.earcon) {
       this._playEarcon(button.dataset.earcon);
+      return;
+    }
+    const loadSampleId = button.dataset.loadSample;
+    if (loadSampleId) {
+      const sample = this._data?.sample_scenarios?.find((item) => item.id === loadSampleId);
+      if (sample) {
+        this._draftTouched = true;
+        this._draft = {
+          user: this._sampleUser(sample),
+          response: this._sampleResponse(sample),
+          expected: JSON.stringify(this._sampleExpected(sample), null, 2),
+        };
+        this._render();
+      }
       return;
     }
     const sampleId = button.dataset.sample;
@@ -994,10 +1106,8 @@ class VoiceHarnessPanel extends HTMLElement {
     if (form.dataset.form !== "scenario") {
       return;
     }
-    let expected = {};
-    try {
-      expected = JSON.parse(this._draft.expected || "{}");
-    } catch (err) {
+    const { valid, expected } = parseScenarioExpected(this._draft.expected);
+    if (!valid) {
       this._error = this._t("error.invalid_expected_json");
       this._render();
       return;
@@ -1071,18 +1181,20 @@ class VoiceHarnessPanel extends HTMLElement {
             <h1>${escapeHtml(this._t("app.title"))}</h1>
             <div class="subline">${escapeHtml(this._statusLine(entries))}</div>
           </div>
-          <button class="iconButton" data-action="refresh" title="${escapeHtml(this._t("common.refresh"))}">
-            <ha-icon icon="mdi:refresh"></ha-icon>
-          </button>
+          ${iconButton({
+            data: { action: "refresh" },
+            icon: "mdi:refresh",
+            title: this._t("common.refresh"),
+          })}
         </header>
         ${this._error ? `<div class="banner error">${escapeHtml(this._error)}</div>` : ""}
         <nav class="tabs" aria-label="${escapeHtml(this._t("aria.views"))}">
-          ${TABS.map(([id, labelKey, icon]) => `
-            <button class="tab ${this._activeTab === id ? "active" : ""}" data-tab="${id}">
-              <ha-icon icon="${icon}"></ha-icon>
-              <span>${escapeHtml(this._t(labelKey))}</span>
-            </button>
-          `).join("")}
+          ${TABS.map(([id, labelKey, icon]) => tabButton({
+            active: this._activeTab === id,
+            icon,
+            id,
+            label: this._t(labelKey),
+          })).join("")}
         </nav>
         <section class="content">
           ${this._busy && !this._data ? this._renderLoading() : this._renderActive(entries)}
@@ -1118,10 +1230,7 @@ class VoiceHarnessPanel extends HTMLElement {
       return this._renderPolicies(entries);
     }
     if (this._activeTab === "scenarios") {
-      return this._renderScenarioLab();
-    }
-    if (this._activeTab === "search") {
-      return this._renderSearch(entries);
+      return this._renderScenarioLab(entries);
     }
     if (this._activeTab === "memory") {
       return this._renderMemory(entries);
@@ -1129,7 +1238,7 @@ class VoiceHarnessPanel extends HTMLElement {
     if (this._activeTab === "earcons") {
       return this._renderEarcons();
     }
-    return this._renderRegression();
+    return this._renderRuns(entries);
   }
 
   _renderLoading() {
@@ -1504,9 +1613,11 @@ class VoiceHarnessPanel extends HTMLElement {
             <h2>${escapeHtml(this._t("satellite.title"))}</h2>
             <div class="meta">${escapeHtml(this._t("satellite.description"))}</div>
           </div>
-          <button class="iconButton" data-action="refresh" title="${escapeHtml(this._t("common.refresh"))}">
-            <ha-icon icon="mdi:refresh"></ha-icon>
-          </button>
+          ${iconButton({
+            data: { action: "refresh" },
+            icon: "mdi:refresh",
+            title: this._t("common.refresh"),
+          })}
         </div>
         <div class="satelliteSummaryGrid">
           ${this._satelliteSummaryTile("mdi:access-point", this._t("satellite.pipeline_ready"), this._satelliteValue(states.voice_pipeline), pipelineTone, states.voice_pipeline?.entity_id)}
@@ -1776,33 +1887,11 @@ class VoiceHarnessPanel extends HTMLElement {
   }
 
   _diagnosticLayerCounts(checks) {
-    const layers = new Map();
-    for (const check of checks) {
-      const layer = String(check.layer || "unknown");
-      const current = layers.get(layer) || { layer, total: 0, bad: 0, warnings: 0 };
-      current.total += 1;
-      if (check.status === "error") {
-        current.bad += 1;
-      } else if (check.status === "warning") {
-        current.warnings += 1;
-      }
-      layers.set(layer, current);
-    }
-    return [...layers.values()].map((layer) => ({
-      ...layer,
-      tone: layer.bad ? "bad" : layer.warnings ? "warning" : "ok",
-    }));
+    return diagnosticLayerCounts(checks);
   }
 
   _diagnosticCheckDetail(check) {
-    const evidence = Array.isArray(check.evidence) ? check.evidence : [];
-    const depends = Array.isArray(check.depends_on) ? check.depends_on : [];
-    return [
-      check.layer ? `layer=${check.layer}` : "",
-      depends.length ? `depends=${depends.join(",")}` : "",
-      ...evidence.slice(0, 2).map((item) => typeof item === "string" ? item : JSON.stringify(item)),
-      check.repair_hint ? `${this._t("satellite.repair_hint")}: ${check.repair_hint}` : "",
-    ].filter(Boolean).join(" · ");
+    return diagnosticCheckDetail(check, this._t("satellite.repair_hint"));
   }
 
   _satelliteConfigInput(key, state, min, max, step) {
@@ -1866,24 +1955,11 @@ class VoiceHarnessPanel extends HTMLElement {
   }
 
   _satelliteValue(state) {
-    if (!state?.available) {
-      return this._t("satellite.missing");
-    }
-    return `${state.state}${state.unit ? ` ${state.unit}` : ""}`;
+    return satelliteValue(state, this._t("satellite.missing"));
   }
 
   _satelliteEntityTone(key, state) {
-    if (!state?.available) {
-      return "bad";
-    }
-    const value = String(state.state || "").toLowerCase();
-    if (key === "voice_paused" || key === "pause_requested") {
-      return ["on", "true", "paused"].includes(value) ? "warning" : "ok";
-    }
-    if (key === "voice_pipeline" || key === "display_awake") {
-      return ["on", "true", "ready", "ok"].includes(value) ? "ok" : "warning";
-    }
-    return "ok";
+    return satelliteEntityTone(key, state);
   }
 
   _renderTracePanel(entry) {
@@ -1891,6 +1967,8 @@ class VoiceHarnessPanel extends HTMLElement {
     const records = entry.traces?.records || [];
     const liveRuns = Array.isArray(entry.voice_runs) ? entry.voice_runs : [];
     const storage = entry.traces?.storage || {};
+    const hasRecords = records.length > 0;
+    const hasLiveRuns = liveRuns.length > 0;
     return `
       <section class="tracePanel">
         <div class="traceHeader">
@@ -1906,14 +1984,72 @@ class VoiceHarnessPanel extends HTMLElement {
             bytes: storage.compressed_bytes || 0,
           }))}</span>
         </div>
-        <div class="traceList">
-          ${records.map((record) => this._traceCard(record)).join("") || `<div class="empty mini">${escapeHtml(this._t("runs.trace_empty"))}</div>`}
-        </div>
-        <h3>${escapeHtml(this._t("runs.live"))}</h3>
-        <div class="traceList">
-          ${liveRuns.map((run) => this._liveRunCard(run)).join("") || `<div class="empty mini">${escapeHtml(this._t("runs.live_empty"))}</div>`}
-        </div>
+        ${this._runSummaryPanel(records, liveRuns)}
+        ${hasRecords ? `
+          <div class="traceList">
+            ${records.map((record) => this._traceCard(record)).join("")}
+          </div>
+        ` : this._traceReadinessPanel(trace, storage)}
+        ${hasLiveRuns ? `
+          <h3>${escapeHtml(this._t("runs.live"))}</h3>
+          <div class="traceList">
+            ${liveRuns.map((run) => this._liveRunCard(run)).join("")}
+          </div>
+        ` : (hasRecords ? `<div class="traceIdle">${escapeHtml(this._t("runs.live_idle"))}</div>` : "")}
       </section>
+    `;
+  }
+
+  _traceReadinessPanel(trace, storage) {
+    const enabled = Boolean(trace.enabled);
+    return `
+      <article class="traceReadiness ${enabled ? "ok" : "warning"}">
+        <ha-icon icon="${enabled ? "mdi:database-check-outline" : "mdi:database-off-outline"}"></ha-icon>
+        <div>
+          <strong>${escapeHtml(enabled ? this._t("runs.trace_ready") : this._t("runs.trace_disabled"))}</strong>
+          <span>${escapeHtml(enabled ? this._t("runs.trace_waiting_hint") : this._t("runs.trace_disabled_hint"))}</span>
+          <div class="meterRow">
+            <span>${escapeHtml(this._t("runs.retention", {
+              count: trace.max_runs || 0,
+              hours: trace.retention_hours || 0,
+            }))}</span>
+            <span>${escapeHtml(trace.include_raw_messages ? this._t("runs.raw_enabled") : this._t("runs.raw_disabled"))}</span>
+            <span>${escapeHtml(this._t("runs.storage", {
+              records: storage.records || 0,
+              bytes: storage.compressed_bytes || 0,
+            }))}</span>
+          </div>
+        </div>
+        <button class="secondary" data-tab="settings">
+          <ha-icon icon="mdi:tune-variant"></ha-icon>
+          <span>${escapeHtml(this._t("runs.open_settings"))}</span>
+        </button>
+      </article>
+    `;
+  }
+
+  _runSummaryPanel(records, liveRuns) {
+    const summary = runSummary(records, liveRuns);
+    return `
+      <div class="runSummary" aria-label="${escapeHtml(this._t("runs.summary"))}">
+        ${this._summaryMetric("mdi:database-clock-outline", this._t("runs.recorded"), summary.recorded)}
+        ${this._summaryMetric("mdi:progress-clock", this._t("runs.live_running"), summary.running)}
+        ${this._summaryMetric("mdi:alert-circle-outline", this._t("runs.error_count"), summary.errors, summary.errors ? "bad" : "ok")}
+        ${this._summaryMetric("mdi:timer-outline", this._t("runs.avg_latency"), summary.avgLatency ? `${summary.avgLatency} ms` : "-")}
+        ${this._summaryMetric("mdi:routes", this._t("runs.latest_route"), summary.latestRoute ? this._routeLabel(summary.latestRoute) : "-")}
+      </div>
+    `;
+  }
+
+  _summaryMetric(icon, label, value, tone = "muted") {
+    return `
+      <div class="summaryMetric ${escapeHtml(tone)}">
+        <ha-icon icon="${escapeHtml(icon)}"></ha-icon>
+        <div>
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(value)}</strong>
+        </div>
+      </div>
     `;
   }
 
@@ -2092,7 +2228,7 @@ class VoiceHarnessPanel extends HTMLElement {
               `).join("")}
             </div>
           ` : ""}
-          ${record.raw_payload ? this._jsonDetails(this._t("runs.raw_payload"), record.raw_payload) : `<div class="empty mini">${escapeHtml(this._t("runs.no_raw"))}</div>`}
+          ${record.raw_payload ? this._jsonDetails(this._t("runs.raw_payload"), record.raw_payload) : ""}
         </div>
       </details>
     `;
@@ -2110,9 +2246,15 @@ class VoiceHarnessPanel extends HTMLElement {
     ].join("");
   }
 
+  /**
+   * @param {string} label
+   * @param {boolean} enabled
+   * @param {"ok" | "warning" | "bad" | "error" | "muted"} [tone]
+   * @param {string} [title]
+   */
   _flagChip(label, enabled, tone = "muted", title = "") {
     const state = enabled ? this._t("common.enabled") : this._t("common.disabled");
-    return `<span class="chip ${tone}" title="${escapeHtml(title || label)}">${escapeHtml(label)}: ${escapeHtml(state)}</span>`;
+    return chip(`${label}: ${state}`, tone, title || label);
   }
 
   _detailItem(label, lines) {
@@ -2128,7 +2270,7 @@ class VoiceHarnessPanel extends HTMLElement {
   _firstResponsePanel(decision, audio = {}) {
     const keys = [...Object.keys(decision || {}), ...Object.keys(audio || {})];
     if (!keys.length) {
-      return `<div class="empty mini">${escapeHtml(this._t("runs.first_response_detail"))}: -</div>`;
+      return "";
     }
     const deadline = Number(decision.deadline_ms || 0);
     const triggered = Number(decision.triggered_ms || decision.actual_ms || 0);
@@ -2323,7 +2465,7 @@ class VoiceHarnessPanel extends HTMLElement {
       ? record.tool_calls_by_iteration
       : [];
     if (!iterations.length) {
-      return `<div class="empty mini">${escapeHtml(this._t("runs.no_tool_iterations"))}</div>`;
+      return "";
     }
     return `
       <div class="debugSection">
@@ -2354,7 +2496,7 @@ class VoiceHarnessPanel extends HTMLElement {
       ? record.duplicate_tool_suppressions
       : [];
     if (!suppressions.length) {
-      return `<div class="empty mini">${escapeHtml(this._t("runs.no_duplicate_suppressions"))}</div>`;
+      return "";
     }
     return `
       <div class="debugSection">
@@ -2377,7 +2519,7 @@ class VoiceHarnessPanel extends HTMLElement {
   _criticalPathPanel(record) {
     const path = Array.isArray(record.critical_path) ? record.critical_path : [];
     if (!path.length) {
-      return `<div class="empty mini">${escapeHtml(this._t("runs.no_critical_path"))}</div>`;
+      return "";
     }
     return `
       <div class="debugSection">
@@ -2404,7 +2546,7 @@ class VoiceHarnessPanel extends HTMLElement {
   _searchDebugPanel(record) {
     const debug = record.search_debug || {};
     if (!Object.keys(debug).length) {
-      return `<div class="empty mini">${escapeHtml(this._t("runs.no_search_debug"))}</div>`;
+      return "";
     }
     const queries = Array.isArray(debug.queries) ? debug.queries : [];
     const providers = Array.isArray(debug.providers) ? debug.providers : [];
@@ -2465,7 +2607,7 @@ class VoiceHarnessPanel extends HTMLElement {
   _actionsPanel(record) {
     const actions = Array.isArray(record.actions) ? record.actions : [];
     if (!actions.length) {
-      return `<div class="empty mini">${escapeHtml(this._t("runs.no_actions"))}</div>`;
+      return "";
     }
     return `
       <div class="debugSection">
@@ -2493,7 +2635,7 @@ class VoiceHarnessPanel extends HTMLElement {
   _earconEventsPanel(record) {
     const earcons = Array.isArray(record.earcons) ? record.earcons : [];
     if (!earcons.length) {
-      return `<div class="empty mini">${escapeHtml(this._t("runs.no_earcons"))}</div>`;
+      return "";
     }
     return `
       <div class="debugSection">
@@ -2518,7 +2660,7 @@ class VoiceHarnessPanel extends HTMLElement {
       ? record.display_status.events
       : [];
     if (!events.length) {
-      return `<div class="empty mini">${escapeHtml(this._t("runs.no_display_status"))}</div>`;
+      return "";
     }
     return `
       <div class="debugSection">
@@ -2540,7 +2682,7 @@ class VoiceHarnessPanel extends HTMLElement {
 
   _errorsPanel(errors) {
     if (!errors.length) {
-      return `<div class="empty mini">${escapeHtml(this._t("runs.no_errors"))}</div>`;
+      return "";
     }
     return `
       <div class="debugSection">
@@ -2560,7 +2702,7 @@ class VoiceHarnessPanel extends HTMLElement {
 
   _toolEventsPanel(tools) {
     if (!tools.length) {
-      return `<div class="empty mini">${escapeHtml(this._t("runs.no_tools"))}</div>`;
+      return "";
     }
     return `
       <div class="debugSection">
@@ -2584,7 +2726,7 @@ class VoiceHarnessPanel extends HTMLElement {
     const grounding = record.grounding || record.raw_payload?.grounding || {};
     const evidence = Array.isArray(grounding.evidence) ? grounding.evidence : [];
     if (!evidence.length) {
-      return `<div class="empty mini">${escapeHtml(this._t("runs.no_evidence"))}</div>`;
+      return "";
     }
     return `
       <div class="debugSection">
@@ -2713,55 +2855,147 @@ class VoiceHarnessPanel extends HTMLElement {
     `;
   }
 
-  _renderScenarioLab() {
+  _renderScenarioLab(entries) {
     return `
-      <div class="workbench">
-        <form class="surface form" data-form="scenario">
-          <label>
-            <span>${escapeHtml(this._t("scenario.user"))}</span>
-            <textarea data-field="user" rows="3">${escapeHtml(this._draft.user)}</textarea>
-          </label>
-          <label>
-            <span>${escapeHtml(this._t("scenario.response"))}</span>
-            <textarea data-field="response" rows="4">${escapeHtml(this._draft.response)}</textarea>
-          </label>
-          <label>
-            <span>${escapeHtml(this._t("scenario.expected"))}</span>
-            <textarea class="codeInput" data-field="expected" rows="9">${escapeHtml(this._draft.expected)}</textarea>
-          </label>
-          <button class="primary" type="submit">
-            <ha-icon icon="mdi:play"></ha-icon>
-            <span>${escapeHtml(this._t("scenario.run"))}</span>
-          </button>
-        </form>
-        ${this._renderResult()}
+      <div class="scenarioPanel">
+        <div class="workbench scenarioWorkbench">
+          <form class="surface form" data-form="scenario">
+            ${this._sampleButtonRail()}
+            <label>
+              <span>${escapeHtml(this._t("scenario.user"))}</span>
+              <textarea data-field="user" rows="3">${escapeHtml(this._draft.user)}</textarea>
+            </label>
+            <label>
+              <span>${escapeHtml(this._t("scenario.response"))}</span>
+              <textarea data-field="response" rows="4">${escapeHtml(this._draft.response)}</textarea>
+            </label>
+            <label>
+              <span>${escapeHtml(this._t("scenario.expected"))}</span>
+              <textarea class="codeInput" data-field="expected" rows="9">${escapeHtml(this._draft.expected)}</textarea>
+            </label>
+            <button class="primary" type="submit">
+              <ha-icon icon="mdi:play"></ha-icon>
+              <span>${escapeHtml(this._t("scenario.run"))}</span>
+            </button>
+          </form>
+          <div class="scenarioSide">
+            ${this._renderScenarioStatus(entries)}
+            ${this._renderResult(entries)}
+          </div>
+        </div>
+        ${this._renderScenarioSamples()}
       </div>
     `;
   }
 
-  _renderSearch(entries) {
-    const providers = entries.flatMap((entry) => entry.search.providers || []);
+  _sampleButtonRail(compact = false) {
+    const samples = this._data?.sample_scenarios || [];
+    if (!samples.length) {
+      return "";
+    }
+    const visible = compact
+      ? samples.filter((sample) => this._sampleExpected(sample)?.must_search).slice(0, 3)
+      : samples.slice(0, 5);
+    const fallback = visible.length ? visible : samples.slice(0, 3);
     return `
-      <div class="workbench">
-        <article class="surface">
-          <div class="sectionHead">
-            <div>
-              <h2>${escapeHtml(this._t("search.gating"))}</h2>
-              <div class="meta">${providers.length ? providers.join(", ") : escapeHtml(this._t("search.no_providers"))}</div>
-            </div>
-          </div>
-          <form class="compactForm" data-form="scenario">
-            <textarea data-field="user" rows="3">${escapeHtml(this._draft.user)}</textarea>
-            <textarea data-field="response" rows="3">${escapeHtml(this._draft.response)}</textarea>
-            <button class="primary" type="submit">
-              <ha-icon icon="mdi:magnify"></ha-icon>
-              <span>${escapeHtml(this._t("search.evaluate"))}</span>
+      <div class="sampleRail">
+        <strong>${escapeHtml(this._t("scenario.samples"))}</strong>
+        <div>
+          ${fallback.map((sample) => `
+            <button type="button" class="sampleChip" data-load-sample="${escapeHtml(sample.id)}">
+              ${escapeHtml(this._sampleName(sample))}
             </button>
-          </form>
-        </article>
-        ${this._renderResult()}
+          `).join("")}
+        </div>
       </div>
     `;
+  }
+
+  _renderScenarioStatus(entries) {
+    const providers = searchProviders(entries);
+    return `
+      <article class="surface scenarioStatus">
+        <div class="sectionHead">
+          <div>
+            <h2>${escapeHtml(this._t("search.gating"))}</h2>
+            <div class="meta">${providers.length ? providers.join(", ") : escapeHtml(this._t("search.no_providers"))}</div>
+          </div>
+          <span class="chip ${providers.length ? "ok" : "warning"}">${escapeHtml(this._t("scenario.provider_count", { count: providers.length }))}</span>
+        </div>
+      </article>
+    `;
+  }
+
+  _renderDraftPreflight(entries) {
+    const checks = scenarioPreflight(this._draft, entries);
+    return `
+      <article class="surface result preflight">
+        <div class="sectionHead">
+          <div>
+            <h2>${escapeHtml(this._t("scenario.preflight"))}</h2>
+            <div class="meta">${escapeHtml(this._t("result.empty"))}</div>
+          </div>
+          <span class="chip ${checks.every((check) => check.ok) ? "ok" : "warning"}">${escapeHtml(this._t("scenario.preflight"))}</span>
+        </div>
+        <div class="preflightList">
+          ${checks.map((check) => `
+            <div class="preflightRow ${check.ok ? "ok" : "warning"}">
+              <ha-icon icon="${check.ok ? "mdi:check-circle-outline" : "mdi:alert-circle-outline"}"></ha-icon>
+              <div>
+                <strong>${escapeHtml(this._scenarioCheckLabel(check))}</strong>
+                <span>${escapeHtml(this._scenarioCheckDetail(check))}</span>
+              </div>
+            </div>
+          `).join("")}
+        </div>
+      </article>
+    `;
+  }
+
+  _scenarioCheckLabel(check) {
+    switch (check.kind) {
+      case "required_fields":
+        return this._t("scenario.required_fields");
+      case "expected_json":
+        return this._t("scenario.expected_json");
+      case "search_gate":
+        return this._t("scenario.search_gate");
+      case "spoken_length":
+        return this._t("scenario.spoken_length");
+      case "question_length":
+        return this._t("scenario.question_length");
+      case "hidden_internals":
+        return this._t("scenario.hidden_internals");
+      case "required_phrase":
+        return this._t("scenario.required_phrase");
+      default:
+        return String(check.kind || "");
+    }
+  }
+
+  _scenarioCheckDetail(check) {
+    switch (check.kind) {
+      case "required_fields":
+        return check.ok ? this._t("scenario.required_ready") : this._t("scenario.required_missing");
+      case "expected_json":
+        return check.ok ? this._t("scenario.expected_valid") : this._t("scenario.expected_invalid");
+      case "search_gate":
+        return check.mustSearch ? this._t("scenario.search_required") : this._t("scenario.search_not_required");
+      case "spoken_length":
+        return this._t("scenario.sentences_with_limit", { count: check.count || 0, limit: check.limit || 0 });
+      case "question_length":
+        return this._t("scenario.questions_with_limit", { count: check.count || 0, limit: check.limit || 0 });
+      case "hidden_internals":
+        return (check.terms || []).length
+          ? this._t("scenario.forbidden_terms", { terms: (check.terms || []).join(", ") })
+          : this._t("scenario.no_forbidden_terms");
+      case "required_phrase":
+        return (check.terms || []).length
+          ? this._t("scenario.required_phrase_missing", { terms: (check.terms || []).join(", ") })
+          : this._t("scenario.required_phrase_ok");
+      default:
+        return "";
+    }
   }
 
   _renderMemory(entries) {
@@ -2837,23 +3071,44 @@ class VoiceHarnessPanel extends HTMLElement {
     `;
   }
 
-  _renderRegression() {
+  _renderScenarioSamples() {
     const samples = this._data?.sample_scenarios || [];
+    if (!samples.length) {
+      return "";
+    }
     return `
-      <div class="regressionList">
-        ${samples.map((sample) => `
-          <article class="surface sample">
-            <div>
-              <h2>${escapeHtml(this._sampleName(sample))}</h2>
-              <p>${escapeHtml(this._sampleUser(sample))}</p>
-            </div>
-            <button class="secondary" data-sample="${escapeHtml(sample.id)}">
-              <ha-icon icon="mdi:play-outline"></ha-icon>
-              <span>${escapeHtml(this._t("regression.run"))}</span>
-            </button>
-          </article>
-        `).join("")}
-      </div>
+      <section class="surface scenarioSamples">
+        <div class="sectionHead">
+          <div>
+            <h2>${escapeHtml(this._t("scenario.sample_runs"))}</h2>
+            <div class="meta">${escapeHtml(this._t("scenario.samples"))}</div>
+          </div>
+        </div>
+        <div class="scenarioSampleList">
+          ${samples.map((sample) => {
+            const expected = this._sampleExpected(sample);
+            return `
+              <article class="sample">
+                <div>
+                  <h2>${escapeHtml(this._sampleName(sample))}</h2>
+                  <p>${escapeHtml(this._sampleUser(sample))}</p>
+                </div>
+                <div class="sampleActions">
+                  <span class="chip ${expected.must_search ? "warning" : "muted"}">${escapeHtml(expected.must_search ? this._t("scenario.search_required") : this._t("scenario.search_not_required"))}</span>
+                  <button class="secondary" data-load-sample="${escapeHtml(sample.id)}">
+                    <ha-icon icon="mdi:file-document-edit-outline"></ha-icon>
+                    <span>${escapeHtml(this._t("scenario.load"))}</span>
+                  </button>
+                  <button class="secondary" data-sample="${escapeHtml(sample.id)}">
+                    <ha-icon icon="mdi:play-outline"></ha-icon>
+                    <span>${escapeHtml(this._t("scenario.run_sample"))}</span>
+                  </button>
+                </div>
+              </article>
+            `;
+          }).join("")}
+        </div>
+      </section>
     `;
   }
 
@@ -2883,21 +3138,29 @@ class VoiceHarnessPanel extends HTMLElement {
     `;
   }
 
-  _renderResult() {
+  _renderResult(entries = []) {
     if (!this._result) {
-      return `<article class="surface result emptyState">${escapeHtml(this._t("result.empty"))}</article>`;
+      return this._renderDraftPreflight(entries);
     }
     const result = this._result;
     const passed = result.passed ? this._t("result.passed") : this._t("result.failed");
-    const search = result.search.allowed ? this._t("search.allowed") : this._t("search.blocked");
+    const route = result.route || {};
+    const searchInfo = result.search || {};
+    const search = searchInfo.allowed ? this._t("search.allowed") : this._t("search.blocked");
+    const routeLabel = this._routeLabel(route.kind);
     return `
       <article class="surface result">
         <div class="sectionHead">
           <div>
             <h2>${escapeHtml(passed)}</h2>
-            <div class="meta">${escapeHtml(this._t("result.meta", { route: this._routeLabel(result.route.kind), search }))}</div>
+            <div class="meta">${escapeHtml(this._t("result.meta", { route: routeLabel, search }))}</div>
           </div>
           <span class="chip ${result.passed ? "ok" : "bad"}">${escapeHtml(passed)}</span>
+        </div>
+        <div class="meterRow resultFacts">
+          <span>${escapeHtml(routeLabel)}</span>
+          ${route.model ? `<span>${escapeHtml(route.model)}</span>` : ""}
+          <span>${escapeHtml(search)}</span>
         </div>
         <div class="spoken">${escapeHtml(result.spoken || "")}</div>
         ${(result.violations || []).length ? `
@@ -2905,7 +3168,7 @@ class VoiceHarnessPanel extends HTMLElement {
             ${result.violations.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
           </ul>
         ` : ""}
-        <pre>${escapeHtml(JSON.stringify(result, null, 2))}</pre>
+        ${this._jsonDetails(this._t("result.raw"), result)}
       </article>
     `;
   }
@@ -2930,11 +3193,7 @@ class VoiceHarnessPanel extends HTMLElement {
   }
 
   _t(key, params = {}) {
-    const table = I18N[this._locale()] || I18N.en;
-    const fallback = I18N.en[key] || key;
-    return String(table[key] || fallback).replace(/\{(\w+)\}/g, (_match, name) =>
-      params[name] ?? ""
-    );
+    return translate(I18N, this._locale(), key, params);
   }
 
   _defaultDraft(locale) {
@@ -2942,11 +3201,7 @@ class VoiceHarnessPanel extends HTMLElement {
   }
 
   _localize(value, fallback = "") {
-    if (!value || typeof value !== "object") {
-      return value || fallback;
-    }
-    const locale = this._locale();
-    return value[locale] || value.en || value["zh-Hans"] || fallback;
+    return localize(value, this._locale(), fallback);
   }
 
   _policyTitle(policy) {
@@ -2998,29 +3253,12 @@ class VoiceHarnessPanel extends HTMLElement {
 
   /** @returns {RouteKind} */
   _routeKind(value) {
-    const candidate = String(value || "auto");
-    switch (candidate) {
-      case "fast":
-      case "mid":
-      case "deep":
-      case "auto":
-        return candidate;
-      default:
-        return "auto";
-    }
+    return routeKind(value);
   }
 
   /** @returns {FirstResponsePlaybackAdapter} */
   _firstResponseAdapter(value) {
-    const candidate = String(value || "local");
-    switch (candidate) {
-      case "ha_media_player":
-      case "auto":
-      case "local":
-        return candidate;
-      default:
-        return "local";
-    }
+    return firstResponseAdapter(value);
   }
 
   _routeLabel(value) {
@@ -3064,14 +3302,7 @@ class VoiceHarnessPanel extends HTMLElement {
   }
 
   _groundingTone(value) {
-    const status = String(value || "");
-    if (status === "repaired") {
-      return "warning";
-    }
-    if (["no_answer", "no_evidence", "unsupported", "verifier_error"].includes(status)) {
-      return "bad";
-    }
-    return "ok";
+    return groundingTone(value);
   }
 
   _lookup(key, fallback = "") {
@@ -3080,34 +3311,8 @@ class VoiceHarnessPanel extends HTMLElement {
   }
 
   _formatTime(value) {
-    if (!value) {
-      return "";
-    }
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) {
-      return String(value);
-    }
-    return new Intl.DateTimeFormat(this._locale(), {
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    }).format(date);
+    return formatTime(value, this._locale());
   }
-}
-
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
-function safeId(value) {
-  return String(value ?? "default").replace(/[^a-zA-Z0-9_-]/g, "-");
 }
 
 const styles = `
@@ -3219,7 +3424,7 @@ const styles = `
 
   .tabs {
     display: grid;
-    grid-template-columns: repeat(8, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
     gap: 8px;
     margin: 14px 0 18px;
   }
@@ -3661,6 +3866,63 @@ const styles = `
     align-items: start;
   }
 
+  .scenarioPanel,
+  .scenarioSide {
+    display: grid;
+    gap: 14px;
+  }
+
+  .scenarioStatus {
+    min-height: 90px;
+  }
+
+  .preflightList {
+    display: grid;
+    gap: 8px;
+  }
+
+  .preflightRow {
+    min-height: 46px;
+    border: 1px solid var(--divider-color);
+    border-radius: 8px;
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr);
+    gap: 10px;
+    align-items: start;
+    padding: 10px;
+    background: var(--primary-background-color);
+  }
+
+  .preflightRow ha-icon {
+    width: 20px;
+    height: 20px;
+    color: var(--secondary-text-color);
+  }
+
+  .preflightRow.ok ha-icon {
+    color: var(--success-color);
+  }
+
+  .preflightRow.warning ha-icon {
+    color: var(--warning-color);
+  }
+
+  .preflightRow div {
+    min-width: 0;
+    display: grid;
+    gap: 3px;
+  }
+
+  .preflightRow strong {
+    font-size: 13px;
+  }
+
+  .preflightRow span {
+    color: var(--secondary-text-color);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+  }
+
   .sectionHead {
     min-height: 42px;
     display: flex;
@@ -3761,6 +4023,122 @@ const styles = `
     align-items: flex-start;
     justify-content: space-between;
     gap: 12px;
+  }
+
+  .runSummary {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .summaryMetric {
+    min-height: 66px;
+    border: 1px solid var(--divider-color);
+    border-radius: 8px;
+    display: grid;
+    grid-template-columns: 26px minmax(0, 1fr);
+    gap: 8px;
+    align-items: center;
+    padding: 10px;
+    background: var(--card-background-color);
+  }
+
+  .summaryMetric ha-icon {
+    width: 22px;
+    height: 22px;
+    color: var(--secondary-text-color);
+  }
+
+  .summaryMetric div {
+    min-width: 0;
+    display: grid;
+    gap: 2px;
+  }
+
+  .summaryMetric span {
+    color: var(--secondary-text-color);
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .summaryMetric strong {
+    min-width: 0;
+    font-size: 14px;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+  }
+
+  .summaryMetric.ok {
+    border-color: color-mix(in srgb, var(--success-color) 30%, var(--divider-color));
+  }
+
+  .summaryMetric.bad {
+    border-color: color-mix(in srgb, var(--error-color) 38%, var(--divider-color));
+  }
+
+  .traceReadiness {
+    min-height: 104px;
+    border: 1px solid var(--divider-color);
+    border-radius: 8px;
+    display: grid;
+    grid-template-columns: 32px minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: start;
+    padding: 14px;
+    background: var(--primary-background-color);
+  }
+
+  .traceReadiness.ok {
+    border-color: color-mix(in srgb, var(--success-color) 30%, var(--divider-color));
+  }
+
+  .traceReadiness.warning {
+    border-color: color-mix(in srgb, var(--warning-color) 38%, var(--divider-color));
+  }
+
+  .traceReadiness > ha-icon {
+    width: 26px;
+    height: 26px;
+    color: var(--secondary-text-color);
+  }
+
+  .traceReadiness.ok > ha-icon {
+    color: var(--success-color);
+  }
+
+  .traceReadiness.warning > ha-icon {
+    color: var(--warning-color);
+  }
+
+  .traceReadiness > div {
+    min-width: 0;
+    display: grid;
+    gap: 8px;
+  }
+
+  .traceReadiness strong {
+    font-size: 14px;
+  }
+
+  .traceReadiness span {
+    min-width: 0;
+    color: var(--secondary-text-color);
+    font-size: 12px;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+
+  .traceIdle {
+    min-height: 38px;
+    border: 1px solid var(--divider-color);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    color: var(--secondary-text-color);
+    font-size: 12px;
+    background: var(--primary-background-color);
   }
 
   .liveStatus {
@@ -4136,6 +4514,34 @@ const styles = `
     gap: 12px;
   }
 
+  .sampleRail {
+    border: 1px solid var(--divider-color);
+    border-radius: 8px;
+    display: grid;
+    gap: 8px;
+    padding: 10px;
+    background: var(--primary-background-color);
+  }
+
+  .sampleRail strong {
+    color: var(--secondary-text-color);
+    font-size: 12px;
+    text-transform: uppercase;
+  }
+
+  .sampleRail div {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .sampleChip {
+    min-height: 32px;
+    border-radius: 999px;
+    padding: 0 10px;
+    font-size: 12px;
+  }
+
   label {
     display: grid;
     gap: 6px;
@@ -4180,6 +4586,10 @@ const styles = `
     line-height: 1.45;
   }
 
+  .resultFacts {
+    padding-bottom: 2px;
+  }
+
   .violations {
     margin: 0;
     padding: 0 0 0 20px;
@@ -4220,7 +4630,12 @@ const styles = `
     overflow-wrap: anywhere;
   }
 
-  .regressionList {
+  .scenarioSampleList {
+    display: grid;
+    gap: 10px;
+  }
+
+  .scenarioSamples {
     display: grid;
     gap: 10px;
   }
@@ -4243,11 +4658,30 @@ const styles = `
   }
 
   .sample {
-    min-height: 78px;
+    min-height: 82px;
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
+    border-top: 1px solid var(--divider-color);
+    padding-top: 10px;
+  }
+
+  .sample:first-child {
+    border-top: 0;
+    padding-top: 0;
+  }
+
+  .sample > div:first-child {
+    min-width: 0;
+  }
+
+  .sampleActions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 8px;
   }
 
   .skeleton {
@@ -4265,6 +4699,10 @@ const styles = `
     }
 
     .workbench {
+      grid-template-columns: 1fr;
+    }
+
+    .scenarioWorkbench {
       grid-template-columns: 1fr;
     }
 
@@ -4295,6 +4733,19 @@ const styles = `
     .attempt {
       grid-template-columns: 1fr;
       align-items: start;
+    }
+
+    .runSummary {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .traceReadiness {
+      grid-template-columns: 32px minmax(0, 1fr);
+    }
+
+    .traceReadiness button {
+      grid-column: 2;
+      justify-self: start;
     }
   }
 
@@ -4333,6 +4784,23 @@ const styles = `
     .sample {
       align-items: stretch;
       flex-direction: column;
+    }
+
+    .sampleActions {
+      justify-content: flex-start;
+    }
+
+    .runSummary {
+      grid-template-columns: 1fr;
+    }
+
+    .traceReadiness {
+      grid-template-columns: 1fr;
+    }
+
+    .traceReadiness button {
+      grid-column: auto;
+      width: 100%;
     }
   }
 `;

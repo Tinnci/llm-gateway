@@ -2,7 +2,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build:panel": "bun build --target=browser custom_components/llm_gateway/frontend/voice-harness-panel.js --outfile=/tmp/voice-harness-panel.js",
+    "build:frontend-modules": "bun build --target=browser --format=esm custom_components/llm_gateway/frontend/voice-harness-model.ts custom_components/llm_gateway/frontend/voice-harness-scenario.ts custom_components/llm_gateway/frontend/voice-harness-utils.ts custom_components/llm_gateway/frontend/voice-harness-ui.ts --outdir custom_components/llm_gateway/frontend",
+    "build:panel": "bun run build:frontend-modules && bun build --target=browser custom_components/llm_gateway/frontend/voice-harness-panel.js --outfile=/tmp/voice-harness-panel.js",
     "typecheck": "tsgo --noEmit -p tsconfig.json"
   },
   "devDependencies": {

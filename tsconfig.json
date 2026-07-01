@@ -9,5 +9,5 @@
     "strict": false,
     "target": "ES2023"
   },
-  "include": ["custom_components/llm_gateway/frontend/voice-harness-panel.js"]
+  "include": ["custom_components/llm_gateway/frontend/voice-harness-*.js", "custom_components/llm_gateway/frontend/voice-harness-*.ts"]
 }

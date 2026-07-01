@@ -167,11 +167,10 @@ Current panel views:
   model ids, token budgets, request timeouts, and bounded diagnostic trace
   retention.
 - `Prompt Policies / 提示策略`: spoken prompt policies and risk rules.
-- `Scenarios / 场景测试`: ad hoc prompt policy evaluation.
-- `Search Lab / 搜索实验室`: search gate visibility and scenario checks.
+- `Scenarios / 场景测试`: ad hoc prompt policy evaluation, search gate
+  visibility, draft preflight checks, and bundled sample scenario runs.
 - `Memory Lab / 记忆实验室`: short memory snapshots.
 - `Earcons / 提示音`: rendered earcon manifest and playback.
-- `Regression / 回归测试`: bundled scenario samples.
 
 Home Assistant translation files cover the config/options flow. The custom
 panel has its own small frontend dictionary because HA custom panel modules do
@@ -262,6 +261,11 @@ uv run pytest
 bun run typecheck
 bun run build:panel
 ```
+
+The Voice Harness panel is still served to Home Assistant as browser-loadable
+`.js` modules. TypeScript helper sources in `custom_components/llm_gateway/frontend`
+are compiled back to same-directory `.js` files by `bun run build:panel` before
+the panel bundle check runs.
 
 ## Security notes
 
