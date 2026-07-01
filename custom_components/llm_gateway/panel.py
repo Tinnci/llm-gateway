@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -14,10 +15,12 @@ from .views import async_register_views
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
-URL_BASE = f"/api/{DOMAIN}/static"
+URL_BASE = f"/{DOMAIN}/static"
 PANEL_URL = "voice-harness"
 PANEL_COMPONENT = "voice-harness-panel"
-PANEL_MODULE_VERSION = "0.3.9"
+PANEL_MODULE_VERSION = json.loads(
+    (Path(__file__).parent / "manifest.json").read_text(encoding="utf-8")
+)["version"]
 PANEL_MODULE = f"{URL_BASE}/voice-harness-panel.js?v={PANEL_MODULE_VERSION}"
 PANEL_TITLE = "Voice Harness"
 DATA_PANEL_SETUP = f"{DOMAIN}_voice_harness_panel_setup"

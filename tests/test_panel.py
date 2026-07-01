@@ -46,6 +46,23 @@ async def test_panel_registers_sidebar_entry(hass):
     assert panel.config["_panel_custom"]["name"] == "voice-harness-panel"
     assert panel.config["_panel_custom"]["module_url"] == PANEL_MODULE
     assert panel.config["api_base"] == "/api/llm_gateway"
+    module_url = panel.config["_panel_custom"]["module_url"]
+    assert module_url.startswith("/llm_gateway/static/")
+
+
+async def test_panel_static_module_is_served(hass, hass_client):
+    """The registered custom element module is reachable through HA HTTP."""
+    assert await async_setup_component(hass, "http", {})
+
+    await async_setup_panel(hass)
+    client = await hass_client()
+
+    response = await client.get(PANEL_MODULE)
+    assert response.status == 200
+    assert response.content_type == "text/javascript"
+    body = await response.text()
+    assert "customElements.define" in body
+    assert "voice-harness-panel" in body
 
 
 async def test_harness_status_api(hass, hass_client):
