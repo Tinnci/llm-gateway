@@ -306,6 +306,11 @@ originate in the satellite/display layer. They are surfaced through the
 lock-screen status and HA entities, and can be correlated with Gateway timelines
 by timestamp.
 
+Voice Harness consumes `DiagnosticSnapshot.playback_interrupt` as evidence, not
+as a control surface. The interrupt owner remains `phosh-ha-status`; Gateway
+shows the owner, reason, request id, stop latency, target process patterns,
+signals, and remaining process counts.
+
 ## Spoken output
 
 The Gateway preserves the model's raw Markdown in the conversation log, then
@@ -466,7 +471,10 @@ Satellite work owned outside this integration:
 - play `provider_fallback.wav` once when model provider fallback is triggered,
 - keep all voice playback routed to the AEC reference sink,
 - keep capture open during TTS when the AEC graph is active,
-- log enough audio-chain telemetry for Voice Harness or lock-screen display.
+- log enough audio-chain telemetry for Voice Harness or lock-screen display,
+- expose `audio_frontend_graph.gaps` and `audio_topology.concurrency` so
+  Harness can show missing low-power MAD, beamforming, Fluence, and multi-room
+  orchestration without moving those concerns into Gateway.
 
 Audio processing that should stay local:
 

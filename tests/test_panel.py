@@ -124,6 +124,43 @@ async def test_harness_status_api(hass, hass_client):
             "snapshot": {
                 "schema_version": 1,
                 "pipewire_graph": {"aec_enabled": True},
+                "audio_topology": {
+                    "concurrency": {
+                        "multi_room_manager": False,
+                        "session_model": "single_room_single_active_turn",
+                        "future_multi_room_orchestrator": {
+                            "implemented": False,
+                            "seam": "room_session_orchestrator_above_satellite_paths",
+                        },
+                    }
+                },
+                "audio_frontend_graph": {
+                    "model": "user_space_pipewire_graph",
+                    "gaps": [
+                        {
+                            "id": "orchestration.multi_room",
+                            "state": "not_implemented",
+                            "requirement": "multi_room_parallel_streams",
+                        }
+                    ],
+                },
+                "playback_interrupt": {
+                    "schema_version": 1,
+                    "phase": "interrupted",
+                    "owner": "phosh-ha-status",
+                    "source": "kukui-display-agent",
+                    "reason": "asr_endpoint",
+                    "request_id": "request-1",
+                    "barge_in_stop_latency_ms": 42,
+                    "targets": [
+                        {
+                            "pattern": "snd-command-wrapper.sh",
+                            "matched_before": 1,
+                            "remaining_after": 0,
+                        }
+                    ],
+                    "signals": ["TERM", "KILL"],
+                },
                 "checks": [
                     {
                         "id": "pipewire.nodes.visible",
@@ -204,6 +241,24 @@ async def test_harness_status_api(hass, hass_client):
     )
     assert data["satellite"]["diagnostic_snapshot"]["schema_version"] == 1
     assert data["satellite"]["diagnostic_snapshot"]["pipewire_graph"]["aec_enabled"]
+    assert (
+        data["satellite"]["diagnostic_snapshot"]["audio_topology"]["concurrency"][
+            "session_model"
+        ]
+        == "single_room_single_active_turn"
+    )
+    assert (
+        data["satellite"]["diagnostic_snapshot"]["audio_frontend_graph"]["gaps"][0][
+            "id"
+        ]
+        == "orchestration.multi_room"
+    )
+    assert (
+        data["satellite"]["diagnostic_snapshot"]["playback_interrupt"][
+            "barge_in_stop_latency_ms"
+        ]
+        == 42
+    )
     assert (
         data["satellite"]["states"]["diagnostic_snapshot"]["attributes"]["snapshot"][
             "checks"

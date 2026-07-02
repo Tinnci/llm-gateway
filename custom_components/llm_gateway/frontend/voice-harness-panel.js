@@ -254,6 +254,10 @@ const I18N = {
     "satellite.asr_panel": "ASR progress",
     "satellite.tts_panel": "Latest TTS",
     "satellite.acoustic_panel": "Acoustic measurement",
+    "satellite.playback_interrupt_panel": "Playback interrupt",
+    "satellite.audio_graph_panel": "Audio graph comparison",
+    "satellite.graph_gaps": "Graph gaps",
+    "satellite.multi_room": "Multi-room",
     "satellite.dependency_layers": "Dependency layers",
     "satellite.failed_checks": "{count} failing",
     "satellite.warning_checks": "{count} warnings",
@@ -614,6 +618,10 @@ const I18N = {
     "satellite.asr_panel": "ASR 进度",
     "satellite.tts_panel": "最近 TTS",
     "satellite.acoustic_panel": "声学测量",
+    "satellite.playback_interrupt_panel": "播放打断",
+    "satellite.audio_graph_panel": "音频图对比",
+    "satellite.graph_gaps": "图缺口",
+    "satellite.multi_room": "多房间",
     "satellite.dependency_layers": "依赖层",
     "satellite.failed_checks": "{count} 个失败",
     "satellite.warning_checks": "{count} 个警告",
@@ -1594,8 +1602,10 @@ class VoiceHarnessPanel extends HTMLElement {
         </article>
         ${this._satelliteStatePanel(states)}
         ${this._satelliteAsrPanel(states.asr_metrics, snapshot)}
+        ${this._satellitePlaybackInterruptPanel(snapshot)}
         ${this._satelliteTtsPanel(snapshot)}
         ${this._satelliteAcousticPanel(snapshot)}
+        ${this._satelliteAudioGraphComparisonPanel(snapshot)}
         ${this._satelliteDiagnosticPanel(snapshot)}
       </div>
     `;
@@ -1800,6 +1810,60 @@ class VoiceHarnessPanel extends HTMLElement {
     `;
   }
 
+  _satellitePlaybackInterruptPanel(snapshot) {
+    const interrupt = snapshot.playback_interrupt || {};
+    if (!Object.keys(interrupt).length) {
+      return "";
+    }
+    const latency = interrupt.barge_in_stop_latency_ms ?? interrupt.stop_latency_ms;
+    const targets = Array.isArray(interrupt.targets) ? interrupt.targets : [];
+    const stopped = targets.reduce((sum, target) => sum + Number(target.matched_before || 0), 0);
+    const remaining = targets.reduce((sum, target) => sum + Number(target.remaining_after || 0), 0);
+    return `
+      <article class="surface satellitePanel">
+        <div class="sectionHead">
+          <div>
+            <h2>${escapeHtml(this._t("satellite.playback_interrupt_panel"))}</h2>
+            <div class="meta">${escapeHtml([interrupt.owner, interrupt.source, interrupt.triggered_at ? this._formatTime(interrupt.triggered_at) : ""].filter(Boolean).join(" · "))}</div>
+          </div>
+          <span class="chip ${remaining ? "warning" : "ok"}">${Number.isFinite(Number(latency)) ? `${Number(latency)} ms` : "-"}</span>
+        </div>
+        <div class="detailGrid">
+          ${this._detailItem(this._t("runs.reason"), [
+            interrupt.phase || "",
+            interrupt.reason || "",
+            interrupt.request_id ? `request=${interrupt.request_id}` : "",
+          ])}
+          ${this._detailItem(this._t("satellite.playback"), [
+            `targets=${targets.length}`,
+            `matched=${stopped}`,
+            `remaining=${remaining}`,
+            Array.isArray(interrupt.signals) ? `signals=${interrupt.signals.join("/")}` : "",
+          ])}
+          ${this._detailItem(this._t("runs.timing"), [
+            Number.isFinite(Number(interrupt.timing_ms?.feedback_stop_ms)) ? `feedback=${Number(interrupt.timing_ms.feedback_stop_ms)} ms` : "",
+            Number.isFinite(Number(interrupt.timing_ms?.processing_stop_ms)) ? `processing=${Number(interrupt.timing_ms.processing_stop_ms)} ms` : "",
+            Number.isFinite(Number(interrupt.timing_ms?.playback_stop_script_ms)) ? `script=${Number(interrupt.timing_ms.playback_stop_script_ms)} ms` : "",
+          ])}
+        </div>
+        ${targets.length ? `
+          <div class="stateList compactStateList">
+            ${targets.slice(0, 8).map((target) => `
+              <div class="stateRow">
+                <div>
+                  <strong>${escapeHtml(target.pattern || "")}</strong>
+                  <span>${escapeHtml(`matched=${Number(target.matched_before || 0)} · remaining=${Number(target.remaining_after || 0)}`)}</span>
+                </div>
+                <span class="chip ${Number(target.remaining_after || 0) ? "warning" : "ok"}">${escapeHtml(Number(target.remaining_after || 0) ? "remaining" : "stopped")}</span>
+              </div>
+            `).join("")}
+          </div>
+        ` : ""}
+        ${this._jsonDetails(this._t("satellite.playback_interrupt_panel"), interrupt)}
+      </article>
+    `;
+  }
+
   _satelliteAcousticPanel(snapshot) {
     const report = snapshot.acoustic_measurement || {};
     if (!Object.keys(report).length) {
@@ -1830,6 +1894,53 @@ class VoiceHarnessPanel extends HTMLElement {
             report.barge_in_latency_ms === undefined ? "" : `${Number(report.barge_in_latency_ms || 0)} ms`,
           ])}
         </div>
+      </article>
+    `;
+  }
+
+  _satelliteAudioGraphComparisonPanel(snapshot) {
+    const graph = snapshot.audio_frontend_graph || {};
+    const topology = snapshot.audio_topology || {};
+    const gaps = Array.isArray(graph.gaps) ? graph.gaps : [];
+    const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
+    const concurrency = topology.concurrency || {};
+    const orchestrator = concurrency.future_multi_room_orchestrator || {};
+    if (!gaps.length && !nodes.length && !Object.keys(concurrency).length) {
+      return "";
+    }
+    const missing = gaps.filter((gap) => gap.state !== "implemented" && gap.state !== "configured");
+    return `
+      <article class="surface satellitePanel">
+        <div class="sectionHead">
+          <div>
+            <h2>${escapeHtml(this._t("satellite.audio_graph_panel"))}</h2>
+            <div class="meta">${escapeHtml(graph.model || topology.satellite?.room_scope || "")}</div>
+          </div>
+          <span class="chip ${missing.length ? "warning" : "ok"}">${escapeHtml(this._t("satellite.graph_gaps"))}: ${missing.length}</span>
+        </div>
+        <div class="detailGrid">
+          ${this._detailItem(this._t("satellite.graph_gaps"), missing.slice(0, 5).map((gap) => [
+            gap.id || "",
+            gap.state ? `state=${gap.state}` : "",
+            gap.requirement ? `requires=${gap.requirement}` : "",
+          ].filter(Boolean).join(" · ")))}
+          ${this._detailItem(this._t("satellite.multi_room"), [
+            `manager=${Boolean(concurrency.multi_room_manager)}`,
+            concurrency.session_model ? `session=${concurrency.session_model}` : "",
+            orchestrator.seam ? `seam=${orchestrator.seam}` : "",
+            Array.isArray(orchestrator.per_room_requirements) ? `per_room=${orchestrator.per_room_requirements.length}` : "",
+          ])}
+          ${this._detailItem("Realtime nodes", nodes.slice(0, 6).map((node) => [
+            node.id || "",
+            node.state ? `state=${node.state}` : "",
+            node.realtime_path === undefined ? "" : `realtime=${Boolean(node.realtime_path)}`,
+            node.offloaded === undefined ? "" : `offloaded=${Boolean(node.offloaded)}`,
+          ].filter(Boolean).join(" · ")))}
+        </div>
+        ${this._jsonDetails(this._t("satellite.audio_graph_panel"), {
+          graph,
+          concurrency,
+        })}
       </article>
     `;
   }
