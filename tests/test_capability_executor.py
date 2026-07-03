@@ -90,6 +90,36 @@ async def test_local_executor_calls_climate_service(hass):
     assert calls == [{"entity_id": ["climate.bedroom_ac"]}]
 
 
+async def test_local_executor_sets_climate_temperature(hass):
+    calls: list[dict] = []
+
+    async def set_temperature(call):
+        calls.append(dict(call.data))
+
+    hass.states.async_set(
+        "climate.bedroom_ac",
+        "cool",
+        {"friendly_name": "卧室空调", "current_temperature": 27.8, "temperature": 25.5},
+    )
+    hass.services.async_register("climate", "set_temperature", set_temperature)
+
+    route = decide_route("把空调的温度调到 16 度。")
+    result = await async_try_execute_local_capability(
+        hass,
+        "把空调的温度调到 16 度。",
+        route,
+    )
+
+    assert route.next_action == "execute_local"
+    assert route.metadata["action"] == "climate_set_temperature"
+    assert route.metadata["target_temperature"] == 16.0
+    assert result is not None
+    assert result.status == "executed"
+    assert result.speech == "已把卧室空调设为16度。"
+    assert calls == [{"entity_id": ["climate.bedroom_ac"], "temperature": 16.0}]
+    assert result.trace_attrs()["candidate"]["target_temperature"] == 16.0
+
+
 async def test_local_executor_clarifies_ambiguous_media_player(hass):
     hass.states.async_set("media_player.a", "idle", {"friendly_name": "客厅音箱 A"})
     hass.states.async_set("media_player.b", "idle", {"friendly_name": "客厅音箱 B"})

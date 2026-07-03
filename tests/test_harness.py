@@ -70,3 +70,55 @@ def test_evaluate_scenario_reports_missing_confirmation_prompt():
     assert not result.passed
     assert "confirmation_prompt_missing" in result.violations
     assert "unsafe_service_called_without_confirmation" in result.violations
+
+
+def test_evaluate_scenario_covers_climate_setpoint_known_failure():
+    result = evaluate_scenario(
+        {
+            "scenario_id": "known_failure_climate_set_temperature_routed_as_state",
+            "user": "把空调的温度调到 16 度。",
+            "expected": {
+                "must_search": False,
+                "route_decision": {
+                    "task_family": "home_control",
+                    "route": "local_action",
+                    "next_action": "execute_local",
+                    "metadata": {
+                        "action": "climate_set_temperature",
+                        "domain": "climate",
+                        "target_temperature": 16.0,
+                    },
+                },
+                "spoken_response": {
+                    "must_not_include": ["暂时没有本地状态数据"],
+                },
+            },
+        },
+        {"response": "已把卧室空调设为16度。"},
+    )
+
+    assert result.passed
+
+
+def test_evaluate_scenario_covers_climate_read_known_failure():
+    result = evaluate_scenario(
+        {
+            "scenario_id": "known_failure_climate_read_rendered_as_empty_state",
+            "user": "现在空调的温度是几度？",
+            "expected": {
+                "must_search": False,
+                "route_decision": {
+                    "task_family": "home_state",
+                    "route": "local_live_context",
+                    "next_action": "call_tool_then_local_render",
+                },
+                "spoken_response": {
+                    "must_include": ["当前", "设定"],
+                    "must_not_include": ["暂时没有本地状态数据"],
+                },
+            },
+        },
+        {"response": "卧室空调当前 27.8 度，设定 25.5 度。"},
+    )
+
+    assert result.passed

@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Literal
 
-from .capability_executor import local_action_candidate
+from .capability_executor import LocalActionCandidate, local_action_candidate
 from .static_context import classify_inventory_query
 
 TaskFamily = Literal[
@@ -758,6 +758,11 @@ def decide_route(text: str) -> RouteDecision:  # noqa: PLR0911, PLR0912
     if _VOLUME_RE.search(value):
         return _volume_route(value)
 
+    if (
+        local_candidate := local_action_candidate(value)
+    ) is not None and local_candidate.family == "home_control":
+        return _local_home_control_route(local_candidate)
+
     if _looks_like_forecast_query(value):
         return _environment_route(value, confidence=0.88)
 
@@ -925,21 +930,7 @@ def decide_route(text: str) -> RouteDecision:  # noqa: PLR0911, PLR0912
     if _HOME_CONTROL_RE.search(value):
         candidate = local_action_candidate(value)
         if candidate is not None and candidate.family == "home_control":
-            return RouteDecision(
-                task_family="home_control",
-                task_type="home_control",
-                confidence=candidate.confidence,
-                allowed_tools=("local_service_call",),
-                forbidden_tools=("search_web",),
-                next_action="execute_local",
-                route="local_action",
-                matched_capability="local_home_control",
-                metadata={
-                    "action": candidate.action,
-                    "domain": candidate.domain,
-                    "area": candidate.area,
-                },
-            )
+            return _local_home_control_route(candidate)
         return RouteDecision(
             task_family="home_control",
             task_type="home_control",
@@ -963,6 +954,25 @@ def decide_route(text: str) -> RouteDecision:  # noqa: PLR0911, PLR0912
         )
 
     return _unknown("no_capability_match")
+
+
+def _local_home_control_route(candidate: LocalActionCandidate) -> RouteDecision:
+    return RouteDecision(
+        task_family="home_control",
+        task_type="home_control",
+        confidence=candidate.confidence,
+        allowed_tools=("local_service_call",),
+        forbidden_tools=("search_web",),
+        next_action="execute_local",
+        route="local_action",
+        matched_capability="local_home_control",
+        metadata={
+            "action": candidate.action,
+            "domain": candidate.domain,
+            "area": candidate.area,
+            "target_temperature": candidate.target_temperature,
+        },
+    )
 
 
 def task_family_for_text(text: str) -> TaskFamily:

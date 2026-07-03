@@ -32,7 +32,39 @@ _TOOL_PROTOCOL_RE = re.compile(
     r"\bGetLiveContext\b)",
     re.IGNORECASE,
 )
+_REASONING_LEAK_RE = re.compile(
+    r"(^|\n)\s*(we need to respond|we need to answer|we should answer|"
+    r"the user wants|the user asks|likely\b|need to provide|"
+    r"analysis\s*:|reasoning\s*:|final answer\s*:|"
+    r"需要回答用户|用户想要|用户要求|我们需要回答)",
+    re.IGNORECASE,
+)
+_REASONING_META_RE = re.compile(
+    r"\b(spoken answer|plain text,?\s*no markdown|the user wants to|"
+    r"the user asks for|system prompt|assistant response)\b",
+    re.IGNORECASE,
+)
+_QUOTED_PHRASE_RE = re.compile(r"[\"'“”‘’]([^\"'“”‘’]{4,80})[\"'“”‘’]")
+_SENTENCE_CHUNK_RE = re.compile(r"[。！？!?;；\n]+")
+_LOOP_TOKEN_RE = re.compile(r"[a-z0-9]+|[\u4e00-\u9fff]")
+_MIN_LOOP_TEXT_CHARS = 180
+_MIN_REPEATED_PHRASE_CHARS = 4
+_REPEATED_PHRASE_LIMIT = 4
+_MIN_REPEATED_CHUNK_CHARS = 12
+_MAX_REPEATED_CHUNK_CHARS = 160
+_REPEATED_CHUNK_LIMIT = 4
+_MIN_LOOP_TOKENS = 60
+_MIN_LOOP_NGRAM_WIDTH = 4
+_MAX_LOOP_NGRAM_WIDTH = 10
+_REPEATED_NGRAM_LIMIT = 8
 TOOL_PROTOCOL_FALLBACK = "我不能直接展示内部工具调用。请换个说法或稍后重试。"
+_OUTPUT_CONTRACT_REASON_LABELS = {
+    "tool_protocol_leak": "内部工具调用泄漏",
+    "reasoning_leak": "内部推理文本泄漏",
+    "repetition_loop": "重复内容循环",
+    "reasoning_repetition_leak": "内部推理文本泄漏并出现重复循环",
+}
+_OUTPUT_CONTRACT_DEFAULT_LABEL = "模型输出不适合播报"
 
 
 def markdown_to_spoken_text(
@@ -60,9 +92,38 @@ def enforce_output_contract(text: str | None) -> tuple[str, bool, str]:
     value = str(text or "").strip()
     if not value:
         return "", False, ""
+    reasoning_leak = _looks_like_reasoning_leak(value)
+    repetition_loop = _has_repetition_loop(value)
+    if reasoning_leak and repetition_loop:
+        return (
+            output_contract_error_speech("reasoning_repetition_leak"),
+            True,
+            "reasoning_repetition_leak",
+        )
+    if reasoning_leak:
+        return output_contract_error_speech("reasoning_leak"), True, "reasoning_leak"
+    if repetition_loop:
+        return (
+            output_contract_error_speech("repetition_loop"),
+            True,
+            "repetition_loop",
+        )
     if _TOOL_PROTOCOL_RE.search(value):
         return TOOL_PROTOCOL_FALLBACK, True, "tool_protocol_leak"
     return value, False, ""
+
+
+def output_contract_reason_label(reason: str) -> str:
+    """Return a short user-facing label for an output-contract failure."""
+    return _OUTPUT_CONTRACT_REASON_LABELS.get(reason, _OUTPUT_CONTRACT_DEFAULT_LABEL)
+
+
+def output_contract_error_speech(reason: str, *, retry_failed: bool = False) -> str:
+    """Return concise speech that explains why the unsafe answer was not spoken."""
+    label = output_contract_reason_label(reason)
+    if retry_failed:
+        return f"回答生成异常：{label}。自动重试失败，请再试一次。"
+    return f"回答生成异常：{label}。已停止播报，请再试一次。"
 
 
 def _render_token(token: dict[str, Any]) -> str:  # noqa: PLR0911, PLR0912
@@ -138,6 +199,51 @@ def _should_spoken_render_fenced_block(raw: str, *, info: str = "") -> bool:
 
 def _looks_like_code(text: str) -> bool:
     return bool(_CODE_HINT_RE.search(text) or _CODE_SYMBOL_RE.search(text))
+
+
+def _looks_like_reasoning_leak(text: str) -> bool:
+    return bool(_REASONING_LEAK_RE.search(text) or _REASONING_META_RE.search(text))
+
+
+def _has_repetition_loop(text: str) -> bool:
+    normalized = _WHITESPACE_RE.sub(" ", text.strip().lower())
+    if len(normalized) < _MIN_LOOP_TEXT_CHARS:
+        return False
+
+    quoted_counts: dict[str, int] = {}
+    for phrase in _QUOTED_PHRASE_RE.findall(normalized):
+        key = _normalize_loop_phrase(phrase)
+        if len(key) < _MIN_REPEATED_PHRASE_CHARS:
+            continue
+        quoted_counts[key] = quoted_counts.get(key, 0) + 1
+        if quoted_counts[key] >= _REPEATED_PHRASE_LIMIT:
+            return True
+
+    chunk_counts: dict[str, int] = {}
+    for chunk in _SENTENCE_CHUNK_RE.split(normalized):
+        key = _normalize_loop_phrase(chunk)
+        if not _MIN_REPEATED_CHUNK_CHARS <= len(key) <= _MAX_REPEATED_CHUNK_CHARS:
+            continue
+        chunk_counts[key] = chunk_counts.get(key, 0) + 1
+        if chunk_counts[key] >= _REPEATED_CHUNK_LIMIT:
+            return True
+
+    tokens = _LOOP_TOKEN_RE.findall(normalized)
+    if len(tokens) < _MIN_LOOP_TOKENS:
+        return False
+    for width in range(_MIN_LOOP_NGRAM_WIDTH, _MAX_LOOP_NGRAM_WIDTH + 1):
+        counts: dict[tuple[str, ...], int] = {}
+        for index in range(len(tokens) - width + 1):
+            ngram = tuple(tokens[index : index + width])
+            counts[ngram] = counts.get(ngram, 0) + 1
+            if counts[ngram] >= _REPEATED_NGRAM_LIMIT:
+                return True
+    return False
+
+
+def _normalize_loop_phrase(text: str) -> str:
+    text = re.sub(r"[^\w\u4e00-\u9fff·]+", "", text, flags=re.UNICODE)
+    return text.strip().lower()
 
 
 def _collapse_block_text(text: str) -> str:

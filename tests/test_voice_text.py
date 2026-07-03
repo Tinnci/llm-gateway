@@ -6,6 +6,7 @@ from custom_components.llm_gateway.voice_text import (
     TOOL_PROTOCOL_FALLBACK,
     enforce_output_contract,
     markdown_to_spoken_text,
+    output_contract_error_speech,
 )
 
 
@@ -57,3 +58,24 @@ def test_output_contract_allows_plain_factual_text():
     assert not modified
     assert reason == ""
     assert safe.startswith("Virginia Woolf")
+
+
+def test_output_contract_blocks_reasoning_repetition_loop():
+    unsafe = (
+        "We need to respond with spoken answer, plain text, no markdown. "
+        'The user wants the full text. Likely "如梦令·常记溪亭日暮". '
+        + 'She also wrote "如梦令·常记溪亭日暮". '
+        * 12
+    )
+
+    safe, modified, reason = enforce_output_contract(unsafe)
+
+    assert modified
+    assert reason == "reasoning_repetition_leak"
+    assert safe == output_contract_error_speech(reason)
+
+
+def test_output_contract_retry_failed_speech_names_specific_problem():
+    assert output_contract_error_speech("repetition_loop", retry_failed=True) == (
+        "回答生成异常：重复内容循环。自动重试失败，请再试一次。"
+    )

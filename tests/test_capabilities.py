@@ -377,6 +377,19 @@ def test_colloquial_home_control_routes_to_control_capability():
         assert not decision.requires_llm
 
 
+def test_climate_temperature_setpoint_routes_to_local_action():
+    decision = decide_route("把空调的温度调到 16 度。")
+
+    assert decision.task_family == "home_control"
+    assert decision.task_type == "home_control"
+    assert decision.route == "local_action"
+    assert decision.next_action == "execute_local"
+    assert not decision.requires_llm
+    assert decision.metadata["action"] == "climate_set_temperature"
+    assert decision.metadata["domain"] == "climate"
+    assert decision.metadata["target_temperature"] == 16.0
+
+
 def test_bare_lookup_weather_stays_home_state():
     decision = decide_route("查一下今天空气质量")
 

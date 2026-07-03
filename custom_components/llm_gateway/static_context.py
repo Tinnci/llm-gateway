@@ -28,7 +28,7 @@ EntitySource = Literal["static_context", "live_context", "ha_registry"]
 
 _DEVICE_START_RE = re.compile(r"^\s*-\s*names:\s*(?P<names>.+?)\s*$")
 _FIELD_RE = re.compile(
-    r"^\s*(?P<key>domain|areas|state|unit_of_measurement):\s*(?P<value>.*?)\s*$"
+    r"^\s*(?P<key>domain|areas|state|unit_of_measurement|current_temperature|temperature):\s*(?P<value>.*?)\s*$"
 )
 _TEXT_NORMALIZE_RE = re.compile(r"[\s《》「」『』“”\"'`·.。,:：，、_\-—!?！？]+")
 
@@ -155,6 +155,7 @@ class ExposedEntity:
     aliases: tuple[str, ...] = ()
     state: str = ""
     unit_of_measurement: str = ""
+    attributes: tuple[tuple[str, str], ...] = ()
     entity_id: str | None = None
     can_control: bool = False
     can_read_state: bool = True
@@ -265,6 +266,7 @@ class ScalarStateRenderResult:
                     "areas": list(entity.areas),
                     "state": entity.state,
                     "unit_of_measurement": entity.unit_of_measurement,
+                    "attributes": dict(entity.attributes),
                     "source": entity.source,
                 }
                 for entity in self.entities
@@ -638,7 +640,7 @@ def _render_home_temperature_summary(
         if _metric_for_entity(entity) != "temperature":
             continue
         label = _summary_area_label(entity)
-        if not _state_is_available(entity.state):
+        if not _state_metric_is_available(entity, "temperature"):
             skipped.append(entity.name)
             continue
         if label in seen_labels:
@@ -717,6 +719,7 @@ def parse_static_devices(
     current_areas: tuple[str, ...] = ()
     current_state = ""
     current_unit = ""
+    current_attributes: dict[str, str] = {}
 
     def flush() -> None:
         if current_name and current_domain:
@@ -728,6 +731,7 @@ def parse_static_devices(
                     aliases=_aliases_for_name(current_name),
                     state=_clean_state_value(current_state),
                     unit_of_measurement=_clean_state_value(current_unit),
+                    attributes=tuple(sorted(current_attributes.items())),
                     can_control=current_domain.strip() in CONTROLLABLE_DOMAINS,
                     can_read_state=True,
                     source=source,
@@ -742,6 +746,7 @@ def parse_static_devices(
             current_areas = ()
             current_state = ""
             current_unit = ""
+            current_attributes = {}
             continue
         if not current_name:
             continue
@@ -756,6 +761,8 @@ def parse_static_devices(
                 current_state = value
             elif key == "unit_of_measurement":
                 current_unit = value
+            elif key in {"current_temperature", "temperature"}:
+                current_attributes[key] = _clean_state_value(value)
     flush()
     return entities
 
@@ -941,7 +948,8 @@ def _select_state_entities(
             continue
         current = selected_by_metric.get(metric)
         if current is None or (
-            not _state_is_available(current.state) and _state_is_available(entity.state)
+            not _state_metric_is_available(current, metric)
+            and _state_metric_is_available(entity, metric)
         ):
             selected_by_metric[metric] = entity
     return tuple(
@@ -978,7 +986,7 @@ def _render_scalar_state_summary(
     for entity in entities:
         metric = _metric_for_entity(entity)
         label = STATE_METRIC_LABELS.get(metric, entity.name)
-        if _state_is_available(entity.state):
+        if _state_metric_is_available(entity, metric):
             available.append(f"{label} {_state_with_spoken_unit(entity)}")
         else:
             unavailable.append(label)
@@ -998,6 +1006,8 @@ def _render_single_scalar_state(
     entity: ExposedEntity,
     metric: str,
 ) -> str:
+    if entity.domain == "climate" and metric == "temperature":
+        return _render_single_climate_temperature(entity)
     area = _state_area_label(text, entity)
     value = _clean_state_value(entity.state)
     label = STATE_METRIC_LABELS.get(metric, entity.name)
@@ -1013,11 +1023,29 @@ def _render_single_scalar_state(
     return f"{label} {_state_with_spoken_unit(entity)}。"
 
 
+def _render_single_climate_temperature(entity: ExposedEntity) -> str:
+    label = entity.name or next(iter(entity.areas), "空调")
+    current = _climate_current_temperature(entity)
+    target = _climate_target_temperature(entity)
+    if not _state_is_available(current) and not _state_is_available(target):
+        return f"{label}当前温度不可用。"
+    if _state_is_available(current) and _state_is_available(target):
+        return (
+            f"{label}当前 {_format_spoken_number(current)} 度，"
+            f"设定 {_format_spoken_number(target)} 度。"
+        )
+    if _state_is_available(current):
+        return f"{label}当前 {_format_spoken_number(current)} 度。"
+    return f"{label}设定 {_format_spoken_number(target)} 度。"
+
+
 def _metric_for_entity(entity: ExposedEntity) -> str:
     name = _normalize_query_text(entity.name)
     for metric, patterns in STATE_ENTITY_PATTERNS:
         if any(pattern in name for pattern in patterns):
             return metric
+    if entity.domain == "climate" and _state_metric_is_available(entity, "temperature"):
+        return "temperature"
     if entity.domain == "weather" or "天气" in name:
         return "weather"
     return ""
@@ -1039,12 +1067,27 @@ def _state_is_available(value: str) -> bool:
     return _clean_state_value(value).lower() not in STATE_UNAVAILABLE_VALUES
 
 
+def _state_metric_is_available(entity: ExposedEntity, metric: str) -> bool:
+    if entity.domain == "climate" and metric == "temperature":
+        value = _climate_current_temperature(entity) or _climate_target_temperature(
+            entity
+        )
+        return _state_is_available(entity.state) and _state_is_available(value)
+    return _state_is_available(entity.state)
+
+
 def _unit_suffix(entity: ExposedEntity) -> str:
     unit = _clean_state_value(entity.unit_of_measurement)
     return f" {unit}" if unit else ""
 
 
 def _state_with_spoken_unit(entity: ExposedEntity) -> str:
+    if entity.domain == "climate":
+        value = _climate_current_temperature(entity) or _climate_target_temperature(
+            entity
+        )
+        if _state_is_available(value):
+            return f"{_format_spoken_number(value)} 度"
     state = _clean_state_value(entity.state)
     unit = _clean_state_value(entity.unit_of_measurement)
     if unit in {"°C", "℃"}:
@@ -1052,6 +1095,36 @@ def _state_with_spoken_unit(entity: ExposedEntity) -> str:
     if unit == "%":
         return f"{state}%"
     return f"{state}{_unit_suffix(entity)}"
+
+
+def _entity_attribute(entity: ExposedEntity, key: str) -> str:
+    for attr_key, value in entity.attributes:
+        if attr_key == key:
+            return _clean_state_value(value)
+    return ""
+
+
+def _climate_current_temperature(entity: ExposedEntity) -> str:
+    if entity.domain != "climate":
+        return ""
+    return _entity_attribute(entity, "current_temperature")
+
+
+def _climate_target_temperature(entity: ExposedEntity) -> str:
+    if entity.domain != "climate":
+        return ""
+    return _entity_attribute(entity, "temperature")
+
+
+def _format_spoken_number(value: str) -> str:
+    cleaned = _clean_state_value(value)
+    try:
+        number = float(cleaned)
+    except ValueError:
+        return cleaned
+    if number.is_integer():
+        return str(int(number))
+    return f"{number:g}"
 
 
 def _state_area_label(text: str, entity: ExposedEntity) -> str:

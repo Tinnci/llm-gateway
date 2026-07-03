@@ -70,12 +70,7 @@ def evaluate_scenario(  # noqa: PLR0912 - compact rule list for harness reportin
     ):
         violations.append("route_contract_non_llm_answers_with_llm")
 
-    route_actual = route_decision.as_dict()
-    for key, expected_value in route_expected.items():
-        if route_actual.get(str(key)) != expected_value:
-            violations.append(
-                f"route_mismatch:{key}:expected={expected_value}:actual={route_actual.get(str(key))}"
-            )
+    violations.extend(_route_violations(route_decision.as_dict(), route_expected))
 
     if expected.get("must_search") is True and not should_allow_search(user):
         violations.append("search_required_but_policy_denied")
@@ -128,3 +123,39 @@ def evaluate_scenario(  # noqa: PLR0912 - compact rule list for harness reportin
         violations.append("confirmation_prompt_missing")
 
     return HarnessResult(not violations, violations)
+
+
+def _route_violations(
+    route_actual: dict[str, Any],
+    route_expected: dict[str, Any],
+) -> list[str]:
+    violations: list[str] = []
+    for key, expected_value in route_expected.items():
+        if key == "metadata" and isinstance(expected_value, dict):
+            violations.extend(_route_metadata_violations(route_actual, expected_value))
+            continue
+        actual_value = route_actual.get(str(key))
+        if actual_value != expected_value:
+            violations.append(
+                f"route_mismatch:{key}:expected={expected_value}:actual={actual_value}"
+            )
+    return violations
+
+
+def _route_metadata_violations(
+    route_actual: dict[str, Any],
+    metadata_expected: dict[str, Any],
+) -> list[str]:
+    actual_metadata = route_actual.get("metadata")
+    if not isinstance(actual_metadata, dict):
+        actual_metadata = {}
+    violations: list[str] = []
+    for metadata_key, expected_value in metadata_expected.items():
+        actual_value = actual_metadata.get(str(metadata_key))
+        if actual_value != expected_value:
+            violations.append(
+                "route_mismatch:"
+                f"metadata.{metadata_key}:expected={expected_value}:"
+                f"actual={actual_value}"
+            )
+    return violations

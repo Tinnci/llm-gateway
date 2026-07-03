@@ -65,6 +65,7 @@ from .resolution import (
     weather_resolution_frame,
 )
 from .router import (
+    ModelRoute,
     legacy_model_from_options,
     parse_extra_body,
     select_model_route,
@@ -78,7 +79,12 @@ from .search import (
 from .static_context import render_device_inventory, render_scalar_state_answer
 from .traces import TraceTurn
 from .voice_controls import async_handle_voice_runtime_command
-from .voice_text import enforce_output_contract, markdown_to_spoken_text
+from .voice_text import (
+    enforce_output_contract,
+    markdown_to_spoken_text,
+    output_contract_error_speech,
+    output_contract_reason_label,
+)
 from .weather_context import WeatherContextProvider, render_weather_context_answer
 
 if TYPE_CHECKING:
@@ -88,7 +94,6 @@ if TYPE_CHECKING:
     from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
     from .config_entry import LLMGatewayConfigEntry
-    from .router import ModelRoute
     from .runtime import LLMGatewayRuntimeData, TurnToken
 
 VOICE_RESPONSE_CONTRACT = """Voice response contract:
@@ -133,6 +138,18 @@ Use the tool results already present in this conversation and provide the final
 spoken answer now. Do not call any more tools. If the available local/live
 context is insufficient, say that briefly instead of searching or retrying.
 """
+OUTPUT_CONTRACT_REPAIR_CONTRACT = """Voice output repair contract:
+- You are repairing one unsafe final response before it is spoken aloud.
+- Return only the corrected spoken answer, in the user's language.
+- Use plain text, no Markdown, no tool protocol, no internal reasoning.
+- Keep it concise: at most two short sentences.
+- If the provided context is insufficient, say that the answer generation failed
+  and the user should try again. Do not invent details.
+"""
+OUTPUT_REPAIR_MAX_TOKENS = 220
+OUTPUT_REPAIR_TIMEOUT_S = 20
+OUTPUT_REPAIR_CONTEXT_CHARS = 1800
+OUTPUT_REPAIR_UNSAFE_CHARS = 900
 INVENTORY_TASK_TYPES = {
     "device_inventory_query",
     "area_inventory_query",
@@ -1709,19 +1726,82 @@ class LLMGatewayConversationEntity(
             )
             self._mark_run(runtime, run_id, "tts_cleaned")
         assistant_text = result.response.speech.get("plain", {}).get("speech", "")
-        safe_assistant_text, output_modified, output_reason = enforce_output_contract(
+        _safe_assistant_text, output_modified, output_reason = enforce_output_contract(
             assistant_text
         )
         if output_modified:
-            assistant_text = safe_assistant_text
-            result.response.async_set_speech(assistant_text)
             self._mark_run(
                 runtime,
                 run_id,
                 "output_contract_validator",
                 status="error",
-                attrs={"reason": output_reason},
+                attrs={
+                    "reason": output_reason,
+                    "reason_label": output_contract_reason_label(output_reason),
+                    "retry_attempted": True,
+                },
             )
+            repaired_text = await self._async_repair_output_contract(
+                user_input,
+                chat_log,
+                run_id,
+                output_reason,
+                assistant_text,
+            )
+            if repaired_text:
+                repaired_safe, repaired_modified, repaired_reason = (
+                    enforce_output_contract(repaired_text)
+                )
+                if not repaired_modified:
+                    assistant_text = repaired_safe
+                    result.response.async_set_speech(assistant_text)
+                    self._mark_run(
+                        runtime,
+                        run_id,
+                        "output_contract_retry",
+                        attrs={
+                            "reason": output_reason,
+                            "reason_label": output_contract_reason_label(output_reason),
+                            "result": "repaired",
+                        },
+                    )
+                else:
+                    assistant_text = output_contract_error_speech(
+                        repaired_reason or output_reason,
+                        retry_failed=True,
+                    )
+                    result.response.async_set_speech(assistant_text)
+                    self._mark_run(
+                        runtime,
+                        run_id,
+                        "output_contract_retry",
+                        status="error",
+                        attrs={
+                            "reason": output_reason,
+                            "repair_reason": repaired_reason,
+                            "reason_label": output_contract_reason_label(
+                                repaired_reason or output_reason
+                            ),
+                            "result": "repair_failed_contract",
+                        },
+                    )
+            else:
+                assistant_text = output_contract_error_speech(
+                    output_reason,
+                    retry_failed=True,
+                )
+                result.response.async_set_speech(assistant_text)
+                self._mark_run(
+                    runtime,
+                    run_id,
+                    "output_contract_retry",
+                    status="error",
+                    attrs={
+                        "reason": output_reason,
+                        "reason_label": output_contract_reason_label(output_reason),
+                        "result": "repair_unavailable",
+                    },
+                )
         await runtime.memory.async_record_turn(
             user_input.conversation_id,
             user_input.text,
@@ -1781,6 +1861,71 @@ class LLMGatewayConversationEntity(
         )
         runtime.turn_controller.finish(turn_token)
         return result
+
+    async def _async_repair_output_contract(
+        self,
+        user_input: conversation.ConversationInput,
+        chat_log: conversation.ChatLog,
+        run_id: str,
+        unsafe_reason: str,
+        unsafe_text: str,
+    ) -> str:
+        """Run one bounded repair pass for unsafe final speech."""
+        runtime = self.entry.runtime_data
+        options = self.entry.options
+        base_route = select_model_route(user_input.text, options)
+        route = _output_repair_route(base_route)
+        messages = _output_contract_repair_messages(
+            user_input.text,
+            chat_log.content,
+            unsafe_reason,
+            unsafe_text,
+        )
+        try:
+            result = await async_chat_completion_with_fallback(
+                session=runtime.session,
+                primary_client=runtime.client,
+                route=route,
+                options=options,
+                messages=messages,
+                tools=None,
+                tool_choice="none",
+                temperature=min(
+                    float(options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE)),
+                    0.2,
+                ),
+                top_p=min(float(options.get(CONF_TOP_P, RECOMMENDED_TOP_P)), 0.9),
+                selector=runtime.provider_selector,
+                processing_cues=False,
+            )
+        except LLMGatewayError as err:
+            self._mark_run(
+                runtime,
+                run_id,
+                "output_contract_retry_provider",
+                status="error",
+                attrs={
+                    "reason": unsafe_reason,
+                    "error": type(err).__name__,
+                    "model": route.model,
+                },
+            )
+            return ""
+
+        self._mark_run(
+            runtime,
+            run_id,
+            "output_contract_retry_provider",
+            attrs={
+                "reason": unsafe_reason,
+                "provider": result.provider.get("name"),
+                "fallback_used": result.provider.get("fallback_used"),
+                "attempts": len(result.attempts),
+                "model": route.model,
+            },
+        )
+        content = str(result.message.get("content") or "").strip()
+        return markdown_to_spoken_text(content, max_sentences=2)
 
     async def _async_finalize_stale_turn(  # noqa: PLR0913
         self,
@@ -2427,6 +2572,62 @@ def _route_trace(
     if route_decision is not None:
         trace["route_decision"] = route_decision.as_dict()
     return trace
+
+
+def _output_repair_route(route: ModelRoute) -> ModelRoute:
+    """Return a bounded non-tool route for repairing unsafe final speech."""
+    return ModelRoute(
+        kind=route.kind,
+        model=route.model,
+        max_tokens=min(route.max_tokens, OUTPUT_REPAIR_MAX_TOKENS),
+        timeout_s=min(route.timeout_s, OUTPUT_REPAIR_TIMEOUT_S),
+        extra_body=route.extra_body,
+        async_deep_task=False,
+    )
+
+
+def _output_contract_repair_messages(
+    user_text: str,
+    content: list[conversation.Content],
+    unsafe_reason: str,
+    unsafe_text: str,
+) -> list[dict[str, Any]]:
+    """Build a compact, tool-free repair prompt for unsafe spoken output."""
+    current_turn = _current_turn_content(content, user_text)
+    tool_events = _tool_events_from_content(content, user_text)
+    tool_context = _truncate_for_prompt(
+        json_dumps(tool_events) if tool_events else "[]",
+        OUTPUT_REPAIR_CONTEXT_CHARS,
+    )
+    safe_failure = output_contract_error_speech(unsafe_reason, retry_failed=True)
+    user_message = "\n".join(
+        [
+            f"用户原话: {user_text}",
+            f"失败原因: {output_contract_reason_label(unsafe_reason)}",
+            f"安全失败播报: {safe_failure}",
+            f"本轮工具结果摘要: {tool_context}",
+            "被拦截的输出片段:",
+            _truncate_for_prompt(unsafe_text, OUTPUT_REPAIR_UNSAFE_CHARS),
+            "",
+            "请重新生成可直接播报的最终答案。"
+            f"如果无法根据这些信息可靠回答，只能输出: {safe_failure}",
+        ]
+    )
+    return [
+        {"role": "system", "content": OUTPUT_CONTRACT_REPAIR_CONTRACT},
+        {
+            "role": "system",
+            "content": f"Current turn content items: {len(current_turn)}",
+        },
+        {"role": "user", "content": user_message},
+    ]
+
+
+def _truncate_for_prompt(text: str, limit: int) -> str:
+    value = str(text or "").strip()
+    if len(value) <= limit:
+        return value
+    return f"{value[: max(0, limit - 1)].rstrip()}…"
 
 
 def _local_route_trace(

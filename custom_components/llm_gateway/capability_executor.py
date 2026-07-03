@@ -29,6 +29,7 @@ LocalActionKind = Literal[
     "turn_off",
     "brightness_up",
     "brightness_down",
+    "climate_set_temperature",
     "volume_up",
     "volume_down",
     "volume_set",
@@ -44,6 +45,8 @@ LocalActionStatus = Literal[
 ]
 
 LOW_RISK_DOMAINS = {"climate", "fan", "light", "media_player", "switch"}
+CLIMATE_MIN_SETPOINT = 5
+CLIMATE_MAX_SETPOINT = 35
 ASSISTANT_VOLUME_ENTITIES = (
     "input_number.kukui_tts_volume_day",
     "input_number.kukui_tts_volume_night",
@@ -68,6 +71,7 @@ class LocalActionCandidate:
     domain: str = ""
     area: str = ""
     target_hint: str = ""
+    target_temperature: float | None = None
     volume_level: float | None = None
     mute: bool | None = None
     confidence: float = 0.0
@@ -105,6 +109,7 @@ class LocalCapabilityResult:
                 "domain": candidate.domain,
                 "area": candidate.area,
                 "target_hint": candidate.target_hint,
+                "target_temperature": candidate.target_temperature,
                 "volume_level": candidate.volume_level,
                 "mute": candidate.mute,
                 "confidence": candidate.confidence,
@@ -148,6 +153,17 @@ def _home_control_candidate(text: str, normalized: str) -> LocalActionCandidate 
     domain = _domain_from_text(normalized)
     if domain not in LOW_RISK_DOMAINS:
         return None
+    target_temperature = _climate_target_temperature(normalized)
+    if domain == "climate" and target_temperature is not None:
+        return LocalActionCandidate(
+            family="home_control",
+            action="climate_set_temperature",
+            domain=domain,
+            area=_area_from_text(text),
+            target_hint=_climate_target_hint(text, normalized),
+            target_temperature=target_temperature,
+            confidence=0.88,
+        )
     action: LocalActionKind | None = None
     if any(word in normalized for word in ("调亮", "亮一点", "更亮")):
         action = "brightness_up"
@@ -216,6 +232,33 @@ def _volume_candidate(text: str, normalized: str) -> LocalActionCandidate | None
         mute=mute,
         confidence=0.84,
     )
+
+
+def _climate_target_temperature(normalized: str) -> float | None:
+    match = re.search(
+        r"(?:温度)?(?:调到|调成|调至|设为|设置为|设置到|设定为|改到|改成)(\d+(?:\.\d+)?)度?",
+        normalized,
+    )
+    if match is None:
+        return None
+    try:
+        value = float(match.group(1))
+    except ValueError:
+        return None
+    if not CLIMATE_MIN_SETPOINT <= value <= CLIMATE_MAX_SETPOINT:
+        return None
+    return value
+
+
+def _climate_target_hint(text: str, normalized: str) -> str:
+    hint = re.sub(
+        r"(?:的)?温度(?:调到|调成|调至|设为|设置为|设置到|设定为|改到|改成)\d+(?:\.\d+)?度?",
+        "",
+        normalized,
+    )
+    for word in ("把", "将", "请", "帮我", "帮忙"):
+        hint = hint.replace(word, "")
+    return hint or _target_hint(text) or "空调"
 
 
 async def _async_execute_ha_action(
@@ -502,6 +545,14 @@ def _service_for_candidate(  # noqa: PLR0911 - explicit HA service mapping.
         return "light.turn_on", {ATTR_ENTITY_ID: entity_ids, "brightness_step_pct": 20}
     if candidate.action == "brightness_down":
         return "light.turn_on", {ATTR_ENTITY_ID: entity_ids, "brightness_step_pct": -20}
+    if candidate.action == "climate_set_temperature":
+        return (
+            "climate.set_temperature",
+            {
+                ATTR_ENTITY_ID: entity_ids,
+                "temperature": candidate.target_temperature,
+            },
+        )
     if candidate.action == "volume_up":
         return "media_player.volume_up", {ATTR_ENTITY_ID: entity_ids}
     if candidate.action == "volume_down":
@@ -531,6 +582,8 @@ def _success_speech(  # noqa: PLR0911 - explicit spoken templates per action.
         return f"已调亮{label}。"
     if candidate.action == "brightness_down":
         return f"已调暗{label}。"
+    if candidate.action == "climate_set_temperature":
+        return f"已把{label}设为{_format_temperature(candidate.target_temperature)}度。"
     if candidate.action == "volume_up":
         return f"已调高{label}音量。"
     if candidate.action == "volume_down":
@@ -544,6 +597,14 @@ def _success_speech(  # noqa: PLR0911 - explicit spoken templates per action.
     if candidate.action == "volume_mute":
         return f"已{'静音' if candidate.mute else '取消静音'}{label}。"
     return "好了。"
+
+
+def _format_temperature(value: float | None) -> str:
+    if value is None:
+        return ""
+    if float(value).is_integer():
+        return str(int(value))
+    return f"{value:g}"
 
 
 def _target_label(candidate: LocalActionCandidate, matches: list[State]) -> str:

@@ -183,6 +183,30 @@ def test_render_scalar_state_answer_handles_temperature_query() -> None:
     assert result.trace_attrs()["task_type"] == "home_state"
 
 
+def test_render_scalar_state_answer_handles_climate_temperature_attributes() -> None:
+    result = render_scalar_state_answer(
+        "现在空调的温度是几度？",
+        {
+            "success": True,
+            "result": (
+                "Live Context:\n"
+                "- names: 卧室空调\n"
+                "  domain: climate\n"
+                "  state: cool\n"
+                "  areas: 卧室\n"
+                "  attributes:\n"
+                "    current_temperature: 27.8\n"
+                "    temperature: 25.5\n"
+            ),
+        },
+        task_type="home_state",
+    )
+
+    assert result
+    assert result.speech == "卧室空调当前 27.8 度，设定 25.5 度。"
+    assert result.trace_attrs()["metrics"] == ["temperature"]
+
+
 def test_render_scalar_state_answer_handles_humidity_query() -> None:
     result = render_scalar_state_answer(
         "卧室湿度多少",

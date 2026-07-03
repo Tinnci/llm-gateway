@@ -988,6 +988,61 @@ async def test_climate_control_uses_local_device_resolution(
     )
 
 
+async def test_climate_temperature_setpoint_uses_local_action(
+    hass, aioclient_mock, mock_config_entry
+):
+    calls: list[dict] = []
+
+    async def set_temperature(call):
+        calls.append(dict(call.data))
+
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    hass.states.async_set(
+        "climate.bedroom_ac",
+        "cool",
+        {"friendly_name": "卧室空调", "current_temperature": 27.8, "temperature": 25.5},
+    )
+    hass.services.async_register("climate", "set_temperature", set_temperature)
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
+        },
+    )
+
+    with patch(
+        "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
+    ) as completion:
+        result = await conversation.async_converse(
+            hass,
+            "把空调的温度调到 16 度。",
+            None,
+            Context(),
+            agent_id=agent_id,
+        )
+
+    completion.assert_not_called()
+    assert result.response.speech["plain"]["speech"] == "已把卧室空调设为16度。"
+    assert calls == [{ATTR_ENTITY_ID: ["climate.bedroom_ac"], "temperature": 16.0}]
+    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+    assert trace["route"]["kind"] == "local_action"
+    assert trace["route_decision"]["metadata"]["action"] == "climate_set_temperature"
+    assert trace["route_decision"]["metadata"]["target_temperature"] == 16.0
+    execute_span = next(
+        span
+        for span in trace["timeline_spans"]
+        if span["stage"] == "local_capability_execute"
+    )
+    assert execute_span["attrs"]["candidate"]["target_temperature"] == 16.0
+    assert not any(
+        span["stage"] == "local_state_render" for span in trace["timeline_spans"]
+    )
+
+
 async def test_virginia_wolf_routes_to_literary_knowledge_with_entity_correction(
     hass, aioclient_mock, mock_config_entry
 ):
@@ -1115,6 +1170,85 @@ async def test_home_state_uses_local_live_context_without_model(
     )
     assert render_span["attrs"]["llm_final_used"] is False
     assert render_span["attrs"]["source"] == "GetLiveContext"
+
+
+async def test_climate_temperature_read_uses_local_live_context_without_model(
+    hass, aioclient_mock, mock_config_entry
+):
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {
+            CONF_LLM_HASS_API: "assist",
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
+        },
+    )
+
+    class FakeLiveContextApi:
+        custom_serializer = None
+
+        def __init__(self) -> None:
+            self.tools = [SimpleNamespace(name=LIVE_CONTEXT_TOOL_NAME)]
+
+        async def async_call_tool(self, tool_input: llm.ToolInput):
+            assert tool_input.tool_name == LIVE_CONTEXT_TOOL_NAME
+            assert tool_input.tool_args == {"domain": "climate"}
+            return {
+                "success": True,
+                "result": (
+                    "Live Context:\n"
+                    "- names: 卧室空调\n"
+                    "  domain: climate\n"
+                    "  state: cool\n"
+                    "  areas: 卧室\n"
+                    "  attributes:\n"
+                    "    current_temperature: 27.8\n"
+                    "    temperature: 25.5\n"
+                ),
+            }
+
+    async def provide_live_context_api(
+        self,
+        *_args: object,
+        **_kwargs: object,
+    ) -> None:
+        self.llm_api = FakeLiveContextApi()
+        self.content.append(conversation.SystemContent(content=STATIC_CONTEXT))
+
+    with (
+        patch(
+            "homeassistant.components.conversation.ChatLog.async_provide_llm_data",
+            provide_live_context_api,
+        ),
+        patch(
+            "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
+        ) as completion,
+    ):
+        result = await conversation.async_converse(
+            hass, "现在空调的温度是几度？", None, Context(), agent_id=agent_id
+        )
+
+    completion.assert_not_called()
+    speech = result.response.speech["plain"]["speech"]
+    assert speech == "卧室空调当前 27.8 度，设定 25.5 度。"
+    assert speech != "暂时没有本地状态数据。"
+    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+    assert trace["route"]["kind"] == "local_live_context"
+    assert trace["tools"][0]["args"] == {"domain": "climate"}
+    render_span = next(
+        span
+        for span in trace["timeline_spans"]
+        if span["stage"] == "local_state_render"
+    )
+    assert render_span["attrs"]["metrics"] == ["temperature"]
+    assert render_span["attrs"]["entities"][0]["attributes"] == {
+        "current_temperature": "27.8",
+        "temperature": "25.5",
+    }
 
 
 async def test_multi_intent_inventory_and_temperature_answers_both_subtasks(
@@ -1932,6 +2066,80 @@ async def test_converse_sanitizes_markdown_for_tts(
         hass, "说明一下", None, Context(), agent_id=agent_id
     )
     assert result.response.speech["plain"]["speech"] == "这是 重要 内容。第二句。"
+
+
+async def test_converse_retries_unsafe_reasoning_repetition_output(
+    hass, aioclient_mock, mock_config_entry
+):
+    unsafe = (
+        "We need to respond with spoken answer, plain text, no markdown. "
+        "The user wants to search and give the full text. "
+        'Likely "如梦令·常记溪亭日暮". ' + 'She also wrote "如梦令·常记溪亭日暮". ' * 12
+    )
+    repaired = (
+        "李清照很有代表性的名作是《如梦令·常记溪亭日暮》。"
+        "全文是：常记溪亭日暮，沉醉不知归路。"
+    )
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    completions = iter(
+        [
+            {"role": "assistant", "content": unsafe},
+            {
+                "role": "assistant",
+                "content": repaired,
+            },
+        ]
+    )
+    completion_calls = []
+
+    async def fake_completion(**kwargs: object):
+        completion_calls.append(kwargs)
+        return SimpleNamespace(
+            message=next(completions),
+            provider={"name": "primary", "fallback_used": False},
+            attempts=[],
+        )
+
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
+        },
+    )
+
+    with patch(
+        "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
+        side_effect=fake_completion,
+    ):
+        result = await conversation.async_converse(
+            hass,
+            "搜索，并且给出李清照最有名的词作的全文。",
+            None,
+            Context(),
+            agent_id=agent_id,
+        )
+
+    assert result.response.speech["plain"]["speech"] == repaired
+    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+    spans = trace["timeline_spans"]
+    validator = next(
+        span for span in spans if span["stage"] == "output_contract_validator"
+    )
+    retry = next(span for span in spans if span["stage"] == "output_contract_retry")
+    assert validator["attrs"]["reason"] == "reasoning_repetition_leak"
+    assert validator["attrs"]["reason_label"] == "内部推理文本泄漏并出现重复循环"
+    assert retry["attrs"]["result"] == "repaired"
+    assert trace["raw_payload"]["speech"]["raw"].startswith("We need to respond")
+    assert trace["raw_payload"]["speech"]["final"].startswith("李清照")
+    assert len(completion_calls) == 2
+    repair_call = completion_calls[-1]
+    assert repair_call["tools"] is None
+    assert repair_call["tool_choice"] == "none"
+    assert "被拦截的输出片段" in repair_call["messages"][-1]["content"]
 
 
 async def test_converse_deep_route_submits_background_task(
