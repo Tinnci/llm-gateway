@@ -112,7 +112,9 @@ jobs:
         with:
           category: integration
           # The domain is not yet in the home-assistant/brands repository.
-          ignore: brands
+          # The repository uses PolyForm Noncommercial, which HACS/GitHub
+          # reports as SPDX NOASSERTION even though LICENSE is present.
+          ignore: brands license
 
   validate-homeassistant:
     strategy:
