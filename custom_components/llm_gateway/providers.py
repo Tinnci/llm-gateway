@@ -502,16 +502,21 @@ async def _stop_processing_cue(
     cue_task: asyncio.Task[bool],
 ) -> None:
     """Stop the local processing earcon loop if it started."""
+    should_stop = False
     if not cue_task.done():
         cue_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
-            await cue_task
+            should_stop = await cue_task
+        # The start request may already have reached the display agent even if
+        # the asyncio task is cancelled before it reports completion.
+        should_stop = True
+    else:
+        with contextlib.suppress(TimeoutError, aiohttp.ClientError):
+            should_stop = await cue_task
+    if not should_stop:
         return
 
     with contextlib.suppress(TimeoutError, aiohttp.ClientError):
-        started = await cue_task
-        if not started:
-            return
         async with session.post(
             f"{DISPLAY_AGENT_BASE_URL}/voice/processing/stop",
             timeout=aiohttp.ClientTimeout(total=PROCESSING_CUE_TIMEOUT_S),

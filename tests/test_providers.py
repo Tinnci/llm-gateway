@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
+from typing import Self
+
 import pytest
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from custom_components.llm_gateway.api import LLMGatewayClient, LLMGatewayHTTPError
 from custom_components.llm_gateway.const import CONF_PROVIDER_PROFILES
 from custom_components.llm_gateway.providers import (
+    DISPLAY_AGENT_BASE_URL,
     ProviderSelector,
+    _stop_processing_cue,
     async_chat_completion_with_fallback,
     normalize_provider_profiles_json,
     parse_provider_profiles,
@@ -116,6 +121,31 @@ def test_provider_selector_success_clears_penalty() -> None:
 
     assert selector.order_candidates(candidates, "fast")[0][0] == "primary"
     assert selector.snapshot() == []
+
+
+async def test_stop_processing_cue_posts_stop_even_when_start_task_is_pending():
+    class Response:
+        async def __aenter__(self) -> Self:
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    class Session:
+        def __init__(self) -> None:
+            self.posts: list[str] = []
+
+        def post(self, url: str, **_kwargs: object) -> Response:
+            self.posts.append(url)
+            return Response()
+
+    session = Session()
+    cue_task = asyncio.create_task(asyncio.sleep(60, result=True))
+
+    await _stop_processing_cue(session, cue_task)  # type: ignore[arg-type]
+
+    assert cue_task.cancelled()
+    assert session.posts == [f"{DISPLAY_AGENT_BASE_URL}/voice/processing/stop"]
 
 
 async def test_chat_completion_falls_back_on_retryable_http_error(hass, aioclient_mock):

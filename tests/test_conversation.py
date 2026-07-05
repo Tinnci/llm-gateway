@@ -83,6 +83,14 @@ LIVE_CONTEXT_RESULT = {
 }
 
 
+def _last_post_json(aioclient_mock, url: str) -> dict:
+    for method, request_url, data, _headers in reversed(aioclient_mock.mock_calls):
+        if method == "POST" and str(request_url) == url:
+            assert isinstance(data, dict)
+            return data
+    raise AssertionError(f"No POST payload captured for {url}")
+
+
 def _set_weather_jingan(hass) -> None:
     hass.states.async_set(
         "weather.jingan",
@@ -474,7 +482,7 @@ async def test_converse_plain(hass, aioclient_mock, mock_config_entry):
         hass, "你好", None, Context(), agent_id=agent_id
     )
     assert result.response.speech["plain"]["speech"] == "你好，有什么可以帮您？"
-    request_json = aioclient_mock.mock_calls[-1][2]
+    request_json = _last_post_json(aioclient_mock, CHAT_URL)
     assert any(
         message["role"] == "system" and message["content"] == VOICE_RESPONSE_CONTRACT
         for message in request_json["messages"]

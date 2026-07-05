@@ -14,6 +14,7 @@ from custom_components.llm_gateway.const import (
     DOMAIN,
     RECOMMENDED_CHAT_MODEL,
 )
+from custom_components.llm_gateway.providers import DISPLAY_AGENT_BASE_URL
 
 
 @pytest.fixture(autouse=True)
@@ -26,6 +27,18 @@ def auto_enable_custom_integrations(enable_custom_integrations):
 async def setup_homeassistant_component(hass):
     """Set up the core integration so conversation's exposed-entities store exists."""
     assert await async_setup_component(hass, "homeassistant", {})
+
+
+@pytest.fixture(autouse=True)
+def mock_display_agent_processing_stop(request):
+    """Let provider cleanup send its idempotent processing-cue stop request."""
+    if "aioclient_mock" not in request.fixturenames:
+        return
+    aioclient_mock = request.getfixturevalue("aioclient_mock")
+    aioclient_mock.post(
+        f"{DISPLAY_AGENT_BASE_URL}/voice/processing/stop",
+        json={"ok": True},
+    )
 
 
 @pytest.fixture
