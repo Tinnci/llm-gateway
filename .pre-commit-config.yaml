@@ -11,6 +11,12 @@ repos:
         entry: uvx ruff format
         language: system
         types_or: [python, pyi]
+      - id: version-sync-check
+        name: version sync check
+        entry: python3 scripts/check_version_sync.py
+        language: system
+        pass_filenames: false
+        files: ^(pyproject\.toml|custom_components/llm_gateway/manifest\.json|uv\.lock)$
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0

@@ -66,3 +66,10 @@ max-complexity = 25
     "PLR2004",
     "S101",
 ]
+"scripts/**" = [
+    # CLI scripts print their results by design.
+    "T201",
+    # git tag lookup uses a trusted tag name assembled from a semver bump.
+    "S603",
+    "S607",
+]
