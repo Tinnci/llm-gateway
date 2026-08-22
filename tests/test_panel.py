@@ -22,6 +22,7 @@ from custom_components.llm_gateway.const import (
     CONF_TRACE_INCLUDE_RAW_MESSAGES,
     CONF_TRACE_MAX_RUNS,
     CONF_TRACE_RETENTION_HOURS,
+    RECOMMENDED_FAST_MODEL,
     ROUTING_MODE_MID,
 )
 from custom_components.llm_gateway.memory import VoiceMemory
@@ -217,6 +218,7 @@ async def test_harness_status_api(hass, hass_client):
     assert any(policy["id"] == "latency_wait" for policy in data["prompt_policies"])
     assert data["sample_scenarios"]
     assert data["editable"]["routing_modes"]
+    assert RECOMMENDED_FAST_MODEL in data["editable"]["models"]
     assert "local" in data["editable"]["first_response_playback_adapters"]
     assert data["editable"]["max_tokens"]["max"] >= 16384
     assert data["satellite"]["states"]["voice_paused"]["state"] == "off"
@@ -325,6 +327,8 @@ async def test_harness_status_api_reports_first_response_audio_route(
     assert audio["candidates"]["local_services"][0]["service"] == (
         "rest_command.kukui_voice_feedback"
     )
+    assert data["entries"][0]["model_candidates"]
+    assert RECOMMENDED_FAST_MODEL in data["entries"][0]["model_candidates"]
     assert audio["candidates"]["tts"][0]["entity_id"] == (
         "tts.edge_tts_service_edge_tts"
     )
@@ -767,6 +771,31 @@ async def test_harness_status_api_redacts_provider_profile_secrets(
     assert providers["fallbacks"][0]["name"] == "fallback"
     assert providers["fallbacks"][0]["has_api_key"] is True
     assert "api_key" not in providers["fallbacks"][0]
+
+
+async def test_harness_status_api_tolerates_invalid_provider_profiles(
+    hass, hass_client, mock_config_entry
+):
+    """Invalid provider profile JSON is reported, not a status API failure."""
+    assert await async_setup_component(hass, "http", {})
+    mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        options={
+            **mock_config_entry.options,
+            CONF_PROVIDER_PROFILES: "{bad json",
+        },
+    )
+    await async_setup_panel(hass)
+    client = await hass_client()
+
+    response = await client.get("/api/llm_gateway/harness/status")
+
+    assert response.status == 200
+    data = await response.json()
+    entry = data["entries"][0]
+    assert entry["model_providers"]["config_error"]
+    assert RECOMMENDED_FAST_MODEL in entry["model_candidates"]
 
 
 async def test_harness_options_api_rejects_invalid_values(

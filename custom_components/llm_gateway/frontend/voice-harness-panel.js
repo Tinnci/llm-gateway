@@ -49,8 +49,8 @@ import {
  * @typedef {{ primary?: ProviderProfile, fallbacks?: ProviderProfile[], fallback_enabled?: boolean, config_error?: string }} ProviderStatus
  * @typedef {{ provider?: string, route?: string, failures?: number, cooldown_remaining_s?: number, last_error?: string }} ProviderHealth
  * @typedef {{ latest_display?: Record<string, any> | null, display_events?: Array<Record<string, any>>, earcon_events?: Array<Record<string, any>> }} FeedbackStatus
- * @typedef {{ entry_id: string, title: string, state: string, base_url?: string, options: HarnessOptions, routes: RouteStatus[], trace: TraceOptions, traces?: { records?: Array<Record<string, any>>, storage?: Record<string, any> }, voice_runs?: Array<Record<string, any>>, feedback?: FeedbackStatus, feedback_policy?: FeedbackPolicyStatus, first_response_audio?: FirstResponseAudioStatus, memory?: any, search?: { providers?: string[] }, model_providers?: ProviderStatus, provider_health?: ProviderHealth[] }} HarnessEntry
- * @typedef {{ routing_modes: RouteKind[], max_tokens: { min: number, max: number }, timeouts: { min: number, max: number }, trace_max_runs: { min: number, max: number }, trace_retention_hours: { min: number, max: number }, first_response_playback_adapters?: FirstResponsePlaybackAdapter[] }} EditableSchema
+ * @typedef {{ entry_id: string, title: string, state: string, base_url?: string, options: HarnessOptions, routes: RouteStatus[], trace: TraceOptions, traces?: { records?: Array<Record<string, any>>, storage?: Record<string, any> }, voice_runs?: Array<Record<string, any>>, feedback?: FeedbackStatus, feedback_policy?: FeedbackPolicyStatus, first_response_audio?: FirstResponseAudioStatus, memory?: any, search?: { providers?: string[] }, model_providers?: ProviderStatus, provider_health?: ProviderHealth[], model_candidates?: string[] }} HarnessEntry
+ * @typedef {{ routing_modes: RouteKind[], models?: string[], max_tokens: { min: number, max: number }, timeouts: { min: number, max: number }, trace_max_runs: { min: number, max: number }, trace_retention_hours: { min: number, max: number }, first_response_playback_adapters?: FirstResponsePlaybackAdapter[] }} EditableSchema
  * @typedef {{ id: string, risk?: string, title?: string, title_i18n?: Record<string, string>, spoken?: string, spoken_i18n?: Record<string, string>, rules?: string[] }} PromptPolicy
  * @typedef {{ id: string, name?: string, name_i18n?: Record<string, string>, user?: string, user_i18n?: Record<string, string>, response?: string, response_i18n?: Record<string, string>, expected?: Record<string, unknown>, expected_i18n?: Record<string, Record<string, unknown>> }} SampleScenario
  * @typedef {`/llm_gateway/static/${string}`} StaticAssetUrl
@@ -58,7 +58,7 @@ import {
  * @typedef {{ pack?: string, base_url?: StaticAssetUrl, sample_rate?: number, target_lufs?: number, true_peak_dbfs?: number, files?: Record<string, EarconFile> }} EarconPack
  * @typedef {{ entity_id: string, state: string, available: boolean, name?: string, unit?: string, attributes?: Record<string, unknown> }} SatelliteEntityState
  * @typedef {{ states?: Record<string, SatelliteEntityState>, services?: Record<string, boolean>, diagnostic_snapshot?: Record<string, any> }} SatelliteStatus
- * @typedef {{ entries: HarnessEntry[], editable: EditableSchema, satellite?: SatelliteStatus, earcons?: EarconPack, prompt_policies?: PromptPolicy[], sample_scenarios?: SampleScenario[] }} HarnessStatus
+ * @typedef {{ entries: HarnessEntry[], editable: EditableSchema, satellite?: SatelliteStatus, earcons?: EarconPack, prompt_policies?: PromptPolicy[], sample_scenarios?: SampleScenario[], domain?: string }} HarnessStatus
  * @typedef {{ entry_id: string, options: { routing_mode: RouteKind, models: TierTextMap, max_tokens: TierNumberMap, timeouts: TierNumberMap, trace: TraceOptions, first_response_audio?: FirstResponseAudioOptions } }} OptionsUpdateRequest
  * @typedef {{ user: string, response: string, expected: string }} ScenarioDraft
  */
@@ -86,6 +86,7 @@ const DEFAULT_EXPECTED = {
 /** @type {EditableSchema} */
 const DEFAULT_EDITABLE = {
   routing_modes: ["auto", "fast", "mid", "deep"],
+  models: ["gpt-4o-mini", "deepseek-chat", "o1-preview", "gpt-4o", "claude-3-5-sonnet-latest"],
   max_tokens: { min: 1, max: 16384 },
   timeouts: { min: 5, max: 300 },
   trace_max_runs: { min: 1, max: 200 },
@@ -253,6 +254,8 @@ const I18N = {
     "settings.local_adapter_missing": "Local playback adapter missing. Add a display-agent service before expecting tablet-speaker audio.",
     "settings.ha_fallback_notice": "HA media_player fallback is explicit; it is not tablet-local playback.",
     "settings.model": "{tier} model",
+    "settings.model_custom": "Custom model…",
+    "settings.model_custom_placeholder": "Model id",
     "settings.max_tokens": "{tier} max tokens",
     "settings.timeout": "{tier} timeout",
     "settings.diagnostic_traces": "Enable diagnostic traces",
@@ -260,6 +263,14 @@ const I18N = {
     "settings.max_runs": "Maximum diagnostic runs",
     "settings.retention_hours": "Diagnostic retention hours",
     "settings.saved": "Settings saved.",
+    "settings.api_title": "Provider & API",
+    "settings.api_description": "Base URL, API key, provider profiles and HA LLM API exposure are managed in the Home Assistant options flow so secrets are validated and redacted there.",
+    "settings.api_base_url": "Base URL",
+    "settings.api_key_status": "API key",
+    "settings.api_key_configured": "Configured",
+    "settings.api_key_missing": "Not configured",
+    "settings.api_fallbacks": "Fallback providers",
+    "settings.api_open_options": "Open Home Assistant options",
     "satellite.title": "Satellite and voice controls",
     "satellite.description": "These controls use HA entities and the typed local apply API exposed by the display agent. Applying wake or mic changes restarts the local satellite path.",
     "satellite.overview": "Runtime overview",
@@ -635,6 +646,8 @@ const I18N = {
     "settings.local_adapter_missing": "缺少本地播放 adapter。需要先接 display-agent 服务，平板本机扬声器才会出声。",
     "settings.ha_fallback_notice": "HA media_player 只是显式 fallback，不是平板本机播放。",
     "settings.model": "{tier} 模型",
+    "settings.model_custom": "自定义模型…",
+    "settings.model_custom_placeholder": "模型 ID",
     "settings.max_tokens": "{tier} 最大令牌",
     "settings.timeout": "{tier} 超时",
     "settings.diagnostic_traces": "启用诊断记录",
@@ -642,6 +655,14 @@ const I18N = {
     "settings.max_runs": "最多诊断运行数",
     "settings.retention_hours": "诊断保留小时数",
     "settings.saved": "配置已保存。",
+    "settings.api_title": "模型服务与 API",
+    "settings.api_description": "Base URL、API Key、Provider Profiles 和 HA LLM API 暴露范围在 Home Assistant 集成选项流中管理，避免在面板中明文处理密钥。",
+    "settings.api_base_url": "Base URL",
+    "settings.api_key_status": "API Key",
+    "settings.api_key_configured": "已配置",
+    "settings.api_key_missing": "未配置",
+    "settings.api_fallbacks": "Fallback Providers",
+    "settings.api_open_options": "打开 Home Assistant 集成选项",
     "satellite.title": "卫星端与语音控制",
     "satellite.description": "这些控件使用 HA 实体和 display-agent 暴露的 typed apply API。应用唤醒或麦克风改动会重启本地 satellite 链路。",
     "satellite.overview": "运行概览",
@@ -918,6 +939,7 @@ class VoiceHarnessPanel extends HTMLElement {
   connectedCallback() {
     this.shadowRoot.addEventListener("click", (event) => this._onClick(event));
     this.shadowRoot.addEventListener("input", (event) => this._onInput(event));
+    this.shadowRoot.addEventListener("change", (event) => this._onChange(event));
     this.shadowRoot.addEventListener("submit", (event) => this._onSubmit(event));
     this._render();
     this._load();
@@ -1161,6 +1183,15 @@ class VoiceHarnessPanel extends HTMLElement {
       this._playEarcon(button.dataset.earcon);
       return;
     }
+    if (button.dataset.action === "open-integration-config") {
+      const domain = this._data?.domain || "llm_gateway";
+      window.open(
+        `/config/integrations/integration/${domain}`,
+        "_blank",
+        "noopener",
+      );
+      return;
+    }
     const loadSampleId = button.dataset.loadSample;
     if (loadSampleId) {
       const sample = this._data?.sample_scenarios?.find((item) => item.id === loadSampleId);
@@ -1215,6 +1246,24 @@ class VoiceHarnessPanel extends HTMLElement {
     this._draft = { ...this._draft, [field]: event.target.value };
   }
 
+  _onChange(event) {
+    const tier = event.target.dataset.modelSelect;
+    if (!tier) {
+      return;
+    }
+    const customInput = this.shadowRoot.querySelector(
+      `[data-model-custom="${tier}"]`,
+    );
+    if (!(customInput instanceof HTMLInputElement)) {
+      return;
+    }
+    const useCustom = event.target.value === "__custom__";
+    customInput.hidden = !useCustom;
+    if (useCustom) {
+      customInput.focus();
+    }
+  }
+
   _onSubmit(event) {
     event.preventDefault();
     const form = event.target;
@@ -1242,14 +1291,21 @@ class VoiceHarnessPanel extends HTMLElement {
   _submitSettingsForm(form) {
     const data = new FormData(form);
     const numberValue = (name) => Number(data.get(name) || 0);
+    const modelValue = (tier) => {
+      const selected = String(data.get(`${tier}_model`) || "");
+      if (selected === "__custom__" || selected === "") {
+        return String(data.get(`${tier}_model_custom`) || "").trim();
+      }
+      return selected;
+    };
     this._saveOptions({
       entry_id: form.dataset.entryId || "",
       options: {
         routing_mode: this._routeKind(data.get("routing_mode")),
         models: {
-          fast: String(data.get("fast_model") || ""),
-          mid: String(data.get("mid_model") || ""),
-          deep: String(data.get("deep_model") || ""),
+          fast: modelValue("fast"),
+          mid: modelValue("mid"),
+          deep: modelValue("deep"),
         },
         max_tokens: {
           fast: numberValue("fast_max_tokens"),
@@ -1473,6 +1529,12 @@ class VoiceHarnessPanel extends HTMLElement {
     const audioStatus = entry.first_response_audio || {};
     const playbackAdapters = editable.first_response_playback_adapters || ["local", "ha_media_player", "auto"];
     const formId = safeId(entry.entry_id);
+    const modelCandidates = Array.isArray(entry.model_candidates) && entry.model_candidates.length
+      ? entry.model_candidates
+      : (editable.models || ["gpt-4o-mini", "deepseek-chat", "o1-preview", "gpt-4o", "claude-3-5-sonnet-latest"]);
+    const providerStatus = entry.model_providers || {};
+    const primaryProvider = providerStatus.primary || {};
+    const fallbackProviders = Array.isArray(providerStatus.fallbacks) ? providerStatus.fallbacks : [];
     const localServices = audioStatus.candidates?.local_services || [];
     const ttsCandidates = audioStatus.candidates?.tts || [];
     const mediaCandidates = audioStatus.candidates?.media_player || [];
@@ -1504,12 +1566,59 @@ class VoiceHarnessPanel extends HTMLElement {
         </fieldset>
         <fieldset>
           <legend>${escapeHtml(this._t("settings.models"))}</legend>
-          ${["fast", "mid", "deep"].map((tier) => `
-            <label>
-              <span>${escapeHtml(this._t("settings.model", { tier: this._tierLabel(tier) }))}</span>
-              <input name="${tier}_model" value="${escapeHtml(options.models?.[tier] || "")}" autocomplete="off" required maxlength="256">
-            </label>
-          `).join("")}
+          ${["fast", "mid", "deep"].map((tier) => {
+            const currentModel = options.models?.[tier] || "";
+            const knownModels = Array.from(new Set((modelCandidates || []).filter(Boolean)));
+            const useCustom = Boolean(currentModel) && !knownModels.includes(currentModel);
+            const pickerOptions = useCustom
+              ? knownModels
+              : (knownModels.includes(currentModel) || !currentModel ? knownModels : [...knownModels, currentModel]);
+            return `
+              <div class="modelPicker">
+                <label>
+                  <span>${escapeHtml(this._t("settings.model", { tier: this._tierLabel(tier) }))}</span>
+                  <select name="${tier}_model" data-model-select="${tier}">
+                    ${pickerOptions.map((model) => `
+                      <option value="${escapeHtml(model)}" ${model === currentModel ? "selected" : ""}>${escapeHtml(model)}</option>
+                    `).join("")}
+                    <option value="__custom__" ${useCustom ? "selected" : ""}>${escapeHtml(this._t("settings.model_custom"))}</option>
+                  </select>
+                </label>
+                <input
+                  name="${tier}_model_custom"
+                  data-model-custom="${tier}"
+                  value="${escapeHtml(useCustom ? currentModel : "")}"
+                  placeholder="${escapeHtml(this._t("settings.model_custom_placeholder"))}"
+                  autocomplete="off"
+                  maxlength="256"
+                  ${useCustom ? "" : "hidden"}
+                >
+              </div>
+            `;
+          }).join("")}
+        </fieldset>
+        <fieldset>
+          <legend>${escapeHtml(this._t("settings.api_title"))}</legend>
+          <p class="settingsNote">${escapeHtml(this._t("settings.api_description"))}</p>
+          <div class="apiSummary">
+            <div>
+              <span>${escapeHtml(this._t("settings.api_base_url"))}</span>
+              <strong>${escapeHtml(entry.base_url || this._t("entry.base_url_missing"))}</strong>
+            </div>
+            <div>
+              <span>${escapeHtml(this._t("settings.api_key_status"))}</span>
+              <strong>${escapeHtml(this._t(primaryProvider.has_api_key === false ? "settings.api_key_missing" : "settings.api_key_configured"))}</strong>
+            </div>
+            <div>
+              <span>${escapeHtml(this._t("settings.api_fallbacks"))}</span>
+              <strong>${escapeHtml(String(fallbackProviders.length))}</strong>
+            </div>
+          </div>
+          ${providerStatus.config_error ? `<div class="banner error">${escapeHtml(this._t("providers.config_error", { message: providerStatus.config_error }))}</div>` : ""}
+          <button type="button" class="secondary" data-action="open-integration-config">
+            <ha-icon icon="mdi:cog-outline"></ha-icon>
+            <span>${escapeHtml(this._t("settings.api_open_options"))}</span>
+          </button>
         </fieldset>
         <fieldset>
           <legend>${escapeHtml(this._t("settings.budgets"))}</legend>
@@ -4259,6 +4368,39 @@ const styles = `
 
   .settingsTriples.two {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .modelPicker {
+    display: grid;
+    gap: 8px;
+  }
+
+  .modelPicker input[hidden] {
+    display: none;
+  }
+
+  .apiSummary {
+    display: grid;
+    gap: 8px;
+  }
+
+  .apiSummary div {
+    align-items: baseline;
+    border-bottom: 1px solid var(--divider-color);
+    display: grid;
+    gap: 4px;
+    grid-template-columns: minmax(120px, 0.6fr) minmax(0, 1.4fr);
+    padding-bottom: 8px;
+  }
+
+  .apiSummary span {
+    color: var(--secondary-text-color);
+    font-size: 12px;
+  }
+
+  .apiSummary strong {
+    font-size: 13px;
+    overflow-wrap: anywhere;
   }
 
   .checkRow {

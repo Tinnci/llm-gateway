@@ -40,7 +40,9 @@ from .const import (
     MAX_CONFIGURED_TOKENS,
     MAX_TRACE_RETENTION_HOURS,
     MAX_TRACE_RUNS,
+    RECOMMENDED_CHAT_MODEL,
     RECOMMENDED_DEEP_CHAT_TIMEOUT,
+    RECOMMENDED_DEEP_FALLBACK_MODEL,
     RECOMMENDED_DEEP_MAX_TOKENS,
     RECOMMENDED_DEEP_MODEL,
     RECOMMENDED_FAST_CHAT_TIMEOUT,
@@ -694,9 +696,7 @@ class HarnessFactsView(HomeAssistantView):
                 )
             )
         except (TypeError, ValueError) as err:
-            return self.json_message(
-                str(err), HTTPStatus.BAD_REQUEST, "invalid_fact"
-            )
+            return self.json_message(str(err), HTTPStatus.BAD_REQUEST, "invalid_fact")
         return self.json({"fact": fact.as_dict()}, status_code=HTTPStatus.CREATED)
 
 
@@ -750,6 +750,7 @@ def _entry_status(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
             ],
         },
         "model_providers": _model_provider_status(entry),
+        "model_candidates": _model_candidates(options, entry),
         "provider_health": (runtime.provider_selector.snapshot() if runtime else []),
         "memory": (
             runtime.memory.snapshot() if runtime else {"facts": [], "sessions": []}
@@ -934,9 +935,41 @@ def _options_status(options: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _model_candidates(
+    options: dict[str, Any], entry: ConfigEntry | None = None
+) -> list[str]:
+    candidates: list[str] = [
+        RECOMMENDED_FAST_MODEL,
+        RECOMMENDED_MID_MODEL,
+        RECOMMENDED_DEEP_MODEL,
+        RECOMMENDED_DEEP_FALLBACK_MODEL,
+        RECOMMENDED_CHAT_MODEL,
+    ]
+    for key in (CONF_FAST_MODEL, CONF_MID_MODEL, CONF_DEEP_MODEL, CONF_CHAT_MODEL):
+        if (val := options.get(key)) and val not in candidates:
+            candidates.append(str(val))
+    if entry is not None:
+        try:
+            profiles = provider_profiles_from_options(options)
+        except ValueError:
+            profiles = []
+        for profile in profiles:
+            for val in profile.models.values():
+                if val and val not in candidates:
+                    candidates.append(str(val))
+    return candidates
+
+
 def _editable_schema() -> dict[str, Any]:
     return {
         "routing_modes": list(ROUTING_MODES),
+        "models": [
+            RECOMMENDED_FAST_MODEL,
+            RECOMMENDED_MID_MODEL,
+            RECOMMENDED_DEEP_MODEL,
+            RECOMMENDED_DEEP_FALLBACK_MODEL,
+            RECOMMENDED_CHAT_MODEL,
+        ],
         "max_tokens": {"min": 1, "max": MAX_CONFIGURED_TOKENS},
         "timeouts": {"min": 5, "max": MAX_CHAT_TIMEOUT},
         "trace_max_runs": {"min": 1, "max": MAX_TRACE_RUNS},
