@@ -2,9 +2,11 @@
 
 from dataclasses import replace
 
+from custom_components.llm_gateway.action_plan import ActionPlanResult
 from custom_components.llm_gateway.capabilities import RouteDecision
 from custom_components.llm_gateway.capability_executor import LocalCapabilityResult
 from custom_components.llm_gateway.turn_loops import (
+    ActionPlanLoop,
     ClarificationDialogueLoop,
     DeterministicCapabilityLoop,
     TurnLoopContext,
@@ -56,6 +58,49 @@ def test_deterministic_loop_declines_non_local_route() -> None:
     )
 
     assert select_turn_loop((DeterministicCapabilityLoop(),), context) is None
+
+
+async def test_action_plan_loop_uses_injected_executor() -> None:
+    calls = []
+
+    async def execute(hass, plan):
+        calls.append((hass, plan))
+        return ActionPlanResult(
+            status="dry_run",
+            speech="计划可安全执行。",
+            actions=tuple(action.as_dict() for action in plan.actions),
+            policy=(),
+        )
+
+    decision = replace(
+        _decision(),
+        next_action="execute_plan",
+        metadata={
+            "action_plan": {
+                "actions": [
+                    {
+                        "domain": "light",
+                        "service": "turn_off",
+                        "entity_id": "light.living_room",
+                    }
+                ]
+            }
+        },
+    )
+    context = TurnLoopContext(text="关掉客厅灯", route_decision=decision)
+    loop = select_turn_loop((ActionPlanLoop(),), context)
+
+    assert isinstance(loop, ActionPlanLoop)
+    result = await loop.run(
+        "fake-hass",
+        context,
+        TurnLoopServices(execute_action_plan=execute),
+    )
+    assert result.status == "dry_run"
+    assert result.speech == "计划可安全执行。"
+    assert result.proposed_actions[0]["entity_id"] == "light.living_room"
+    assert result.trace_events[0].stage == "action_plan_execute"
+    assert calls[0][0] == "fake-hass"
 
 
 async def test_clarification_loop_proposes_prompt_and_weather_frame() -> None:

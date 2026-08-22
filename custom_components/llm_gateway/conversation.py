@@ -85,6 +85,7 @@ from .search import (
 from .static_context import render_device_inventory, render_scalar_state_answer
 from .traces import TraceTurn
 from .turn_loops import (
+    ActionPlanLoop,
     ClarificationDialogueLoop,
     DeterministicCapabilityLoop,
     TurnLoopContext,
@@ -884,7 +885,11 @@ class LLMGatewayConversationEntity(
             turn_id=run_id,
         )
         selected_loop = select_turn_loop(
-            (DeterministicCapabilityLoop(), ClarificationDialogueLoop()),
+            (
+                ActionPlanLoop(),
+                DeterministicCapabilityLoop(),
+                ClarificationDialogueLoop(),
+            ),
             loop_context,
         )
         if selected_loop is not None:

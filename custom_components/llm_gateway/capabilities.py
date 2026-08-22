@@ -64,6 +64,7 @@ NextAction = Literal[
     "answer_with_llm",
     "clarify",
     "plan_async",
+    "execute_plan",
 ]
 
 RiskLevel = Literal["low", "privacy_location", "high"]
