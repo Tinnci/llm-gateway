@@ -75,6 +75,8 @@ async def test_replay_records_fork_without_calling_live_service(hass) -> None:
         event["event_type"] == "gateway.replay.started"
         for event in record["event_stream"]
     )
+    assert record["causal_chain"]["complete"] is False
+    assert record["causal_chain"]["evidence_mode"] == "none"
 
 
 async def test_replay_rejects_missing_source(hass) -> None:

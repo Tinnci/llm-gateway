@@ -111,6 +111,7 @@ class TraceStore:
             diagnostic_snapshot,
             include_external_evidence=turn.lineage.get("mode") != "dry_run",
         )
+        causal_chain = _causal_chain_summary(event_stream)
         record = {
             "id": record_id,
             "run_id": record_id,
@@ -145,6 +146,7 @@ class TraceStore:
             ),
             "timeline": turn.timeline,
             "event_stream": event_stream,
+            "causal_chain": causal_chain,
             "timeline_spans": timeline_spans,
             "critical_path": _critical_path(timeline_spans, verifier_mode),
             "critical_path_flags": _critical_path_flags(timeline_spans),
@@ -616,6 +618,61 @@ def _external_event(
         "correlation": "snapshot_time_window",
         "payload": _bound_mapping(payload, limit=1200),
     }
+
+
+def _causal_chain_summary(event_stream: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize whether a real endpoint-to-stop chain is present and ordered."""
+    required = (
+        "asr.endpoint.detected",
+        "gateway.turn.started",
+        "playback.interrupt.requested",
+        "playback.interrupt.observed",
+    )
+    positions = {
+        event_type: next(
+            (
+                index
+                for index, event in enumerate(event_stream)
+                if event.get("event_type") == event_type
+            ),
+            None,
+        )
+        for event_type in required
+    }
+    missing = [event_type for event_type, index in positions.items() if index is None]
+    ordered_positions = [positions[event_type] for event_type in required]
+    ordered = not missing and ordered_positions == sorted(ordered_positions)
+    observed = next(
+        (
+            event
+            for event in event_stream
+            if event.get("event_type") == "playback.interrupt.observed"
+        ),
+        {},
+    )
+    payload = observed.get("payload") if isinstance(observed, dict) else {}
+    payload = payload if isinstance(payload, dict) else {}
+    latency = payload.get("barge_in_stop_latency_ms", payload.get("stop_latency_ms"))
+    return {
+        "complete": not missing and ordered,
+        "ordered": ordered,
+        "required_event_types": list(required),
+        "missing_event_types": missing,
+        "barge_in_stop_latency_ms": _optional_nonnegative_int(latency),
+        "evidence_mode": (
+            "snapshot_time_window"
+            if observed.get("correlation") == "snapshot_time_window"
+            else "none"
+        ),
+    }
+
+
+def _optional_nonnegative_int(value: object) -> int | None:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 0 else None
 
 
 def _tool_calls_by_iteration(

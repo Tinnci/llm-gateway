@@ -126,6 +126,7 @@ const I18N = {
     "runs.trace_waiting_hint": "Run a voice turn to populate recorded and live run detail.",
     "runs.replay": "Dry-run replay",
     "runs.replay_complete": "Replay fork created without live service calls.",
+    "runs.causal_chain": "Endpoint-to-stop chain",
     "runs.open_settings": "Open settings",
     "runs.live_idle": "No live run is active.",
     "runs.live": "Recent live runs",
@@ -492,6 +493,7 @@ const I18N = {
     "runs.trace_waiting_hint": "执行一次语音对话后，这里会显示记录和实时运行细节。",
     "runs.replay": "无副作用重放",
     "runs.replay_complete": "已创建重放分支，未调用实时服务。",
+    "runs.causal_chain": "端点到停止因果链",
     "runs.open_settings": "打开配置",
     "runs.live_idle": "当前没有实时运行。",
     "runs.live": "最近实时运行",
@@ -2294,6 +2296,7 @@ class VoiceHarnessPanel extends HTMLElement {
     const searchGate = record.search_gate || {};
     const completion = record.completion || {};
     const speech = record.speech || {};
+    const causalChain = record.causal_chain || {};
     return `
       <details class="traceCard">
         <summary>
@@ -2360,6 +2363,14 @@ class VoiceHarnessPanel extends HTMLElement {
             ${this._detailItem(this._t("runs.final_speech"), [
               speech.final || record.final_speech_text || record.assistant_text || "",
               `${Number(record.latency_ms || 0)} ms`,
+            ])}
+            ${this._detailItem(this._t("runs.causal_chain"), [
+              causalChain.complete ? "complete" : "incomplete",
+              causalChain.ordered ? "ordered" : "not ordered",
+              (causalChain.missing_event_types || []).join(", "),
+              causalChain.barge_in_stop_latency_ms === null || causalChain.barge_in_stop_latency_ms === undefined
+                ? ""
+                : `${Number(causalChain.barge_in_stop_latency_ms)} ms`,
             ])}
           </div>
           ${this._firstResponsePanel(firstResponse, record.first_response_audio || {})}

@@ -196,6 +196,7 @@ async def test_trace_store_projects_endpoint_and_interrupt_evidence(hass):
     )
     recorder = VoiceRunRecorder()
     turn_id = recorder.start(conversation_id="conv-1", user_text="停")
+    recorder.mark(turn_id, "turn_started")
     recorder.mark(turn_id, "barge_in_requested", attrs={"request_id": "interrupt-1"})
     timeline = recorder.finish(turn_id, status="complete")
     store = TraceStore(hass, "entry-event-stream")
@@ -230,6 +231,20 @@ async def test_trace_store_projects_endpoint_and_interrupt_evidence(hass):
     assert observed["event_type"] == "playback.interrupt.observed"
     assert observed["caused_by"] == requested["event_id"]
     assert observed["payload"]["barge_in_stop_latency_ms"] == 42
+    chain = store.snapshot()["records"][0]["causal_chain"]
+    assert chain == {
+        "complete": True,
+        "ordered": True,
+        "required_event_types": [
+            "asr.endpoint.detected",
+            "gateway.turn.started",
+            "playback.interrupt.requested",
+            "playback.interrupt.observed",
+        ],
+        "missing_event_types": [],
+        "barge_in_stop_latency_ms": 42,
+        "evidence_mode": "snapshot_time_window",
+    }
 
 
 async def test_trace_store_keeps_blocked_diagnostics_distinct(hass):
