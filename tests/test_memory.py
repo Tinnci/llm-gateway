@@ -52,9 +52,7 @@ async def test_structured_facts_are_relevant_bounded_and_superseded(hass) -> Non
 
     assert replacement.supersedes == "turn-1"
     light_facts = memory.relevant_facts(task_type="light_control")
-    assert [fact.value for fact in light_facts] == [
-        "15%"
-    ]
+    assert [fact.value for fact in light_facts] == ["15%"]
     assert "24℃" not in memory.build_context(None, task_type="light_control")
 
 

@@ -30,9 +30,7 @@ async def test_action_plan_executes_when_state_condition_matches(hass) -> None:
     result = await ActionPlanExecutor().async_execute(hass, plan)
 
     assert result.status == "executed"
-    assert calls == [
-        {"entity_id": "light.corridor", "rgb_color": [255, 255, 0]}
-    ]
+    assert calls == [{"entity_id": "light.corridor", "rgb_color": [255, 255, 0]}]
     assert {item["stage"] for item in result.policy} == {
         "before_plan",
         "before_execute",

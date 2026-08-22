@@ -210,9 +210,8 @@ class ActionPlanLoop:
     name = "action_plan"
 
     def matches(self, context: TurnLoopContext) -> bool:
-        return (
-            context.route_decision.next_action == "execute_plan"
-            and isinstance(context.route_decision.metadata.get("action_plan"), dict)
+        return context.route_decision.next_action == "execute_plan" and isinstance(
+            context.route_decision.metadata.get("action_plan"), dict
         )
 
     async def run(

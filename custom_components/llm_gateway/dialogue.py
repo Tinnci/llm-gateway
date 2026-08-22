@@ -435,7 +435,10 @@ def resolve_dialogue_transaction(  # noqa: PLR0911 - explicit transaction states
             interaction_state="slot_filled",
             transitions=(
                 DialogueTransition(
-                    "filled", frame.id, transition.from_status, transition.from_status,
+                    "filled",
+                    frame.id,
+                    transition.from_status,
+                    transition.from_status,
                     "location_resolved",
                 ),
                 transition,
@@ -599,7 +602,10 @@ def _commit_device_candidate(
         interaction_state="slot_filled",
         transitions=(
             DialogueTransition(
-                "filled", frame.id, transition.from_status, transition.from_status,
+                "filled",
+                frame.id,
+                transition.from_status,
+                transition.from_status,
                 "target_device_resolved",
             ),
             transition,

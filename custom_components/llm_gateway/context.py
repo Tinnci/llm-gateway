@@ -108,9 +108,7 @@ class StaticContextContributor:
             evidence_ids=(f"static:{slice_id}",),
         )
 
-    async def async_get_context(
-        self, _request: TurnContextRequest
-    ) -> ContextSlice:
+    async def async_get_context(self, _request: TurnContextRequest) -> ContextSlice:
         return self._slice
 
 

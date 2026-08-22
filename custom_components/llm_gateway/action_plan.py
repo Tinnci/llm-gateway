@@ -232,8 +232,12 @@ class ActionPlanExecutor:
         blocked = self._evaluate("before_execute", plan, evidence)
         if blocked:
             return ActionPlanResult(
-                "blocked", "这个复合操作不符合安全策略。", (), tuple(evidence),
-                reads=reads, reason=blocked
+                "blocked",
+                "这个复合操作不符合安全策略。",
+                (),
+                tuple(evidence),
+                reads=reads,
+                reason=blocked,
             )
         proposed = tuple(item.as_dict() for item in plan.actions)
         if dry_run:
