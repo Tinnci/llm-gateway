@@ -504,6 +504,17 @@ class VoiceFeedbackPolicy:
                 ttl_s=20,
             )
             return None, display
+        if state == "suspended":
+            display = self._store.emit_display(
+                turn_id=turn_id,
+                state="continuing",
+                title="Previous request cancelled",
+                short_text="已取消上一操作，正在处理新请求。",
+                progress="indeterminate",
+                action_buttons=["open_panel"],
+                ttl_s=12,
+            )
+            return None, display
         if state == "cancelled":
             earcon = self._store.emit_earcon(
                 turn_id=turn_id,

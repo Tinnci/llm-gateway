@@ -1526,12 +1526,20 @@ def _metric_from_text(text: str) -> str:
         ("tvoc", ("tvoc", "甲醛")),
         ("temperature", ("温度", "气温", "几度")),
         ("humidity", ("湿度",)),
+        ("pressure", ("气压", "大气压")),
+        ("wind_speed", ("风速", "风有多大")),
+        ("visibility", ("能见度",)),
         ("weather", ("天气",)),
     )
     for metric, patterns in metric_patterns:
         if any(pattern in normalized for pattern in patterns):
             return metric
     return ""
+
+
+def environment_metric_from_text(text: str) -> str:
+    """Return the requested scalar environment metric for local renderers."""
+    return _metric_from_text(text)
 
 
 def _location_hint(text: str) -> str:

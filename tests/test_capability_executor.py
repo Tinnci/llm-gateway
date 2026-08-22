@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.entity import EntityCategory
+
 from custom_components.llm_gateway.capabilities import decide_route
 from custom_components.llm_gateway.capability_executor import (
     async_try_execute_local_capability,
@@ -17,6 +20,7 @@ def test_local_action_candidate_parses_low_risk_home_control():
     assert candidate.action == "turn_on"
     assert candidate.domain == "light"
     assert candidate.area == "客厅"
+    assert candidate.target_scope == "area"
 
 
 def test_local_action_candidate_parses_climate_control():
@@ -64,6 +68,117 @@ async def test_local_executor_calls_light_service(hass):
     assert result.status == "executed"
     assert result.speech == "已打开客厅灯。"
     assert calls == [{"entity_id": ["light.living_room"]}]
+
+
+async def test_local_executor_applies_explicit_all_lights_scope(hass):
+    calls: list[dict] = []
+
+    async def turn_on(call):
+        calls.append(dict(call.data))
+
+    hass.states.async_set("light.desk", "off", {"friendly_name": "书桌灯"})
+    hass.states.async_set("light.monitor", "off", {"friendly_name": "显示器挂灯"})
+    hass.services.async_register("light", "turn_on", turn_on)
+
+    route = decide_route("打开所有灯。")
+    result = await async_try_execute_local_capability(hass, "打开所有灯。", route)
+
+    assert result is not None
+    assert result.status == "executed"
+    assert result.speech == "已打开所有灯。"
+    assert calls == [
+        {"entity_id": ["light.desk"]},
+        {"entity_id": ["light.monitor"]},
+    ]
+    assert result.trace_attrs()["candidate"]["target_scope"] == "all"
+
+
+async def test_local_executor_excludes_config_entities_from_all_scope(hass):
+    calls: list[dict] = []
+
+    async def turn_on(call):
+        calls.append(dict(call.data))
+
+    registry = er.async_get(hass)
+    indicator = registry.async_get_or_create(
+        "light",
+        "test",
+        "fan-indicator",
+        suggested_object_id="fan_indicator",
+        entity_category=EntityCategory.CONFIG,
+    )
+    hass.states.async_set("light.desk", "off", {"friendly_name": "书桌灯"})
+    hass.states.async_set(
+        indicator.entity_id,
+        "off",
+        {"friendly_name": "循环扇指示灯"},
+    )
+    hass.services.async_register("light", "turn_on", turn_on)
+
+    route = decide_route("打开所有灯。")
+    result = await async_try_execute_local_capability(hass, "打开所有灯。", route)
+
+    assert result is not None
+    assert result.status == "executed"
+    assert calls == [{"entity_id": ["light.desk"]}]
+    assert result.action_trace["excluded_entities"] == [
+        {
+            "entity_id": indicator.entity_id,
+            "reason": "entity_category:config",
+        }
+    ]
+
+
+async def test_local_executor_reports_partial_all_scope_failure(hass):
+    calls: list[dict] = []
+
+    async def turn_on(call):
+        calls.append(dict(call.data))
+        if call.data["entity_id"] == ["light.unreliable"]:
+            raise RuntimeError("device timed out")
+
+    hass.states.async_set("light.desk", "off", {"friendly_name": "书桌灯"})
+    hass.states.async_set(
+        "light.unreliable",
+        "off",
+        {"friendly_name": "离线灯"},
+    )
+    hass.states.async_set("light.already_on", "on", {"friendly_name": "常亮灯"})
+    hass.services.async_register("light", "turn_on", turn_on)
+
+    route = decide_route("打开所有灯。")
+    result = await async_try_execute_local_capability(hass, "打开所有灯。", route)
+
+    assert result is not None
+    assert result.status == "partial"
+    assert result.speech == "已打开 1 个灯，1 个失败。"
+    assert calls == [
+        {"entity_id": ["light.desk"]},
+        {"entity_id": ["light.unreliable"]},
+    ]
+    assert result.service_calls == (
+        {
+            "domain": "light",
+            "service": "turn_on",
+            "entity_ids": ["light.desk"],
+        },
+    )
+    assert result.action_trace["skipped_entities"] == [
+        {"entity_id": "light.already_on", "reason": "already_on"}
+    ]
+    assert result.action_trace["failed_entities"] == [
+        {"entity_id": "light.unreliable", "reason": "RuntimeError"}
+    ]
+
+
+def test_local_action_candidate_generalizes_explicit_all_scope() -> None:
+    all_fans = local_action_candidate("关闭全部风扇")
+    every_switch = local_action_candidate("打开每个开关")
+
+    assert all_fans is not None
+    assert all_fans.target_scope == "all"
+    assert every_switch is not None
+    assert every_switch.target_scope == "all"
 
 
 async def test_local_executor_calls_climate_service(hass):

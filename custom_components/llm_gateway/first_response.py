@@ -207,7 +207,7 @@ def decide_first_response(text: str) -> FirstResponseDecision:  # noqa: PLR0911,
     )
 
 
-def _decision(  # noqa: PLR0913 - mirrors FirstResponseDecision fields.
+def _decision(  # noqa: PLR0913, PLR0917 - mirrors decision fields.
     task_type: TaskType,
     cue: CueType,
     spoken_hint: str,

@@ -21,6 +21,14 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant, State
 
 WeatherForecastType = Literal["daily", "hourly"]
+WeatherMetric = Literal[
+    "weather",
+    "temperature",
+    "humidity",
+    "pressure",
+    "wind_speed",
+    "visibility",
+]
 
 WEATHER_DOMAIN = "weather"
 GET_FORECASTS_SERVICE = "get_forecasts"
@@ -203,15 +211,14 @@ class WeatherContextProvider:
         ]
         if not states:
             return None
-        return sorted(
+        return max(
             states,
             key=lambda state: _weather_state_score(
                 self._hass,
                 state,
                 location_hint=location_hint,
             ),
-            reverse=True,
-        )[0]
+        )
 
     def _context_from_state(
         self,
@@ -281,6 +288,7 @@ def render_weather_context_answer(
     context: WeatherContext,
     *,
     time_horizon: str,
+    requested_metric: WeatherMetric | Literal[""] = "",
 ) -> str:
     """Render a concise spoken weather answer."""
     if time_horizon in {"tomorrow", "future"} and context.forecasts.daily:
@@ -290,7 +298,7 @@ def render_weather_context_answer(
             forecast,
             time_horizon=time_horizon,
         )
-    return _render_current_answer(context)
+    return _render_current_answer(context, requested_metric=requested_metric)
 
 
 def _render_forecast_answer(
@@ -317,8 +325,18 @@ def _render_forecast_answer(
     return "，".join(parts) + "。"
 
 
-def _render_current_answer(context: WeatherContext) -> str:
+def _render_current_answer(
+    context: WeatherContext,
+    *,
+    requested_metric: WeatherMetric | Literal[""] = "",
+) -> str:
     current = context.current
+    metric_answer = _render_current_metric(context, requested_metric)
+    if metric_answer:
+        return metric_answer
+    if requested_metric and requested_metric != "weather":
+        metric_label = _weather_metric_label(requested_metric)
+        return f"{context.location}当前没有可用的{metric_label}数据。"
     condition = current.condition_text or _condition_label(current.condition)
     parts = [f"{context.location}现在{condition}"]
     if current.temperature is not None:
@@ -346,6 +364,37 @@ def _render_current_answer(context: WeatherContext) -> str:
         if not speech.endswith(("。", "！", "？", ".", "!", "?")):
             speech += "。"
     return speech
+
+
+def _render_current_metric(context: WeatherContext, requested_metric: str) -> str:
+    current = context.current
+    location = context.location
+    if requested_metric == "temperature" and current.temperature is not None:
+        return f"{location}现在 {_format_number(current.temperature)} 度。"
+    if requested_metric == "humidity" and current.humidity is not None:
+        return f"{location}现在湿度 {_format_number(current.humidity)}%。"
+    if requested_metric == "pressure" and current.pressure is not None:
+        unit = current.pressure_unit or "hPa"
+        return f"{location}现在气压 {_format_number(current.pressure)} {unit}。"
+    if requested_metric == "wind_speed" and current.wind_speed is not None:
+        direction = current.wind_bearing or "风"
+        speed = _format_number(current.wind_speed)
+        unit = current.wind_speed_unit or "km/h"
+        return f"{location}现在{direction}，风速 {speed} {unit}。"
+    if requested_metric == "visibility" and current.visibility is not None:
+        unit = current.visibility_unit or "km"
+        return f"{location}现在能见度 {_format_number(current.visibility)} {unit}。"
+    return ""
+
+
+def _weather_metric_label(metric: str) -> str:
+    return {
+        "temperature": "温度",
+        "humidity": "湿度",
+        "pressure": "气压",
+        "wind_speed": "风速",
+        "visibility": "能见度",
+    }.get(metric, "天气指标")
 
 
 def _weather_state_score(

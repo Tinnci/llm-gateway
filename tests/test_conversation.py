@@ -804,7 +804,15 @@ async def test_new_person_task_suspends_weather_dialogue_frame_without_prompt_le
     assert pending_span["attrs"]["dialogue_relation"] == "new_task"
     assert pending_span["attrs"]["suspended_frame"]["frame_type"] == "weather_forecast"
     assert pending_span["attrs"]["suspended_frame"]["status"] == "suspended"
+    assert pending_span["attrs"]["interaction_state"] == "suspended"
+    assert pending_span["attrs"]["prompt"] == "已取消上一操作。"
     assert pending_span["attrs"]["dialogue_frame_stack"]["active_frames"] == []
+    suspended_display = next(
+        event
+        for event in second_trace["display_status"]["events"]
+        if event["short_text"] == "已取消上一操作，正在处理新请求。"
+    )
+    assert suspended_display["state"] == "continuing"
 
     clarify_span = next(
         span
@@ -813,6 +821,67 @@ async def test_new_person_task_suspends_weather_dialogue_frame_without_prompt_le
     )
     assert "Virginia Hope" in clarify_span["attrs"]["user_visible_prompt"]
     assert "哪个地方" not in clarify_span["attrs"]["user_visible_prompt"]
+
+
+async def test_weather_metric_suspends_device_dialogue_frame_with_visible_notice(
+    hass, aioclient_mock, mock_config_entry
+):
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    _set_weather_jingan(hass)
+    hass.states.async_set("light.desk", "off", {"friendly_name": "书桌灯"})
+    hass.states.async_set("light.monitor", "off", {"friendly_name": "显示器挂灯"})
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
+        },
+    )
+
+    with patch(
+        "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
+    ) as completion:
+        first = await conversation.async_converse(
+            hass,
+            "关闭灯。",
+            "conv-device-weather",
+            Context(),
+            agent_id=agent_id,
+        )
+        second = await conversation.async_converse(
+            hass,
+            "外面的风速是多少？",
+            "conv-device-weather",
+            Context(),
+            agent_id=agent_id,
+        )
+
+    completion.assert_not_called()
+    assert "几个灯" in first.response.speech["plain"]["speech"]
+    assert second.response.speech["plain"]["speech"] == "静安现在西风，风速 1 km/h。"
+
+    records = mock_config_entry.runtime_data.trace_store.snapshot()["records"]
+    second_trace = records[0]
+    pending_span = next(
+        span
+        for span in second_trace["timeline_spans"]
+        if span["stage"] == "pending_state_resolver"
+    )
+    assert pending_span["attrs"]["dialogue_relation"] == "new_task"
+    assert pending_span["attrs"]["suspended_frame"]["frame_type"] == "home_control"
+    assert pending_span["attrs"]["suspended_frame"]["status"] == "suspended"
+    assert pending_span["attrs"]["interaction_state"] == "suspended"
+    assert pending_span["attrs"]["prompt"] == "已取消上一操作。"
+    suspended_display = next(
+        event
+        for event in second_trace["display_status"]["events"]
+        if event["short_text"] == "已取消上一操作，正在处理新请求。"
+    )
+    assert suspended_display["state"] == "continuing"
+    assert [item["earcon_name"] for item in second_trace["earcons"]] == ["captured"]
 
 
 async def test_ambiguous_device_reference_keeps_display_clarifying(
@@ -1506,6 +1575,120 @@ async def test_weather_query_prefers_ha_weather_entity_over_live_sensor_context(
     assert trace["weather_context_path"]["path"] == "weather_entity"
     assert trace["weather_context_path"]["get_live_context_calls"] == 0
     assert any(span["stage"] == "weather_entity" for span in trace["timeline_spans"])
+
+
+async def test_weather_single_metric_query_avoids_full_weather_overanswer(
+    hass, aioclient_mock, mock_config_entry
+):
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    _set_weather_jingan(hass)
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {CONF_DIAGNOSTIC_TRACES: True},
+    )
+
+    result = await conversation.async_converse(
+        hass, "外面的风速是多少？", None, Context(), agent_id=agent_id
+    )
+
+    speech = result.response.speech["plain"]["speech"]
+    assert speech == "静安现在西风，风速 1 km/h。"
+    assert "湿度" not in speech
+    assert "能见度" not in speech
+    assert "未来2小时" not in speech
+
+
+async def test_explicit_all_lights_executes_batch_without_clarification(
+    hass, aioclient_mock, mock_config_entry
+):
+    calls: list[dict] = []
+
+    async def turn_on(call):
+        calls.append(dict(call.data))
+
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    hass.states.async_set("light.desk", "off", {"friendly_name": "书桌灯"})
+    hass.states.async_set("light.monitor", "off", {"friendly_name": "显示器挂灯"})
+    hass.services.async_register("light", "turn_on", turn_on)
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {CONF_DIAGNOSTIC_TRACES: True},
+    )
+
+    with patch(
+        "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
+    ) as completion:
+        result = await conversation.async_converse(
+            hass, "打开所有灯。", None, Context(), agent_id=agent_id
+        )
+
+    completion.assert_not_called()
+    assert result.response.speech["plain"]["speech"] == "已打开所有灯。"
+    assert calls == [
+        {ATTR_ENTITY_ID: ["light.desk"]},
+        {ATTR_ENTITY_ID: ["light.monitor"]},
+    ]
+    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+    execute_span = next(
+        span
+        for span in trace["timeline_spans"]
+        if span["stage"] == "local_capability_execute"
+    )
+    assert execute_span["attrs"]["action_trace"]["target_scope"] == "all"
+
+
+async def test_explicit_all_lights_reports_partial_batch_failure(
+    hass, aioclient_mock, mock_config_entry
+):
+    calls: list[dict] = []
+
+    async def turn_on(call):
+        calls.append(dict(call.data))
+        if call.data[ATTR_ENTITY_ID] == ["light.monitor"]:
+            raise RuntimeError("device timed out")
+
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    hass.states.async_set("light.desk", "off", {"friendly_name": "书桌灯"})
+    hass.states.async_set("light.monitor", "off", {"friendly_name": "显示器挂灯"})
+    hass.services.async_register("light", "turn_on", turn_on)
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {CONF_DIAGNOSTIC_TRACES: True},
+    )
+
+    with patch(
+        "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
+    ) as completion:
+        result = await conversation.async_converse(
+            hass, "打开所有灯。", None, Context(), agent_id=agent_id
+        )
+
+    completion.assert_not_called()
+    assert result.response.speech["plain"]["speech"] == "已打开 1 个灯，1 个失败。"
+    assert calls == [
+        {ATTR_ENTITY_ID: ["light.desk"]},
+        {ATTR_ENTITY_ID: ["light.monitor"]},
+    ]
+    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+    execute_span = next(
+        span
+        for span in trace["timeline_spans"]
+        if span["stage"] == "local_capability_execute"
+    )
+    assert execute_span["status"] == "warning"
+    assert execute_span["attrs"]["status"] == "partial"
+    assert execute_span["attrs"]["action_trace"]["failed_entities"] == [
+        {"entity_id": "light.monitor", "reason": "RuntimeError"}
+    ]
 
 
 async def test_weather_forecast_uses_ha_weather_forecast_service_before_search(

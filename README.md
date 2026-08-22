@@ -24,10 +24,17 @@ Voice Harness panel, and a small earcon toolchain.
   in diagnostic traces without exposing API keys.
 - **Home Assistant tool control**: Assist LLM API tools can be enabled from the
   options flow. High-risk actions are blocked until the user explicitly confirms.
+- **Deterministic low-risk batch control**: explicit Chinese quantifiers such as
+  `所有`, `全部`, `每个`, and `每一` produce an `all` target scope for supported
+  low-risk domains. Batch execution excludes unavailable, hidden, disabled, and
+  config/diagnostic entities, skips targets already in the requested state, and
+  records bounded per-entity success/failure evidence.
 - **Weather provider routing**: outdoor current-weather and forecast turns first
   use Home Assistant `weather` entities and `weather.get_forecasts`, including
-  providers such as `tianqi`; sensor snapshots remain a fallback for installations
-  without a weather entity.
+  providers such as `tianqi`. Current temperature, humidity, pressure, wind
+  speed, and visibility questions use metric-specific local renderers instead
+  of returning the full weather summary; sensor snapshots remain a fallback for
+  installations without a weather entity.
 - **Search gating**: `search_web` is only exposed when search is enabled, a
   provider key exists, and the user request actually needs current external
   information. Provider priority is Tavily, Serper, Firecrawl, then Brave.
@@ -36,13 +43,19 @@ Voice Harness panel, and a small earcon toolchain.
   the conversation log.
 - **Short session memory**: recent turns are stored with a short TTL using Home
   Assistant `Store` and injected only when a conversation id is present.
+- **Recoverable dialogue frames**: ambiguous device or missing-slot prompts are
+  scoped to the caller's conversation id. A high-confidence unrelated request
+  suspends the old frame, records the transition, and emits a display-only
+  cancellation/continuing notice before processing the new request.
 - **Diagnostic run traces**: when explicitly enabled, completed turns are stored
   as bounded Voice Harness records. Summary fields are readable in the panel;
   optional raw chat/tool payloads are redacted and stored as `json+zlib+base64`.
 - **Satellite diagnostics ingestion**: Voice Harness reads
   `sensor.kukui_diagnostic_snapshot`, shows layered checks and PipeWire/AEC
-  state, and stores a bounded trace-safe diagnostic summary on each recorded
-  run.
+  state, accepts both full and Recorder-safe compact projections, and stores a
+  bounded trace-safe diagnostic summary on each recorded run. Compact traces
+  preserve the reported total status counts and explicitly mark themselves
+  incomplete instead of treating omitted `ok` checks as absent.
 - **Voice Harness panel**: the integration auto-registers an admin-only sidebar
   panel named `Voice Harness`; no manual `panel_custom` YAML is required. Panel
   chrome, prompt policies, scenarios, and earcon descriptions render in English
@@ -206,10 +219,12 @@ Options:
 
 Each trace summary includes timestamp, conversation id, user text, final spoken
 assistant text, route tier/model, latency, status, tool event summary, and
-compressed payload size. Raw payload capture is opt-in because it can contain
-household state, entity names, prompts, and device context. Secret-looking keys
-such as API keys, authorization headers, passwords, tokens, and secrets are
-redacted before compression.
+compressed payload size. Satellite diagnostic summaries also include projection
+completeness, reported check totals, non-OK totals, and the first failing
+prerequisite. Raw payload capture is opt-in because it can contain household
+state, entity names, prompts, and device context. Secret-looking keys such as
+API keys, authorization headers, passwords, tokens, and secrets are redacted
+before compression.
 
 This follows the same operational pattern used by production LLM observability
 systems such as LangSmith-style run traces and OpenTelemetry-style spans:

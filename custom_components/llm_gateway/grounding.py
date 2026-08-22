@@ -140,12 +140,16 @@ def build_grounding_verifier_messages(
             "Verify the draft answer only against the provided evidence.",
             "You are an auditor, not a writer.",
             "Ignore unrelated titles or sidebars in snippets.",
-            "If the draft answer has the wrong work title, select exactly one "
-            "string from allowed_answers.",
+            (
+                "If the draft answer has the wrong work title, select exactly one "
+                "string from allowed_answers."
+            ),
             "If allowed_answers is empty or insufficient, abstain.",
             "Never invent, merge, or reorder titles.",
-            "For Chinese classical text, preserve exact titles such as "
-            "诗经, 周南, 关雎.",
+            (
+                "For Chinese classical text, preserve exact titles such as "
+                "诗经, 周南, 关雎."
+            ),
         ],
     }
     return [

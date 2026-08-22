@@ -871,18 +871,33 @@ def _diagnostic_snapshot_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
         for check in snapshot.get("checks") or []
         if isinstance(check, dict)
     ][:32]
-    counts = {"ok": 0, "warning": 0, "error": 0, "blocked": 0}
-    for check in checks:
-        status = str(check.get("status") or "")
-        if status in counts:
-            counts[status] += 1
+    summary = snapshot.get("summary")
+    summary = summary if isinstance(summary, dict) else {}
+    counts = _diagnostic_check_counts(summary, checks)
+    reported_status = str(summary.get("state") or "")
+    status = (
+        reported_status
+        if reported_status in {"ok", "warning", "error", "blocked"}
+        else _diagnostic_snapshot_status(checks)
+    )
     return {
         "available": True,
         "entity_id": SATELLITE_DIAGNOSTIC_SNAPSHOT_ENTITY_ID,
         "schema_version": snapshot.get("schema_version"),
         "generated_at": str(snapshot.get("generated_at") or ""),
-        "status": _diagnostic_snapshot_status(checks),
+        "projection": str(snapshot.get("projection") or "full"),
+        "complete": snapshot.get("complete") is not False,
+        "status": status,
+        "check_count": _nonnegative_int(
+            summary.get("check_count"),
+            sum(counts.values()),
+        ),
+        "non_ok_count": _nonnegative_int(
+            summary.get("non_ok_count"),
+            counts["warning"] + counts["error"] + counts["blocked"],
+        ),
         "check_counts": counts,
+        "full_snapshot_endpoint": str(snapshot.get("full_snapshot_endpoint") or ""),
         "first_failing_check": _diagnostic_check_summary(
             snapshot.get("first_failing_check")
         ),
@@ -910,6 +925,32 @@ def _diagnostic_snapshot_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
             limit=1200,
         ),
     }
+
+
+def _diagnostic_check_counts(
+    summary: dict[str, Any],
+    checks: list[dict[str, Any]],
+) -> dict[str, int]:
+    reported = summary.get("status_counts")
+    if isinstance(reported, dict):
+        return {
+            status: _nonnegative_int(reported.get(status), 0)
+            for status in ("ok", "warning", "error", "blocked")
+        }
+    counts = {"ok": 0, "warning": 0, "error": 0, "blocked": 0}
+    for check in checks:
+        status = str(check.get("status") or "")
+        if status in counts:
+            counts[status] += 1
+    return counts
+
+
+def _nonnegative_int(value: object, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed >= 0 else default
 
 
 def _diagnostic_check_summary(check: object) -> dict[str, Any]:

@@ -4,6 +4,9 @@ line-length = 88
 [lint]
 select = ["ALL"]
 ignore = [
+    # The repository does not use per-file copyright headers.
+    "CPY001",
+
     # Ruff formatter handles line wrapping and trailing commas.
     "COM812",
     "ISC001",

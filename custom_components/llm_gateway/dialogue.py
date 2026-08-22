@@ -31,6 +31,7 @@ InteractionState = Literal[
     "done",
     "failed",
     "cancelled",
+    "suspended",
 ]
 
 _CANCEL_RE = re.compile(r"^(取消|不用了|算了|别查了|不要了|停|停止)[。！？!,.，\s]*$")
@@ -315,7 +316,8 @@ def resolve_dialogue_transaction(  # noqa: PLR0911 - explicit transaction states
         return DialogueTransaction(
             "new_task",
             suspended_frame=frame,
-            interaction_state="classifying",
+            prompt="已取消上一操作。",
+            interaction_state="suspended",
         )
 
     if "location" in frame.missing_referents and _looks_like_location(value):
@@ -431,6 +433,12 @@ def _looks_like_new_task(value: str) -> bool:
         r"open|close"
         r")\b",
         normalized,
+    ):
+        return True
+    if re.search(
+        r"(风速|风向|气温|温度|湿度|能见度|空气质量|降雨量)"
+        r".{0,8}(多少|多大|怎样|怎么样|如何|吗|[？?])",
+        value,
     ):
         return True
     return bool(

@@ -131,6 +131,11 @@ weather sensors, but it must not answer forecast-required turns. Forecast
 rendering selects rows by the requested horizon/date so stale leading provider
 rows do not become "tomorrow".
 
+For current scalar questions, routing also carries the requested metric into
+the local renderer. Temperature, humidity, pressure, wind speed, and visibility
+answers contain only that metric. Missing metric data produces an explicit
+unavailable answer rather than silently expanding into a full weather report.
+
 ## Reference resolution and commitment
 
 LLM Gateway treats locations, people, devices, times, areas, and follow-up
@@ -175,6 +180,21 @@ Commitment, not intent, decides whether the system may act:
   confirmation.
 - `blocked`: policy or capability prevents safe progress.
 
+Explicit low-risk batch requests use a separate target-scope commitment:
+
+```text
+explicit quantifier + supported domain
+→ target_scope=all
+→ exclude unavailable/unknown and registry-hidden/config/diagnostic entities
+→ skip entities already in the requested state
+→ bounded concurrent per-entity service calls
+→ complete, partial, or failed result with trace evidence
+```
+
+The action trace keeps `excluded_entities`, `skipped_entities`, attempted,
+succeeded, and failed counts, plus bounded failed entity reasons. A single
+device failure therefore cannot erase evidence that another target succeeded.
+
 Trace output must include candidate scores and evidence. Deeply nested frames
 may be compacted in summaries, so high-value fields such as `top_candidate`,
 `candidate_scores`, and `commitment_decision` are also exposed at the action
@@ -192,8 +212,10 @@ Dialogue follow-up is represented as a transaction over a short-lived
   state. User-visible prompts are produced later by commitment/local clarify
   stages after the new turn is known not to be unrelated.
 - If a new utterance is a high-confidence unrelated task, the active frame is
-  suspended and removed from active matching. This prevents a weather location
-  prompt from leaking into a later person/entity question.
+  suspended and removed from active matching. The resolver records
+  `interaction_state=suspended`; feedback policy emits a display-only
+  cancellation/continuing notice without adding a cancellation earcon. This
+  prevents an old weather or device prompt from leaking into the new task.
 
 ## Turn controller
 

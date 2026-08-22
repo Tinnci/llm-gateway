@@ -90,8 +90,8 @@ def test_dialogue_frame_stack_suspends_weather_for_high_confidence_new_task() ->
 
     assert transaction.relation == "new_task"
     assert transaction.suspended_frame is frame
-    assert transaction.prompt == ""
-    assert transaction.interaction_state == "classifying"
+    assert transaction.prompt == "已取消上一操作。"
+    assert transaction.interaction_state == "suspended"
     assert frame.status == "suspended"
     assert stack.active_frame() is None
 
@@ -155,6 +155,20 @@ def test_dialogue_frame_stack_suspends_device_frame_for_new_person_task() -> Non
 
     assert transaction.relation == "new_task"
     assert transaction.suspended_frame is frame
+    assert frame.status == "suspended"
+    assert stack.active_frame() is None
+
+
+def test_dialogue_frame_stack_suspends_device_frame_for_weather_metric() -> None:
+    frame = _device_frame()
+    stack = DialogueFrameStack([frame])
+
+    transaction = resolve_dialogue_transaction("外面的风速是多少？", stack)
+
+    assert transaction.relation == "new_task"
+    assert transaction.suspended_frame is frame
+    assert transaction.prompt == "已取消上一操作。"
+    assert transaction.interaction_state == "suspended"
     assert frame.status == "suspended"
     assert stack.active_frame() is None
 

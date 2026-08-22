@@ -286,6 +286,84 @@ async def test_trace_store_keeps_blocked_diagnostics_distinct(hass):
     assert diagnostic["first_failing_check"]["id"] == "acoustic.measurement.available"
 
 
+async def test_trace_store_preserves_compact_projection_total_counts(hass):
+    hass.states.async_set(
+        "sensor.kukui_diagnostic_snapshot",
+        "warning",
+        {
+            "schema_version": 1,
+            "generated_at": "2026-07-17T12:26:49+00:00",
+            "check_count": 30,
+            "status_counts": {"ok": 25, "warning": 1, "blocked": 4},
+            "non_ok_count": 5,
+            "non_ok_checks": [
+                {
+                    "id": "tts.synthesis_trace.available",
+                    "status": "blocked",
+                    "layer": "tts",
+                },
+                {
+                    "id": "acoustic.measurement.available",
+                    "status": "warning",
+                    "layer": "acoustic",
+                },
+                {
+                    "id": "acoustic.false_vad.absent",
+                    "status": "blocked",
+                    "layer": "acoustic",
+                    "depends_on": ["acoustic.measurement.available"],
+                },
+                {
+                    "id": "acoustic.echo_suppression.measured",
+                    "status": "blocked",
+                    "layer": "acoustic",
+                    "depends_on": ["acoustic.measurement.available"],
+                },
+                {
+                    "id": "acoustic.barge_in.measured",
+                    "status": "blocked",
+                    "layer": "acoustic",
+                    "depends_on": ["acoustic.measurement.available"],
+                },
+            ],
+            "full_snapshot_endpoint": "http://127.0.0.1:10710/diagnostic-snapshot",
+        },
+    )
+    store = TraceStore(hass, "entry-diagnostic-compact")
+    await store.async_load()
+
+    await store.async_record_turn(
+        {
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_MAX_RUNS: 2,
+            CONF_TRACE_RETENTION_HOURS: 24,
+        },
+        TraceTurn(
+            conversation_id="conv-diagnostic-compact",
+            user_text="测试",
+            assistant_text="好了。",
+            route={"kind": "fast"},
+            latency_ms=10,
+            status="complete",
+            raw_payload={},
+        ),
+    )
+
+    diagnostic = store.snapshot()["records"][0]["diagnostic_snapshot"]
+    assert diagnostic["status"] == "warning"
+    assert diagnostic["projection"] == "recorder_safe_compact"
+    assert diagnostic["complete"] is False
+    assert diagnostic["check_count"] == 30
+    assert diagnostic["non_ok_count"] == 5
+    assert diagnostic["check_counts"] == {
+        "ok": 25,
+        "warning": 1,
+        "error": 0,
+        "blocked": 4,
+    }
+    assert len(diagnostic["checks"]) == 5
+
+
 async def test_trace_timeline_spans_keep_structured_inventory_attrs(hass):
     store = TraceStore(hass, "entry-inventory")
     await store.async_load()

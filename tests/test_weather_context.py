@@ -7,6 +7,7 @@ from datetime import timedelta
 from homeassistant.core import SupportsResponse
 from homeassistant.util import dt as dt_util
 
+from custom_components.llm_gateway.capabilities import environment_metric_from_text
 from custom_components.llm_gateway.weather_context import (
     WeatherContextProvider,
     render_weather_context_answer,
@@ -57,6 +58,42 @@ async def test_weather_context_provider_reads_current_weather_entity(hass) -> No
     assert "静安现在多云" in speech
     assert "26.7 度" in speech
     assert "未来2小时不会下雨" in speech
+
+
+async def test_weather_context_render_limits_single_metric_answer(hass) -> None:
+    _set_weather_state(hass)
+    context = await WeatherContextProvider(hass).async_get_current(location_hint="静安")
+
+    assert context is not None
+    speech = render_weather_context_answer(
+        context,
+        time_horizon="now",
+        requested_metric="wind_speed",
+    )
+
+    assert speech == "静安现在西风，风速 1 km/h。"
+    assert "湿度" not in speech
+    assert "能见度" not in speech
+    assert "未来2小时" not in speech
+
+    pressure = render_weather_context_answer(
+        context,
+        time_horizon="now",
+        requested_metric="pressure",
+    )
+    visibility = render_weather_context_answer(
+        context,
+        time_horizon="now",
+        requested_metric="visibility",
+    )
+    assert pressure == "静安现在气压 1007 hPa。"
+    assert visibility == "静安现在能见度 8 km。"
+
+
+def test_environment_metric_parser_generalizes_scalar_weather_metrics() -> None:
+    assert environment_metric_from_text("外面的风速是多少？") == "wind_speed"
+    assert environment_metric_from_text("现在气压多少？") == "pressure"
+    assert environment_metric_from_text("室外能见度怎么样？") == "visibility"
 
 
 async def test_weather_context_provider_calls_ha_forecast_service(hass) -> None:

@@ -21,6 +21,7 @@ from .capabilities import (
     MultiIntentPlan,
     RouteDecision,
     decide_route,
+    environment_metric_from_text,
     plan_multi_intent,
 )
 from .capability_executor import async_try_execute_local_capability
@@ -932,10 +933,12 @@ class LLMGatewayConversationEntity(
                     runtime,
                     run_id,
                     "local_capability_execute",
-                    status=(
-                        "ok"
-                        if local_capability_result.status == "executed"
-                        else local_capability_result.status
+                    status={
+                        "executed": "ok",
+                        "partial": "warning",
+                    }.get(
+                        local_capability_result.status,
+                        local_capability_result.status,
                     ),
                     attrs=local_capability_trace,
                 )
@@ -1250,7 +1253,7 @@ class LLMGatewayConversationEntity(
             turn_token,
         )
 
-    async def _async_try_local_live_context(  # noqa: PLR0913
+    async def _async_try_local_live_context(  # noqa: PLR0913, PLR0917
         self,
         user_input: conversation.ConversationInput,
         chat_log: conversation.ChatLog,
@@ -1404,7 +1407,7 @@ class LLMGatewayConversationEntity(
             turn_token,
         )
 
-    async def _async_try_weather_context(  # noqa: PLR0913
+    async def _async_try_weather_context(  # noqa: PLR0913, PLR0917
         self,
         user_input: conversation.ConversationInput,
         chat_log: conversation.ChatLog,
@@ -1456,6 +1459,7 @@ class LLMGatewayConversationEntity(
         speech = render_weather_context_answer(
             context,
             time_horizon=route_decision.time_horizon or "now",
+            requested_metric=environment_metric_from_text(user_input.text),
         )
         self._mark_run(
             runtime,
@@ -1491,7 +1495,7 @@ class LLMGatewayConversationEntity(
             turn_token,
         )
 
-    async def _async_try_multi_intent(  # noqa: PLR0911, PLR0913
+    async def _async_try_multi_intent(  # noqa: PLR0911, PLR0913, PLR0917
         self,
         user_input: conversation.ConversationInput,
         chat_log: conversation.ChatLog,
@@ -1661,7 +1665,7 @@ class LLMGatewayConversationEntity(
             turn_token,
         )
 
-    async def _async_finalize_turn(  # noqa: PLR0913
+    async def _async_finalize_turn(  # noqa: PLR0913, PLR0917
         self,
         user_input: conversation.ConversationInput,
         chat_log: conversation.ChatLog,
@@ -1927,7 +1931,7 @@ class LLMGatewayConversationEntity(
         content = str(result.message.get("content") or "").strip()
         return markdown_to_spoken_text(content, max_sentences=2)
 
-    async def _async_finalize_stale_turn(  # noqa: PLR0913
+    async def _async_finalize_stale_turn(  # noqa: PLR0913, PLR0917
         self,
         user_input: conversation.ConversationInput,
         chat_log: conversation.ChatLog,
@@ -2121,7 +2125,7 @@ class LLMGatewayConversationEntity(
         if memory_context:
             _insert_system_once(chat_log.content, memory_context, index=1)
 
-    async def _async_run_chat_log(  # noqa: C901, PLR0911, PLR0912, PLR0913, PLR0915
+    async def _async_run_chat_log(  # noqa: C901, PLR0911, PLR0912, PLR0913, PLR0915, PLR0917
         self,
         chat_log: conversation.ChatLog,
         route: ModelRoute,
@@ -2609,8 +2613,10 @@ def _output_contract_repair_messages(
             "被拦截的输出片段:",
             _truncate_for_prompt(unsafe_text, OUTPUT_REPAIR_UNSAFE_CHARS),
             "",
-            "请重新生成可直接播报的最终答案。"
-            f"如果无法根据这些信息可靠回答，只能输出: {safe_failure}",
+            (
+                "请重新生成可直接播报的最终答案。"
+                f"如果无法根据这些信息可靠回答，只能输出: {safe_failure}"
+            ),
         ]
     )
     return [

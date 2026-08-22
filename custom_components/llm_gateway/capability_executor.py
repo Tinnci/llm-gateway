@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
@@ -38,11 +39,13 @@ LocalActionKind = Literal[
 ]
 LocalActionStatus = Literal[
     "executed",
+    "partial",
     "clarify",
     "unsupported",
     "not_applicable",
     "error",
 ]
+TargetScope = Literal["single", "area", "all"]
 
 LOW_RISK_DOMAINS = {"climate", "fan", "light", "media_player", "switch"}
 CLIMATE_MIN_SETPOINT = 5
@@ -52,6 +55,7 @@ ASSISTANT_VOLUME_ENTITIES = (
     "input_number.kukui_tts_volume_night",
     "input_number.kukui_fallback_clip_volume",
 )
+BULK_ACTION_MAX_CONCURRENCY = 4
 
 _NORMALIZE_RE = re.compile(r"[\s《》「」『』“”\"'·.。,:：，、_\-—!?！？]+")
 _AREA_HINTS = ("客厅", "卧室", "餐厅", "厨房", "书房", "卫生间", "阳台")
@@ -71,6 +75,7 @@ class LocalActionCandidate:
     domain: str = ""
     area: str = ""
     target_hint: str = ""
+    target_scope: TargetScope = "single"
     target_temperature: float | None = None
     volume_level: float | None = None
     mute: bool | None = None
@@ -109,6 +114,7 @@ class LocalCapabilityResult:
                 "domain": candidate.domain,
                 "area": candidate.area,
                 "target_hint": candidate.target_hint,
+                "target_scope": candidate.target_scope,
                 "target_temperature": candidate.target_temperature,
                 "volume_level": candidate.volume_level,
                 "mute": candidate.mute,
@@ -161,6 +167,7 @@ def _home_control_candidate(text: str, normalized: str) -> LocalActionCandidate 
             domain=domain,
             area=_area_from_text(text),
             target_hint=_climate_target_hint(text, normalized),
+            target_scope=_target_scope(text, domain=domain),
             target_temperature=target_temperature,
             confidence=0.88,
         )
@@ -183,6 +190,7 @@ def _home_control_candidate(text: str, normalized: str) -> LocalActionCandidate 
         domain=domain,
         area=_area_from_text(text),
         target_hint=_target_hint(text),
+        target_scope=_target_scope(text, domain=domain),
         confidence=0.86,
     )
 
@@ -261,9 +269,12 @@ def _climate_target_hint(text: str, normalized: str) -> str:
     return hint or _target_hint(text) or "空调"
 
 
-async def _async_execute_ha_action(
+async def _async_execute_ha_action(  # noqa: PLR0911 - explicit result states.
     hass: HomeAssistant, candidate: LocalActionCandidate
 ) -> LocalCapabilityResult:
+    if _targets_all_entities(candidate):
+        return await _async_execute_all_targets(hass, candidate)
+
     resolution_frame = _resolve_device_frame(hass, candidate)
     commitment = resolution_frame.commitment
     if commitment.state != "execute":
@@ -332,6 +343,163 @@ async def _async_execute_ha_action(
         ),
         matches=tuple(_match_trace(match) for match in matches),
         action_trace=_resolution_action_trace(resolution_frame),
+    )
+
+
+async def _async_execute_all_targets(
+    hass: HomeAssistant, candidate: LocalActionCandidate
+) -> LocalCapabilityResult:
+    matches: list[State] = []
+    excluded_entities: list[dict[str, str]] = []
+    for state in hass.states.async_all(candidate.domain):
+        exclusion_reason = _entity_exclusion_reason(hass, state)
+        if exclusion_reason:
+            excluded_entities.append(
+                {
+                    "entity_id": state.entity_id,
+                    "reason": exclusion_reason,
+                }
+            )
+            continue
+        matches.append(state)
+    trace = {
+        "target_scope": "all",
+        "excluded_entities": excluded_entities[:32],
+    }
+    if not matches:
+        return LocalCapabilityResult(
+            "clarify",
+            _missing_target_speech(candidate),
+            candidate=candidate,
+            reason="no_matching_entity",
+            action_trace=trace,
+        )
+    actionable: list[State] = []
+    skipped_entities: list[dict[str, str]] = []
+    for state in matches:
+        satisfied_reason = _already_satisfied_reason(candidate, state)
+        if satisfied_reason:
+            skipped_entities.append(
+                {"entity_id": state.entity_id, "reason": satisfied_reason}
+            )
+            continue
+        actionable.append(state)
+    trace["skipped_entities"] = skipped_entities[:32]
+    if not actionable:
+        return LocalCapabilityResult(
+            "executed",
+            _already_satisfied_speech(candidate),
+            candidate=candidate,
+            matches=tuple(_match_trace(match) for match in matches),
+            action_trace={
+                **trace,
+                "attempted_count": 0,
+                "succeeded_count": 0,
+                "failed_count": 0,
+                "failed_entities": [],
+            },
+        )
+    service, _data = _service_for_candidate(candidate, actionable)
+    if not service:
+        return LocalCapabilityResult(
+            "unsupported",
+            "这个操作我还不能本地执行。",
+            candidate=candidate,
+            matches=tuple(_match_trace(match) for match in matches),
+            reason="unsupported_action",
+            action_trace=trace,
+        )
+    domain, service_name = service.split(".", 1)
+    semaphore = asyncio.Semaphore(BULK_ACTION_MAX_CONCURRENCY)
+    results = await asyncio.gather(
+        *(
+            _async_call_bulk_target(
+                hass,
+                candidate,
+                state,
+                domain=domain,
+                service_name=service_name,
+                semaphore=semaphore,
+            )
+            for state in actionable
+        )
+    )
+    service_calls = tuple(
+        service_call
+        for service_call, _failed_entity in results
+        if service_call is not None
+    )
+    failed_entities = [
+        failed_entity
+        for _service_call, failed_entity in results
+        if failed_entity is not None
+    ]
+    trace.update(
+        {
+            "attempted_count": len(actionable),
+            "succeeded_count": len(service_calls),
+            "failed_count": len(failed_entities),
+            "failed_entities": failed_entities[:32],
+        }
+    )
+    if not service_calls:
+        return LocalCapabilityResult(
+            "error",
+            "执行失败了，请稍后再试。",
+            candidate=candidate,
+            matches=tuple(_match_trace(match) for match in matches),
+            reason="all_targets_failed",
+            action_trace=trace,
+        )
+    if failed_entities:
+        return LocalCapabilityResult(
+            "partial",
+            _partial_success_speech(
+                candidate,
+                succeeded_count=len(service_calls),
+                failed_count=len(failed_entities),
+            ),
+            candidate=candidate,
+            service_calls=service_calls,
+            matches=tuple(_match_trace(match) for match in matches),
+            reason="partial_failure",
+            action_trace=trace,
+        )
+    return LocalCapabilityResult(
+        "executed",
+        _success_speech(candidate, matches),
+        candidate=candidate,
+        service_calls=service_calls,
+        matches=tuple(_match_trace(match) for match in matches),
+        action_trace=trace,
+    )
+
+
+async def _async_call_bulk_target(  # noqa: PLR0913 - explicit service context.
+    hass: HomeAssistant,
+    candidate: LocalActionCandidate,
+    state: State,
+    *,
+    domain: str,
+    service_name: str,
+    semaphore: asyncio.Semaphore,
+) -> tuple[dict[str, Any] | None, dict[str, str] | None]:
+    _service, data = _service_for_candidate(candidate, [state])
+    async with semaphore:
+        try:
+            await hass.services.async_call(domain, service_name, data, blocking=True)
+        except Exception as err:  # noqa: BLE001 - HA service exceptions vary
+            return None, {
+                "entity_id": state.entity_id,
+                "reason": type(err).__name__,
+            }
+    return (
+        {
+            "domain": domain,
+            "service": service_name,
+            "entity_ids": list(data.get(ATTR_ENTITY_ID, [])),
+        },
+        None,
     )
 
 
@@ -412,7 +580,7 @@ def _resolve_entities(
     states = [
         state
         for state in hass.states.async_all(candidate.domain)
-        if state.state not in {"unavailable", "unknown"}
+        if not _entity_exclusion_reason(hass, state)
     ]
     if candidate.area:
         states = [
@@ -470,7 +638,7 @@ def _resolve_device_frame(
             state=state.state,
         )
         for state in hass.states.async_all(candidate.domain)
-        if state.state not in {"unavailable", "unknown"}
+        if not _entity_exclusion_reason(hass, state)
     )
     return resolve_device_referent(
         raw_text=candidate.target_hint,
@@ -533,6 +701,28 @@ def _entity_area_names(hass: HomeAssistant, entity_id: str) -> tuple[str, ...]:
         return ()
 
 
+def _entity_exclusion_reason(  # noqa: PLR0911 - explicit exclusion states.
+    hass: HomeAssistant, state: State
+) -> str:
+    """Return why an entity must not be a user-facing control target."""
+    if state.state in {"unavailable", "unknown"}:
+        return state.state
+    try:
+        entry = er.async_get(hass).async_get(state.entity_id)
+    except Exception:  # noqa: BLE001 - registry APIs differ across HA versions
+        return ""
+    if entry is None:
+        return ""
+    if entry.disabled_by is not None:
+        return "disabled"
+    if entry.hidden_by is not None:
+        return "hidden"
+    if entry.entity_category is not None:
+        category = getattr(entry.entity_category, "value", entry.entity_category)
+        return f"entity_category:{category}"
+    return ""
+
+
 def _service_for_candidate(  # noqa: PLR0911 - explicit HA service mapping.
     candidate: LocalActionCandidate, matches: list[State]
 ) -> tuple[str, dict[str, Any]]:
@@ -570,9 +760,14 @@ def _service_for_candidate(  # noqa: PLR0911 - explicit HA service mapping.
     return "", {}
 
 
-def _success_speech(  # noqa: PLR0911 - explicit spoken templates per action.
+def _success_speech(  # noqa: PLR0911,PLR0912 - explicit templates per action.
     candidate: LocalActionCandidate, matches: list[State]
 ) -> str:
+    if _targets_all_entities(candidate):
+        if candidate.action == "turn_on":
+            return f"已打开所有{_domain_label(candidate.domain)}。"
+        if candidate.action == "turn_off":
+            return f"已关闭所有{_domain_label(candidate.domain)}。"
     label = _target_label(candidate, matches)
     if candidate.action == "turn_on":
         return f"已打开{label}。"
@@ -597,6 +792,39 @@ def _success_speech(  # noqa: PLR0911 - explicit spoken templates per action.
     if candidate.action == "volume_mute":
         return f"已{'静音' if candidate.mute else '取消静音'}{label}。"
     return "好了。"
+
+
+def _partial_success_speech(
+    candidate: LocalActionCandidate,
+    *,
+    succeeded_count: int,
+    failed_count: int,
+) -> str:
+    action = {
+        "turn_on": "打开",
+        "turn_off": "关闭",
+        "brightness_up": "调亮",
+        "brightness_down": "调暗",
+        "climate_set_temperature": "设置",
+    }.get(candidate.action, "操作")
+    label = _domain_label(candidate.domain)
+    return f"已{action} {succeeded_count} 个{label}，{failed_count} 个失败。"
+
+
+def _already_satisfied_reason(
+    candidate: LocalActionCandidate,
+    state: State,
+) -> str:
+    if candidate.action == "turn_on" and state.state == "on":
+        return "already_on"
+    if candidate.action == "turn_off" and state.state == "off":
+        return "already_off"
+    return ""
+
+
+def _already_satisfied_speech(candidate: LocalActionCandidate) -> str:
+    state = "打开" if candidate.action == "turn_on" else "关闭"
+    return f"所有{_domain_label(candidate.domain)}已经{state}。"
 
 
 def _format_temperature(value: float | None) -> str:
@@ -640,6 +868,28 @@ def _match_trace(state: State) -> dict[str, str]:
 
 def _needs_single_target(candidate: LocalActionCandidate) -> bool:
     return candidate.domain == "media_player" or not candidate.area
+
+
+def _targets_all_entities(candidate: LocalActionCandidate) -> bool:
+    return candidate.target_scope == "all"
+
+
+def _target_scope(text: str, *, domain: str) -> TargetScope:
+    normalized = _normalize(text)
+    label = _domain_label(domain)
+    if any(
+        phrase in normalized
+        for phrase in (
+            f"所有{label}",
+            f"全部{label}",
+            f"每个{label}",
+            f"每一{label}",
+        )
+    ):
+        return "all"
+    if _area_from_text(text):
+        return "area"
+    return "single"
 
 
 def _bounded_assistant_volume_value(state: State | None, level: float) -> float:

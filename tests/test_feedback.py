@@ -90,6 +90,25 @@ def test_pending_resolver_does_not_emit_user_visible_clarification() -> None:
     assert display is None
 
 
+def test_pending_resolver_shows_suspended_operation_without_earcon() -> None:
+    store = VoiceFeedbackStore()
+    earcon, display = VoiceFeedbackPolicy(store).pipeline_event(
+        turn_id="turn-new-task",
+        stage="pending_state_resolver",
+        t_ms=60,
+        attrs={
+            "interaction_state": "suspended",
+            "prompt": "已取消上一操作。",
+            "dialogue_relation": "new_task",
+        },
+    )
+
+    assert earcon is None
+    assert display["state"] == "continuing"
+    assert display["short_text"] == "已取消上一操作，正在处理新请求。"
+    assert display["progress"] == "indeterminate"
+
+
 def test_final_status_preserves_clarifying_state() -> None:
     store = VoiceFeedbackStore()
     VoiceFeedbackPolicy(store).pipeline_event(

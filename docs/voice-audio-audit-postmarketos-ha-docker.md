@@ -68,6 +68,9 @@ LLM Gateway does not own:
 Voice Harness and stored traces should treat these fields as the Gateway-facing
 contract:
 
+- diagnostic projection (`full` or `recorder_safe_compact`) and `complete`;
+- reported `check_count`, `non_ok_count`, and per-status totals; compact
+  projections must not recompute the `ok` count from `non_ok_checks`;
 - first failing diagnostic prerequisite from `checks[].depends_on`;
 - `pipewire_graph.aec_enabled`;
 - `pipewire_graph.kukui_aec_source_visible`;
