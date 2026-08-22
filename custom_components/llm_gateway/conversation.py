@@ -24,7 +24,6 @@ from .capabilities import (
     environment_metric_from_text,
     plan_multi_intent,
 )
-from .capability_executor import async_try_execute_local_capability
 from .const import (
     CONF_TEMPERATURE,
     CONF_TOP_P,
@@ -79,6 +78,12 @@ from .search import (
 )
 from .static_context import render_device_inventory, render_scalar_state_answer
 from .traces import TraceTurn
+from .turn_loops import (
+    DeterministicCapabilityLoop,
+    TurnLoopContext,
+    TurnLoopServices,
+    select_turn_loop,
+)
 from .voice_controls import async_handle_voice_runtime_command
 from .voice_text import (
     enforce_output_contract,
@@ -918,14 +923,25 @@ class LLMGatewayConversationEntity(
             )
             if multi_intent_result is not None:
                 return multi_intent_result
-        if (
-            route_decision.next_action == "execute_local"
-            and route_decision.route == "local_action"
-        ):
-            local_capability_result = await async_try_execute_local_capability(
+        loop_context = TurnLoopContext(
+            text=effective_text,
+            route_decision=route_decision,
+        )
+        selected_loop = select_turn_loop(
+            (DeterministicCapabilityLoop(),),
+            loop_context,
+        )
+        if selected_loop is not None:
+            self._mark_run(
+                runtime,
+                run_id,
+                "loop_selected",
+                attrs={"loop": selected_loop.name},
+            )
+            local_capability_result = await selected_loop.run(
                 self.hass,
-                effective_text,
-                route_decision,
+                loop_context,
+                TurnLoopServices(),
             )
             if local_capability_result is not None and local_capability_result.handled:
                 local_capability_trace = local_capability_result.trace_attrs()
@@ -941,6 +957,15 @@ class LLMGatewayConversationEntity(
                         local_capability_result.status,
                     ),
                     attrs=local_capability_trace,
+                )
+                self._mark_run(
+                    runtime,
+                    run_id,
+                    "loop_completed",
+                    attrs={
+                        "loop": selected_loop.name,
+                        "outcome": local_capability_result.status,
+                    },
                 )
                 if local_capability_result.status == "clarify":
                     frame = _dialogue_frame_from_local_capability(
