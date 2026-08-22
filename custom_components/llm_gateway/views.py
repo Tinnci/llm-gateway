@@ -59,6 +59,7 @@ from .first_response_audio import first_response_audio_status
 from .harness import evaluate_scenario
 from .policy import should_allow_search
 from .providers import normalize_provider_profiles_json, provider_profiles_from_options
+from .replay import ReplayError, ReplayOverrides, async_replay_turn
 from .router import select_model_route
 from .satellite_diagnostics import satellite_diagnostic_snapshot
 from .search import search_providers_from_options
@@ -389,6 +390,7 @@ def async_register_views(hass: HomeAssistant) -> None:
     hass.http.register_view(HarnessStatusView)
     hass.http.register_view(HarnessRunsView)
     hass.http.register_view(HarnessRunDetailView)
+    hass.http.register_view(HarnessReplayView)
     hass.http.register_view(HarnessEvaluateView)
     hass.http.register_view(HarnessOptionsView)
 
@@ -475,6 +477,55 @@ class HarnessRunDetailView(HomeAssistantView):
                 "run_not_found",
             )
         return self.json({"record": record})
+
+
+class HarnessReplayView(HomeAssistantView):
+    """Fork one stored run through side-effect-free loop services."""
+
+    name = f"api:{DOMAIN}:harness:replay"
+    url = f"{API_BASE}/harness/runs/{{run_id}}/replay"
+
+    @require_admin
+    async def post(self, request: web.Request, run_id: str) -> web.Response:
+        """Handle dry-run replay requests."""
+        try:
+            payload = await request.json()
+        except ValueError:
+            return self.json_message(
+                "Invalid JSON body", HTTPStatus.BAD_REQUEST, "invalid_json"
+            )
+        if not isinstance(payload, dict):
+            return self.json_message(
+                "JSON body must be an object",
+                HTTPStatus.BAD_REQUEST,
+                "invalid_payload",
+            )
+        hass: HomeAssistant = request.app["hass"]
+        entry = _select_entry(hass, payload.get("entry_id"))
+        runtime = getattr(entry, "runtime_data", None) if entry else None
+        if entry is None or runtime is None:
+            return self.json_message(
+                "No LLM Gateway config entry found",
+                HTTPStatus.NOT_FOUND,
+                "entry_not_found",
+            )
+        try:
+            overrides = ReplayOverrides.from_payload(payload.get("overrides"))
+            record = await async_replay_turn(
+                hass,
+                runtime.trace_store,
+                dict(entry.options),
+                run_id,
+                overrides,
+            )
+        except ReplayError as err:
+            status = (
+                HTTPStatus.NOT_FOUND
+                if err.code == "run_not_found"
+                else HTTPStatus.BAD_REQUEST
+            )
+            return self.json_message(str(err), status, err.code)
+        return self.json({"record": record}, status_code=HTTPStatus.CREATED)
 
 
 class HarnessEvaluateView(HomeAssistantView):

@@ -597,6 +597,50 @@ async def test_harness_run_detail_api_returns_debug_record(
     assert missing.status == 404
 
 
+async def test_harness_replay_api_creates_side_effect_free_fork(
+    hass, hass_client, mock_config_entry
+):
+    """The replay API stores lineage without calling a live HA service."""
+    assert await async_setup_component(hass, "http", {})
+    mock_config_entry.add_to_hass(hass)
+    trace_store = TraceStore(hass, mock_config_entry.entry_id)
+    await trace_store.async_load()
+    mock_config_entry.runtime_data = SimpleNamespace(trace_store=trace_store)
+    await async_setup_panel(hass)
+    calls = []
+
+    async def turn_on(call):
+        calls.append(call)
+
+    hass.services.async_register("light", "turn_on", turn_on)
+    await trace_store.async_record_turn(
+        {CONF_DIAGNOSTIC_TRACES: True},
+        TraceTurn(
+            conversation_id="conv-replay",
+            user_text="打开所有灯。",
+            assistant_text="已打开所有灯。",
+            route={"kind": "local_action"},
+            latency_ms=20,
+            status="complete",
+            raw_payload={"input": {"text": "打开所有灯。"}},
+            run_id="source-replay",
+        ),
+    )
+
+    client = await hass_client()
+    response = await client.post(
+        "/api/llm_gateway/harness/runs/source-replay/replay",
+        json={"overrides": {"prompt": "candidate-b"}},
+    )
+
+    assert response.status == 201
+    record = (await response.json())["record"]
+    assert calls == []
+    assert record["lineage"]["replay_of"] == "source-replay"
+    assert record["lineage"]["overrides"]["prompt"] == "candidate-b"
+    assert record["proposed_actions"][0]["target_scope"] == "all"
+
+
 async def test_harness_options_api_updates_safe_fields(
     hass, hass_client, mock_config_entry
 ):

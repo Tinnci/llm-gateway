@@ -36,3 +36,16 @@ ordering.
 `DiagnosticSnapshot` continues to describe current composed-system health. The
 turn event stream describes what happened during one interaction; neither is a
 replacement for the other.
+
+## Dry-run replay and fork
+
+Voice Harness can fork a stored deterministic turn through
+`POST /api/llm_gateway/harness/runs/{run_id}/replay`. Replay reconstructs the
+input from the bounded stored record and runs the selected `TurnLoop` with a
+dry-run capability adapter. The adapter parses a proposed action but has no
+path that calls a live Home Assistant service.
+
+The fork is stored as a normal trace with `lineage.replay_of`, its own
+`lineage.fork_id`, bounded overrides, proposed actions, and replay lifecycle
+events. A dry-run fork does not ingest current satellite evidence because that
+evidence belongs to the live device timeline rather than the historical fork.

@@ -124,6 +124,8 @@ const I18N = {
     "runs.trace_ready": "Trace capture is ready",
     "runs.trace_disabled_hint": "Enable diagnostic traces before expecting recorded runs.",
     "runs.trace_waiting_hint": "Run a voice turn to populate recorded and live run detail.",
+    "runs.replay": "Dry-run replay",
+    "runs.replay_complete": "Replay fork created without live service calls.",
     "runs.open_settings": "Open settings",
     "runs.live_idle": "No live run is active.",
     "runs.live": "Recent live runs",
@@ -488,6 +490,8 @@ const I18N = {
     "runs.trace_ready": "诊断记录已就绪",
     "runs.trace_disabled_hint": "需要先启用诊断记录，才会保存运行记录。",
     "runs.trace_waiting_hint": "执行一次语音对话后，这里会显示记录和实时运行细节。",
+    "runs.replay": "无副作用重放",
+    "runs.replay_complete": "已创建重放分支，未调用实时服务。",
     "runs.open_settings": "打开配置",
     "runs.live_idle": "当前没有实时运行。",
     "runs.live": "最近实时运行",
@@ -846,6 +850,7 @@ class VoiceHarnessPanel extends HTMLElement {
     this._busy = false;
     this._result = null;
     this._settingsSaved = "";
+    this._replayStatus = "";
     this._draftLocale = this._locale();
     this._draftTouched = false;
     /** @type {ScenarioDraft} */
@@ -903,6 +908,34 @@ class VoiceHarnessPanel extends HTMLElement {
     this._render();
     try {
       this._result = await this._api("POST", "llm_gateway/harness/evaluate", payload);
+    } catch (err) {
+      this._error = err.message || String(err);
+    } finally {
+      this._busy = false;
+      this._render();
+    }
+  }
+
+  async _replayRun(runId, entryId) {
+    this._busy = true;
+    this._error = "";
+    this._replayStatus = "";
+    this._render();
+    try {
+      const result = await this._api(
+        "POST",
+        `llm_gateway/harness/runs/${encodeURIComponent(runId)}/replay`,
+        { entry_id: entryId, overrides: {} },
+      );
+      const entry = this._data?.entries?.find((item) => item.entry_id === entryId);
+      if (entry?.traces?.records && result.record) {
+        entry.traces.records = [result.record, ...entry.traces.records];
+        entry.traces.storage = {
+          ...(entry.traces.storage || {}),
+          records: Number(entry.traces.storage?.records || 0) + 1,
+        };
+      }
+      this._replayStatus = this._t("runs.replay_complete");
     } catch (err) {
       this._error = err.message || String(err);
     } finally {
@@ -1046,6 +1079,10 @@ class VoiceHarnessPanel extends HTMLElement {
     }
     if (button.dataset.action === "refresh") {
       this._load();
+      return;
+    }
+    if (button.dataset.replayRun) {
+      this._replayRun(button.dataset.replayRun, button.dataset.entryId || "");
       return;
     }
     if (button.dataset.pausePreset) {
@@ -2127,7 +2164,8 @@ class VoiceHarnessPanel extends HTMLElement {
         ${this._runSummaryPanel(records, liveRuns)}
         ${hasRecords ? `
           <div class="traceList">
-            ${records.map((record) => this._traceCard(record)).join("")}
+            ${this._replayStatus ? `<div class="banner success">${escapeHtml(this._replayStatus)}</div>` : ""}
+            ${records.map((record) => this._traceCard(record, entry.entry_id)).join("")}
           </div>
         ` : this._traceReadinessPanel(trace, storage)}
         ${hasLiveRuns ? `
@@ -2234,7 +2272,7 @@ class VoiceHarnessPanel extends HTMLElement {
     `;
   }
 
-  _traceCard(record) {
+  _traceCard(record, entryId) {
     const rawMeta = record.raw_payload_meta || {};
     const route = record.route || {};
     const provider = route.provider || {};
@@ -2273,7 +2311,18 @@ class VoiceHarnessPanel extends HTMLElement {
           </div>
         </summary>
         <div class="traceBody">
-          <h3>${escapeHtml(this._t("runs.detail"))}</h3>
+          <div class="sectionHead">
+            <h3>${escapeHtml(this._t("runs.detail"))}</h3>
+            <button
+              class="secondary"
+              data-replay-run="${escapeHtml(record.run_id || record.id || "")}"
+              data-entry-id="${escapeHtml(entryId || "")}"
+              ${this._busy || record.lineage?.mode === "dry_run" ? "disabled" : ""}
+            >
+              <ha-icon icon="mdi:source-fork"></ha-icon>
+              <span>${escapeHtml(this._t("runs.replay"))}</span>
+            </button>
+          </div>
           <div class="runFlags">
             ${this._flagChip(this._t("runs.search"), Boolean(flags.search), Boolean(flags.search) ? "warning" : "muted")}
             ${this._flagChip(this._t("runs.deep_model"), Boolean(flags.deep_route), Boolean(flags.deep_route) ? "warning" : "muted")}

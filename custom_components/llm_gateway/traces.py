@@ -61,6 +61,7 @@ class TraceTurn:
     raw_payload: dict[str, Any]
     run_id: str | None = None
     timeline: list[dict[str, Any]] = field(default_factory=list)
+    lineage: dict[str, Any] = field(default_factory=dict)
 
 
 class TraceStore:
@@ -105,12 +106,22 @@ class TraceStore:
         diagnostic_snapshot = _diagnostic_snapshot_summary(
             satellite_diagnostic_snapshot(self._hass)
         )
-        event_stream = _event_stream(turn.timeline, diagnostic_snapshot)
+        event_stream = _event_stream(
+            turn.timeline,
+            diagnostic_snapshot,
+            include_external_evidence=turn.lineage.get("mode") != "dry_run",
+        )
         record = {
             "id": record_id,
             "run_id": record_id,
             "created_at": datetime.now(UTC).isoformat(),
             "conversation_id": turn.conversation_id or "",
+            "lineage": _bound_mapping(turn.lineage, limit=1200),
+            "proposed_actions": _bound_value(
+                turn.raw_payload.get("proposed_actions") or [],
+                limit=1600,
+                depth=3,
+            ),
             "input": _input_summary(turn.raw_payload, turn),
             "user_text": _truncate(turn.user_text, SUMMARY_TEXT_LIMIT),
             "assistant_text": _truncate(turn.assistant_text, SUMMARY_TEXT_LIMIT),
@@ -536,10 +547,14 @@ def _timeline_spans(timeline: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _event_stream(
     timeline: list[dict[str, Any]],
     diagnostic_snapshot: dict[str, Any],
+    *,
+    include_external_evidence: bool = True,
 ) -> list[dict[str, Any]]:
     """Project local events and correlated satellite evidence into one stream."""
     events = [dict(event) for event in timeline if isinstance(event, dict)]
     turn_id = str(events[0].get("turn_id") or "") if events else ""
+    if not include_external_evidence:
+        return events
     generated_at = str(diagnostic_snapshot.get("generated_at") or "")
 
     asr = diagnostic_snapshot.get("asr")

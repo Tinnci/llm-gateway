@@ -39,6 +39,7 @@ LocalActionKind = Literal[
 ]
 LocalActionStatus = Literal[
     "executed",
+    "dry_run",
     "partial",
     "clarify",
     "unsupported",
