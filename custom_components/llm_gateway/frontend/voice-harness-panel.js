@@ -50,6 +50,7 @@ import {
  * @typedef {{ provider?: string, route?: string, failures?: number, cooldown_remaining_s?: number, last_error?: string }} ProviderHealth
  * @typedef {{ latest_display?: Record<string, any> | null, display_events?: Array<Record<string, any>>, earcon_events?: Array<Record<string, any>> }} FeedbackStatus
  * @typedef {{ entry_id: string, title: string, state: string, base_url?: string, options: HarnessOptions, routes: RouteStatus[], trace: TraceOptions, traces?: { records?: Array<Record<string, any>>, storage?: Record<string, any> }, voice_runs?: Array<Record<string, any>>, feedback?: FeedbackStatus, feedback_policy?: FeedbackPolicyStatus, first_response_audio?: FirstResponseAudioStatus, memory?: any, search?: { providers?: string[] }, model_providers?: ProviderStatus, provider_health?: ProviderHealth[], model_candidates?: string[] }} HarnessEntry
+ * @typedef {{ model: string, ok: boolean, ttft_ms?: number | null, tokens?: number, tps?: number | null, total_ms?: number | null, error?: string | null }} LatencySample
  * @typedef {{ routing_modes: RouteKind[], models?: string[], max_tokens: { min: number, max: number }, timeouts: { min: number, max: number }, trace_max_runs: { min: number, max: number }, trace_retention_hours: { min: number, max: number }, first_response_playback_adapters?: FirstResponsePlaybackAdapter[] }} EditableSchema
  * @typedef {{ id: string, risk?: string, title?: string, title_i18n?: Record<string, string>, spoken?: string, spoken_i18n?: Record<string, string>, rules?: string[] }} PromptPolicy
  * @typedef {{ id: string, name?: string, name_i18n?: Record<string, string>, user?: string, user_i18n?: Record<string, string>, response?: string, response_i18n?: Record<string, string>, expected?: Record<string, unknown>, expected_i18n?: Record<string, Record<string, unknown>> }} SampleScenario
@@ -271,6 +272,14 @@ const I18N = {
     "config.connection_failed": "Connection failed: {message}",
     "config.models": "Models",
     "config.refresh_models": "Refresh candidates from /v1/models",
+    "config.test_latency": "Test latency",
+    "config.latency_running": "Probing latency (streaming TTFT)…",
+    "config.latency_done": "Tested {count} models · fastest {model} (TTFT {ttft}s)",
+    "config.latency_failed_all": "All probes failed — check connection and key.",
+    "config.picker_search": "Filter models…",
+    "config.picker_placeholder": "Select a model",
+    "config.picker_custom": "Custom model…",
+    "config.picker_empty": "No matching models",
     "config.models_refreshed": "Loaded {count} models from the provider.",
     "config.revision_conflict": "Configuration was changed elsewhere. Latest values loaded — review and save again.",
     "config.routing_budgets": "Routing and budgets",
@@ -697,6 +706,14 @@ const I18N = {
     "config.connection_failed": "连接失败：{message}",
     "config.models": "模型",
     "config.refresh_models": "从 /v1/models 刷新候选",
+    "config.test_latency": "测延迟",
+    "config.latency_running": "正在探测延迟（流式 TTFT）…",
+    "config.latency_done": "已测 {count} 个模型 · 最快 {model}（TTFT {ttft}s）",
+    "config.latency_failed_all": "全部探测失败——请检查连接与密钥。",
+    "config.picker_search": "筛选模型…",
+    "config.picker_placeholder": "选择模型",
+    "config.picker_custom": "自定义模型…",
+    "config.picker_empty": "没有匹配的模型",
     "config.models_refreshed": "已从服务商获取 {count} 个模型。",
     "config.revision_conflict": "配置已在其他地方被修改，已重新加载最新值，请确认后再次保存。",
     "config.routing_budgets": "路由与预算",
@@ -964,6 +981,17 @@ class VoiceHarnessPanel extends HTMLElement {
     this._configSaved = "";
     /** @type {Record<string, string[]>} */
     this._liveModels = {};
+    /** @type {Record<string, Record<string, LatencySample>>} */
+    this._latency = {};
+    /** @type {Record<string, string[]>} */
+    this._pickerOptions = {};
+    /** @type {Record<string, string>} */
+    this._pickerQueries = {};
+    /** @type {Record<string, boolean>} */
+    this._pickerCustom = {};
+    /** @type {Record<string, boolean>} */
+    this._latencyBusy = {};
+    this._openPicker = "";
     this._replayStatus = "";
     this._replayComparison = null;
     this._trajectoryQuery = "";
@@ -998,8 +1026,8 @@ class VoiceHarnessPanel extends HTMLElement {
   connectedCallback() {
     this.shadowRoot.addEventListener("click", (event) => this._onClick(event));
     this.shadowRoot.addEventListener("input", (event) => this._onInput(event));
-    this.shadowRoot.addEventListener("change", (event) => this._onChange(event));
     this.shadowRoot.addEventListener("submit", (event) => this._onSubmit(event));
+    this.shadowRoot.addEventListener("keydown", (event) => this._onKeydown(event));
     this._render();
     this._load();
   }
@@ -1198,6 +1226,14 @@ class VoiceHarnessPanel extends HTMLElement {
   }
 
   _onClick(event) {
+    if (this._openPicker) {
+      const container = this.shadowRoot.querySelector(
+        `[data-picker-key="${this._openPicker}"]`,
+      );
+      if (!container || !event.composedPath().includes(container)) {
+        this._closePicker();
+      }
+    }
     const button = event.target.closest("button");
     if (!button) {
       return;
@@ -1273,6 +1309,68 @@ class VoiceHarnessPanel extends HTMLElement {
       }
       return;
     }
+    if (button.dataset.action === "latency-test") {
+      const form = button.closest("form");
+      if (form) {
+        this._runLatencyTest(form);
+      }
+      return;
+    }
+    if (button.dataset.pickerToggle) {
+      const key = button.dataset.pickerToggle;
+      const wasOpen = this._openPicker === key;
+      this._closePicker();
+      if (!wasOpen) {
+        this._openPicker = key;
+        this._renderPicker(key);
+        const search = this.shadowRoot.querySelector(
+          `[data-picker-search="${key}"]`,
+        );
+        if (search instanceof HTMLInputElement) {
+          search.focus();
+        }
+      }
+      return;
+    }
+    if (button.dataset.pickerPick) {
+      const sep = button.dataset.pickerPick.indexOf("|");
+      this._commitPickerValue(
+        button.dataset.pickerPick.slice(0, sep),
+        button.dataset.pickerPick.slice(sep + 1),
+      );
+      return;
+    }
+    if (button.dataset.pickerCustomRow) {
+      const key = button.dataset.pickerCustomRow;
+      this._pickerCustom[key] = true;
+      this._renderPicker(key);
+      const input = this.shadowRoot.querySelector(
+        `[data-picker-custom-input="${key}"]`,
+      );
+      if (input instanceof HTMLInputElement) {
+        input.focus();
+      }
+      return;
+    }
+    if (button.dataset.pickerCommit) {
+      const key = button.dataset.pickerCommit;
+      const input = this.shadowRoot.querySelector(
+        `[data-picker-custom-input="${key}"]`,
+      );
+      const model = input instanceof HTMLInputElement ? input.value.trim() : "";
+      if (model) {
+        this._commitPickerValue(key, model);
+      }
+      return;
+    }
+    if (button.dataset.pickerProbe) {
+      const sep = button.dataset.pickerProbe.indexOf("|");
+      this._testOneLatency(
+        button.dataset.pickerProbe.slice(0, sep),
+        button.dataset.pickerProbe.slice(sep + 1),
+      );
+      return;
+    }
     const loadSampleId = button.dataset.loadSample;
     if (loadSampleId) {
       const sample = this._data?.sample_scenarios?.find((item) => item.id === loadSampleId);
@@ -1310,6 +1408,28 @@ class VoiceHarnessPanel extends HTMLElement {
   }
 
   _onInput(event) {
+    const target = event.target;
+    if (target.dataset?.pickerSearch !== undefined) {
+      const key = target.dataset.pickerSearch;
+      this._pickerQueries[key] = String(target.value || "");
+      const container = target.closest(".modelPicker");
+      const hidden = container?.querySelector('input[type="hidden"]');
+      const list = container?.querySelector("[data-picker-list]");
+      if (list) {
+        list.innerHTML = this._pickerListHtml(key, hidden ? hidden.value : "");
+      }
+      return;
+    }
+    if (target.dataset?.pickerCustomInput !== undefined) {
+      const key = target.dataset.pickerCustomInput;
+      const hidden = target.closest(".modelPicker")?.querySelector(
+        'input[type="hidden"]',
+      );
+      if (hidden) {
+        hidden.value = String(target.value || "").trim();
+      }
+      return;
+    }
     if (event.target.dataset.trajectorySearch !== undefined) {
       const query = String(event.target.value || "").trim().toLocaleLowerCase();
       this._trajectoryQuery = query;
@@ -1327,21 +1447,42 @@ class VoiceHarnessPanel extends HTMLElement {
     this._draft = { ...this._draft, [field]: event.target.value };
   }
 
-  _onChange(event) {
-    const tier = event.target.dataset.modelSelect;
-    if (!tier) {
+
+  _onKeydown(event) {
+    const target = event.target;
+    if (!(target instanceof HTMLElement) || !target.dataset) {
       return;
     }
-    const customInput = this.shadowRoot.querySelector(
-      `[data-model-custom="${tier}"]`,
-    );
-    if (!(customInput instanceof HTMLInputElement)) {
+    if (target.dataset.pickerSearch !== undefined) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        this._closePicker();
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        const first = target.closest(".pickerMenu")?.querySelector(".pickerPick");
+        if (first instanceof HTMLButtonElement) {
+          first.click();
+        }
+      }
       return;
     }
-    const useCustom = event.target.value === "__custom__";
-    customInput.hidden = !useCustom;
-    if (useCustom) {
-      customInput.focus();
+    if (target.dataset.pickerCustomInput !== undefined) {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        const commit = this.shadowRoot.querySelector(
+          `[data-picker-commit="${target.dataset.pickerCustomInput}"]`,
+        );
+        if (commit instanceof HTMLButtonElement) {
+          commit.click();
+        }
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        this._closePicker();
+      }
+      return;
+    }
+    if (event.key === "Escape" && this._openPicker) {
+      this._closePicker();
     }
   }
 
@@ -1375,13 +1516,7 @@ class VoiceHarnessPanel extends HTMLElement {
     const entryId = form.dataset.entryId || "";
     const numberValue = (name) => Number(data.get(name) || 0);
     const optionalText = (name) => String(data.get(name) || "").trim();
-    const modelValue = (tier) => {
-      const selected = String(data.get(`${tier}_model`) || "");
-      if (selected === "__custom__" || selected === "") {
-        return String(data.get(`${tier}_model_custom`) || "").trim();
-      }
-      return selected;
-    };
+    const modelValue = (tier) => String(data.get(`${tier}_model`) || "").trim();
 
     const dataPayload = { base_url: optionalText("base_url") };
     const apiKey = optionalText("api_key");
@@ -1546,7 +1681,7 @@ class VoiceHarnessPanel extends HTMLElement {
       );
       const models = Array.isArray(result.models) ? result.models : [];
       this._liveModels[entryId] = models;
-      this._updateModelSelects(form, models);
+      this._updatePickersWithModels(form, models);
       if (statusEl) {
         statusEl.textContent = this._t("config.models_refreshed", {
           count: models.length,
@@ -1569,32 +1704,268 @@ class VoiceHarnessPanel extends HTMLElement {
    * Swap in freshly fetched model ids without re-rendering the form,
    * preserving whatever the user already selected or typed.
    */
-  _updateModelSelects(form, models) {
+  _updatePickersWithModels(form, models) {
+    const entryId = form.dataset.entryId || "";
     const live = (models || []).filter(Boolean);
     for (const tier of ["fast", "mid", "deep"]) {
-      const select = form.querySelector(`select[data-model-select="${tier}"]`);
-      if (!select) {
-        continue;
-      }
-      const customInput = form.querySelector(`input[data-model-custom="${tier}"]`);
-      const selected = select.value === "__custom__"
-        ? String(customInput?.value || "").trim()
-        : select.value;
-      const useCustom = Boolean(selected) && !live.includes(selected);
-      const pickerOptions = Array.from(new Set([
+      const key = `${entryId}:${tier}`;
+      this._pickerOptions[key] = Array.from(new Set([
+        ...(this._pickerOptions[key] || []),
         ...live,
-        ...(selected && !useCustom ? [selected] : []),
       ]));
-      select.innerHTML = [
-        ...pickerOptions.map((model) => `
-          <option value="${escapeHtml(model)}"${model === selected ? " selected" : ""}>${escapeHtml(model)}</option>
-        `),
-        `<option value="__custom__"${useCustom ? " selected" : ""}>${escapeHtml(this._t("settings.model_custom"))}</option>`,
-      ].join("");
-      if (customInput) {
-        customInput.value = useCustom ? selected : "";
-        customInput.hidden = !useCustom;
+      this._renderPicker(key);
+    }
+  }
+
+
+  /* ------------------------------------------------------------------
+   * Searchable model picker with server-measured latency badges.
+   * State lives on the panel (`_pickerOptions/_latency/...`) keyed by
+   * `${entryId}:${tier}`; the DOM is rebuilt surgically per picker so
+   * open menus, typed queries and focus survive unrelated re-renders.
+   * ------------------------------------------------------------------ */
+
+  _modelPickerField(entryId, tier, value, candidates) {
+    const key = `${entryId}:${tier}`;
+    const known = Array.from(new Set((candidates || []).filter(Boolean)));
+    if (value && !known.includes(value)) {
+      known.unshift(value);
+    }
+    this._pickerOptions[key] = known;
+    const open = this._openPicker === key;
+    return `
+      <div class="modelPicker" data-picker-key="${escapeHtml(key)}">
+        <input type="hidden" name="${tier}_model" value="${escapeHtml(value)}">
+        <span class="pickerLabel">${escapeHtml(this._t("settings.model", { tier: this._tierLabel(tier) }))}</span>
+        <button
+          type="button"
+          class="pickerToggle${open ? " open" : ""}"
+          data-picker-toggle="${escapeHtml(key)}"
+          aria-haspopup="listbox"
+          aria-expanded="${open}"
+        >
+          <span class="pickerValue">${escapeHtml(value || this._t("config.picker_placeholder"))}</span>
+          ${value ? this._latencyBadge(entryId, value, true) : ""}
+          <ha-icon icon="mdi:chevron-down"></ha-icon>
+        </button>
+        ${this._pickerCustom[key] ? `
+          <div class="pickerCustomRow">
+            <input
+              class="pickerCustomInput"
+              type="text"
+              data-picker-custom-input="${escapeHtml(key)}"
+              placeholder="${escapeHtml(this._t("settings.model_custom_placeholder"))}"
+              maxlength="256"
+              autocomplete="off"
+            >
+            <button type="button" class="secondary pickerCommit" data-picker-commit="${escapeHtml(key)}">✓</button>
+          </div>
+        ` : ""}
+        <div class="pickerMenu" role="listbox" ${open ? "" : "hidden"}>
+          <input
+            class="pickerSearch"
+            type="text"
+            data-picker-search="${escapeHtml(key)}"
+            value="${escapeHtml(this._pickerQueries[key] || "")}"
+            placeholder="${escapeHtml(this._t("config.picker_search"))}"
+            autocomplete="off"
+          >
+          <div class="pickerList" data-picker-list="${escapeHtml(key)}">
+            ${this._pickerListHtml(key, value)}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  _pickerListHtml(key, value) {
+    const entryId = key.slice(0, key.lastIndexOf(":"));
+    const query = (this._pickerQueries[key] || "").trim().toLocaleLowerCase();
+    const all = this._pickerOptions[key] || [];
+    const items = query
+      ? all.filter((model) => model.toLocaleLowerCase().includes(query))
+      : all;
+    const rows = items.map((model) => `
+      <div class="pickerItem${model === value ? " selected" : ""}" role="option" aria-selected="${model === value}">
+        <button type="button" class="pickerPick" data-picker-pick="${escapeHtml(key)}|${escapeHtml(model)}">
+          <span class="pickerName">${escapeHtml(model)}</span>
+          ${this._latencyBadge(entryId, model)}
+        </button>
+        <button
+          type="button"
+          class="pickerProbe"
+          data-picker-probe="${escapeHtml(key)}|${escapeHtml(model)}"
+          title="${escapeHtml(this._t("config.test_latency"))}"
+        >
+          <ha-icon icon="mdi:speedometer"></ha-icon>
+        </button>
+      </div>
+    `).join("");
+    return `
+      ${rows || `<div class="pickerEmpty">${escapeHtml(this._t("config.picker_empty"))}</div>`}
+      <button type="button" class="pickerCustomAction" data-picker-custom-row="${escapeHtml(key)}">
+        <ha-icon icon="mdi:pencil-outline"></ha-icon>
+        <span>${escapeHtml(this._t("config.picker_custom"))}</span>
+      </button>
+    `;
+  }
+
+  _renderPicker(key) {
+    const container = this.shadowRoot.querySelector(`[data-picker-key="${key}"]`);
+    if (!container) {
+      return;
+    }
+    const hidden = container.querySelector('input[type="hidden"]');
+    const value = hidden instanceof HTMLInputElement ? hidden.value : "";
+    const entryId = key.slice(0, key.lastIndexOf(":"));
+    const tier = key.slice(key.lastIndexOf(":") + 1);
+    const tpl = document.createElement("template");
+    tpl.innerHTML = this._modelPickerField(
+      entryId,
+      tier,
+      value,
+      this._pickerOptions[key],
+    ).trim();
+    container.replaceWith(tpl.content.firstElementChild);
+  }
+
+  _closePicker() {
+    if (!this._openPicker) {
+      return;
+    }
+    const key = this._openPicker;
+    this._openPicker = "";
+    this._renderPicker(key);
+  }
+
+  /** Commit a picked (or freshly typed) model without a full re-render. */
+  _commitPickerValue(key, model) {
+    const container = this.shadowRoot.querySelector(`[data-picker-key="${key}"]`);
+    if (!container) {
+      return;
+    }
+    const hidden = container.querySelector('input[type="hidden"]');
+    if (hidden instanceof HTMLInputElement) {
+      hidden.value = model;
+    }
+    const options = this._pickerOptions[key] || [];
+    if (model && !options.includes(model)) {
+      this._pickerOptions[key] = [model, ...options];
+    }
+    this._pickerCustom[key] = false;
+    this._pickerQueries[key] = "";
+    this._openPicker = "";
+    this._renderPicker(key);
+  }
+
+  _latencyBadge(entryId, model, compact = false) {
+    const sample = this._latency[entryId]?.[model];
+    if (!sample) {
+      return "";
+    }
+    if (!sample.ok) {
+      return `<span class="latBadge bad" title="${escapeHtml(sample.error || "error")}">✗</span>`;
+    }
+    const ttft = (sample.ttft_ms / 1000).toFixed(2);
+    if (compact) {
+      const tone = sample.ttft_ms < 800 ? "ok" : sample.ttft_ms < 1500 ? "warn" : "bad";
+      return `<span class="latBadge ${tone}">⚡${ttft}s</span>`;
+    }
+    const tps = sample.tps != null ? ` · ${Math.round(sample.tps)} tok/s` : "";
+    const tone = sample.ttft_ms < 800 ? "ok" : sample.ttft_ms < 1500 ? "warn" : "bad";
+    return `<span class="latBadge ${tone}">⚡TTFT ${ttft}s${tps}</span>`;
+  }
+
+  _storeLatency(entryId, results) {
+    if (!Array.isArray(results)) {
+      return;
+    }
+    const table = (this._latency[entryId] = this._latency[entryId] || {});
+    for (const sample of results) {
+      if (sample && sample.model) {
+        table[sample.model] = sample;
       }
+    }
+  }
+
+  async _runLatencyTest(form) {
+    const entryId = form.dataset.entryId || "";
+    const data = new FormData(form);
+    const models = Array.from(new Set(
+      ["fast", "mid", "deep"]
+        .map((tier) => String(data.get(`${tier}_model`) || "").trim())
+        .filter(Boolean),
+    ));
+    if (!models.length) {
+      return;
+    }
+    await this._probeLatency(form, entryId, models);
+  }
+
+  async _testOneLatency(key, model) {
+    const entryId = key.slice(0, key.lastIndexOf(":"));
+    const form = this.shadowRoot.querySelector(
+      `form[data-form="config"][data-entry-id="${entryId}"]`,
+    );
+    if (form) {
+      await this._probeLatency(form, entryId, [model]);
+    }
+  }
+
+  async _probeLatency(form, entryId, models) {
+    if (this._latencyBusy[entryId]) {
+      return;
+    }
+    this._latencyBusy[entryId] = true;
+    const statusEl = form.querySelector("[data-latency-status]");
+    const button = form.querySelector('[data-action="latency-test"]');
+    if (button) {
+      button.disabled = true;
+    }
+    if (statusEl) {
+      statusEl.textContent = this._t("config.latency_running");
+    }
+    const data = new FormData(form);
+    try {
+      const result = await this._api(
+        "POST",
+        "llm_gateway/harness/config/latency",
+        {
+          entry_id: entryId,
+          data: {
+            base_url: String(data.get("base_url") || "").trim(),
+            api_key: String(data.get("api_key") || "").trim(),
+          },
+          models,
+        },
+      );
+      this._storeLatency(entryId, result.results || []);
+      const okSamples = (result.results || [])
+        .filter((sample) => sample && sample.ok)
+        .sort((a, b) => a.ttft_ms - b.ttft_ms);
+      if (statusEl) {
+        statusEl.textContent = okSamples.length
+          ? this._t("config.latency_done", {
+            count: models.length,
+            model: okSamples[0].model,
+            ttft: (okSamples[0].ttft_ms / 1000).toFixed(2),
+          })
+          : this._t("config.latency_failed_all");
+      }
+    } catch (err) {
+      if (statusEl) {
+        statusEl.textContent = this._t("config.connection_failed", {
+          message: err.message || String(err),
+        });
+      }
+    } finally {
+      this._latencyBusy[entryId] = false;
+      if (button) {
+        button.disabled = false;
+      }
+    }
+    for (const tier of ["fast", "mid", "deep"]) {
+      this._renderPicker(`${entryId}:${tier}`);
     }
   }
 
@@ -1920,38 +2291,16 @@ class VoiceHarnessPanel extends HTMLElement {
                 <ha-icon icon="mdi:refresh"></ha-icon>
                 <span>${escapeHtml(this._t("config.refresh_models"))}</span>
               </button>
+              <button type="button" class="secondary" data-action="latency-test">
+                <ha-icon icon="mdi:speedometer"></ha-icon>
+                <span>${escapeHtml(this._t("config.test_latency"))}</span>
+              </button>
               <div class="meta" data-models-status></div>
+              <div class="meta" data-latency-status></div>
             </div>
-            ${["fast", "mid", "deep"].map((tier) => {
-              const current = options[`${tier}_model`] || "";
-              const known = Array.from(new Set((candidates || []).filter(Boolean)));
-              const useCustom = Boolean(current) && !known.includes(current);
-              const pickerOptions = useCustom
-                ? known
-                : (known.includes(current) || !current ? known : [...known, current]);
-              return `
-                <div class="modelPicker">
-                  <label>
-                    <span>${escapeHtml(this._t("settings.model", { tier: this._tierLabel(tier) }))}</span>
-                    <select name="${tier}_model" data-model-select="${tier}">
-                      ${pickerOptions.map((model) => `
-                        <option value="${escapeHtml(model)}" ${model === current ? "selected" : ""}>${escapeHtml(model)}</option>
-                      `).join("")}
-                      <option value="__custom__" ${useCustom ? "selected" : ""}>${escapeHtml(this._t("settings.model_custom"))}</option>
-                    </select>
-                  </label>
-                  <input
-                    name="${tier}_model_custom"
-                    data-model-custom="${tier}"
-                    value="${escapeHtml(useCustom ? current : "")}"
-                    placeholder="${escapeHtml(this._t("settings.model_custom_placeholder"))}"
-                    autocomplete="off"
-                    maxlength="256"
-                    ${useCustom ? "" : "hidden"}
-                  >
-                </div>
-              `;
-            }).join("")}
+            ${["fast", "mid", "deep"].map((tier) => (
+              this._modelPickerField(entry.entry_id, tier, options[`${tier}_model`] || "", candidates)
+            )).join("")}
           </fieldset>
 
           <fieldset>
@@ -4778,8 +5127,192 @@ const styles = `
     margin: 4px 0 10px;
   }
 
-  .modelsToolbar [data-models-status] {
+  .modelsToolbar [data-models-status],
+  .modelsToolbar [data-latency-status] {
     min-height: 18px;
+  }
+
+  .modelPicker {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 12px;
+  }
+
+  .pickerLabel {
+    font-size: 12px;
+    opacity: 0.75;
+  }
+
+  .pickerToggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    min-height: 38px;
+    padding: 6px 10px;
+    border: 1px solid var(--divider-color, #c0c0c0);
+    border-radius: 8px;
+    background: var(--card-bg-color, #fff);
+    color: inherit;
+    cursor: pointer;
+    font-size: 14px;
+    text-align: left;
+  }
+
+  .pickerToggle:hover,
+  .pickerToggle.open {
+    border-color: var(--primary-color, #03a9f4);
+  }
+
+  .pickerToggle .pickerValue {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .pickerMenu {
+    position: absolute;
+    z-index: 40;
+    top: calc(100% - 20px);
+    left: 0;
+    right: 0;
+    background: var(--card-bg-color, #fff);
+    border: 1px solid var(--divider-color, #b0b0b0);
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+    padding: 6px;
+  }
+
+  .pickerSearch {
+    width: 100%;
+    box-sizing: border-box;
+    margin-bottom: 6px;
+    padding: 7px 9px;
+    border: 1px solid var(--divider-color, #c0c0c0);
+    border-radius: 7px;
+    font-size: 13px;
+    background: transparent;
+    color: inherit;
+  }
+
+  .pickerList {
+    max-height: 240px;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .pickerItem {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border-radius: 7px;
+  }
+
+  .pickerItem.selected {
+    background: rgba(3, 169, 244, 0.12);
+  }
+
+  .pickerPick {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 32px;
+    padding: 4px 8px;
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    font-size: 13px;
+    text-align: left;
+  }
+
+  .pickerName {
+    flex: 1;
+    overflow-wrap: anywhere;
+  }
+
+  .pickerProbe {
+    display: flex;
+    align-items: center;
+    padding: 4px;
+    border: none;
+    border-radius: 6px;
+    background: none;
+    color: var(--state-icon-color, #6e6e6e);
+    cursor: pointer;
+  }
+
+  .pickerProbe:hover {
+    color: var(--primary-color, #03a9f4);
+  }
+
+  .pickerEmpty {
+    padding: 10px 8px;
+    font-size: 12px;
+    opacity: 0.65;
+  }
+
+  .pickerCustomAction {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    margin-top: 4px;
+    padding: 7px 8px;
+    border: none;
+    border-top: 1px dashed var(--divider-color, #dddddd);
+    background: none;
+    color: var(--primary-color, #03a9f4);
+    cursor: pointer;
+    font-size: 13px;
+  }
+
+  .pickerCustomRow {
+    display: flex;
+    gap: 6px;
+    margin-top: 6px;
+  }
+
+  .pickerCustomInput {
+    flex: 1;
+    padding: 7px 9px;
+    border: 1px solid var(--divider-color, #c0c0c0);
+    border-radius: 7px;
+    font-size: 13px;
+    background: transparent;
+    color: inherit;
+  }
+
+  .pickerCommit {
+    min-width: 34px;
+  }
+
+  .latBadge {
+    font-size: 11px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+
+  .latBadge.ok {
+    background: rgba(76, 175, 80, 0.16);
+    color: var(--success-color, #2e7d32);
+  }
+
+  .latBadge.warn {
+    background: rgba(255, 193, 7, 0.2);
+    color: var(--warning-color, #8d6e00);
+  }
+
+  .latBadge.bad {
+    background: rgba(244, 67, 54, 0.15);
+    color: var(--error-color, #c62828);
   }
 
   .configCard {

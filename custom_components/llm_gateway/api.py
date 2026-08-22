@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from dataclasses import asdict, dataclass
 from http import HTTPStatus
 from typing import Any
 
@@ -14,6 +15,28 @@ from homeassistant.exceptions import HomeAssistantError
 from .const import LOGGER, TIMEOUT_CHAT, TIMEOUT_MODELS
 
 type ToolChoice = str | dict[str, Any]
+
+PROBE_SYSTEM_PROMPT = "You are a concise voice assistant."
+PROBE_USER_PROMPT = "用一句简短的话介绍你自己。"
+PROBE_MAX_TOKENS = 32
+PROBE_TIMEOUT_S = 25
+
+
+@dataclass(slots=True)
+class LatencySample:
+    """One streaming latency measurement for a single model."""
+
+    model: str
+    ok: bool
+    ttft_ms: float | None = None
+    tokens: int = 0
+    tps: float | None = None
+    total_ms: float | None = None
+    error: str | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe view of the sample."""
+        return asdict(self)
 
 
 class LLMGatewayError(HomeAssistantError):
@@ -134,6 +157,63 @@ class LLMGatewayClient:
         models = [m["id"] for m in data.get("data", []) if m.get("id")]
         return sorted(models)
 
+    async def async_probe_latency(
+        self,
+        *,
+        model: str,
+        max_tokens: int = PROBE_MAX_TOKENS,
+        timeout_s: int = PROBE_TIMEOUT_S,
+    ) -> LatencySample:
+        """Stream a tiny completion and measure TTFT plus decode speed."""
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": PROBE_SYSTEM_PROMPT},
+                {"role": "user", "content": PROBE_USER_PROMPT},
+            ],
+            "max_tokens": max(1, max_tokens),
+            "stream": True,
+        }
+        url = f"{self._base_url}/chat/completions"
+        started = time.monotonic()
+        LOGGER.info(
+            "Latency probe started model=%s max_tokens=%d timeout_s=%d",
+            model,
+            max_tokens,
+            timeout_s,
+        )
+        try:
+            async with asyncio.timeout(timeout_s):
+                async with self._session.post(
+                    url,
+                    headers=self._headers,
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=max(1, timeout_s)),
+                ) as resp:
+                    if resp.status in (
+                        HTTPStatus.UNAUTHORIZED,
+                        HTTPStatus.FORBIDDEN,
+                    ):
+                        raise LLMGatewayAuthError(
+                            f"Authentication failed ({resp.status})"
+                        )
+                    if resp.status >= HTTPStatus.BAD_REQUEST:
+                        raise LLMGatewayHTTPError(resp.status, await resp.text())
+                    sample = await _consume_probe_stream(resp, model, started)
+        except TimeoutError as err:
+            raise LLMGatewayConnectionError(f"Timeout probing {model}") from err
+        except aiohttp.ClientError as err:
+            raise LLMGatewayConnectionError(f"Cannot reach {url}: {err}") from err
+        LOGGER.info(
+            "Latency probe completed model=%s ok=%s ttft_ms=%s tokens=%d tps=%s",
+            model,
+            sample.ok,
+            sample.ttft_ms,
+            sample.tokens,
+            sample.tps,
+        )
+        return sample
+
     async def async_chat_completion(  # noqa: PLR0913 - explicit OpenAI-style kwargs
         self,
         *,
@@ -195,3 +275,68 @@ def _parse_json(body: str) -> dict[str, Any]:
         return json.loads(body)
     except ValueError as err:
         raise LLMGatewayError(f"Non-JSON response: {body[:200]}") from err
+
+
+def _delta_text(chunk: dict[str, Any]) -> str:
+    """Return assistant content text carried by one SSE chunk, if any."""
+    try:
+        delta = chunk["choices"][0]["delta"]
+    except (KeyError, IndexError, TypeError):
+        return ""
+    content = delta.get("content") if isinstance(delta, dict) else None
+    return str(content) if content else ""
+
+
+async def _consume_probe_stream(
+    resp: aiohttp.ClientResponse,
+    model: str,
+    started: float,
+) -> LatencySample:
+    """Read an SSE completion stream, timing the first content chunk."""
+    ttft_ms: float | None = None
+    tokens = 0
+    first_at: float | None = None
+    last_at: float | None = None
+    async for raw in resp.content:
+        line = raw.decode("utf-8", "replace").strip()
+        if not line.startswith("data:"):
+            continue
+        body = line[5:].strip()
+        if body == "[DONE]":
+            break
+        try:
+            chunk = json.loads(body)
+        except ValueError:
+            continue
+        if not _delta_text(chunk):
+            # Reasoning-only deltas (deepseek-r1 style) are skipped on
+            # purpose: they never reach the audio path, so they must not
+            # count towards TTFT.
+            continue
+        now = time.monotonic()
+        last_at = now
+        if first_at is None:
+            first_at = now
+            ttft_ms = (now - started) * 1000
+        tokens += 1
+    total_ms = (time.monotonic() - started) * 1000
+    if ttft_ms is None:
+        return LatencySample(
+            model=model,
+            ok=False,
+            error="no_content",
+            total_ms=round(total_ms, 1),
+        )
+    tps: float | None = None
+    if first_at is not None and last_at is not None and tokens > 1:
+        span = last_at - first_at
+        if span > 0:
+            tps = round((tokens - 1) / span, 1)
+    return LatencySample(
+        model=model,
+        ok=True,
+        ttft_ms=round(ttft_ms, 1),
+        tokens=tokens,
+        tps=tps,
+        total_ms=round(total_ms, 1),
+    )

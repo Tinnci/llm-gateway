@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from http import HTTPStatus
 from pathlib import Path
@@ -14,7 +15,13 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.http import HomeAssistantView
 from homeassistant.util import dt as dt_util
 
-from .api import LLMGatewayAuthError, LLMGatewayClient, LLMGatewayError
+from .api import (
+    PROBE_MAX_TOKENS,
+    LatencySample,
+    LLMGatewayAuthError,
+    LLMGatewayClient,
+    LLMGatewayError,
+)
 from .config_editor import (
     OPTIONAL_SECRET_FIELDS,
     normalize_json_option,
@@ -418,6 +425,7 @@ def async_register_views(hass: HomeAssistant) -> None:
     hass.http.register_view(HarnessConfigView)
     hass.http.register_view(HarnessConfigTestView)
     hass.http.register_view(HarnessConfigModelsView)
+    hass.http.register_view(HarnessConfigLatencyView)
     hass.http.register_view(HarnessFactsView)
 
 
@@ -905,6 +913,87 @@ class HarnessConfigModelsView(HomeAssistantView):
                 _PROBE_ERROR_MESSAGES[error_code], HTTPStatus.BAD_REQUEST, error_code
             )
         return self.json({"models": models or []})
+
+
+_MAX_LATENCY_MODELS = 8
+_LATENCY_CONCURRENCY = 4
+
+
+class HarnessConfigLatencyView(HomeAssistantView):
+    """Measure per-model TTFT and decode speed from the HA host itself."""
+
+    name = f"api:{DOMAIN}:harness:latency"
+    url = f"{API_BASE}/harness/config/latency"
+
+    @require_admin
+    async def post(self, request: web.Request) -> web.Response:
+        """Probe the requested models concurrently and report samples."""
+        try:
+            payload = await request.json()
+        except ValueError:
+            return self.json_message(
+                "Invalid JSON body", HTTPStatus.BAD_REQUEST, "invalid_json"
+            )
+        if not isinstance(payload, dict):
+            return self.json_message(
+                "JSON body must be an object",
+                HTTPStatus.BAD_REQUEST,
+                "invalid_payload",
+            )
+
+        models_raw = payload.get("models")
+        if not isinstance(models_raw, list) or not models_raw:
+            return self.json_message(
+                "models must be a non-empty list",
+                HTTPStatus.BAD_REQUEST,
+                "no_models",
+            )
+        models: list[str] = []
+        for item in models_raw:
+            model = str(item or "").strip()
+            if model and model not in models:
+                models.append(model)
+        if len(models) > _MAX_LATENCY_MODELS:
+            return self.json_message(
+                f"At most {_MAX_LATENCY_MODELS} models per request",
+                HTTPStatus.BAD_REQUEST,
+                "too_many_models",
+            )
+
+        hass: HomeAssistant = request.app["hass"]
+        entry = _select_entry(hass, payload.get("entry_id"))
+        current = dict(entry.data) if entry else {}
+        data_payload = payload.get("data")
+        if not isinstance(data_payload, dict):
+            data_payload = {}
+        try:
+            base_url = _config_base_url(data_payload, current)
+            api_key = _config_api_key(data_payload, current)
+        except ValueError as err:
+            return self.json_message(str(err), HTTPStatus.BAD_REQUEST, "invalid_data")
+
+        max_tokens_raw = payload.get("max_tokens", PROBE_MAX_TOKENS)
+        try:
+            max_tokens = min(128, max(1, int(max_tokens_raw)))
+        except (TypeError, ValueError):
+            max_tokens = PROBE_MAX_TOKENS
+
+        client = LLMGatewayClient(async_get_clientsession(hass), base_url, api_key)
+        semaphore = asyncio.Semaphore(_LATENCY_CONCURRENCY)
+
+        async def _probe(model: str) -> LatencySample:
+            async with semaphore:
+                try:
+                    return await client.async_probe_latency(
+                        model=model, max_tokens=max_tokens
+                    )
+                except LLMGatewayAuthError:
+                    return LatencySample(model=model, ok=False, error="invalid_auth")
+                except LLMGatewayError:
+                    return LatencySample(model=model, ok=False, error="cannot_connect")
+
+        samples = await asyncio.gather(*(_probe(model) for model in models))
+        return self.json({"results": [sample.as_dict() for sample in samples]})
 
 
 class HarnessFactsView(HomeAssistantView):

@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
+import pytest
 from homeassistant.components import frontend
 from homeassistant.const import CONF_API_KEY
 from homeassistant.setup import async_setup_component
 
+from custom_components.llm_gateway.api import (
+    LatencySample,
+    LLMGatewayAuthError,
+    LLMGatewayClient,
+    _delta_text,
+)
 from custom_components.llm_gateway.const import (
     CONF_BASE_URL,
     CONF_CHAT_MODEL,
@@ -272,6 +279,104 @@ async def test_harness_config_models_endpoint(
     assert response.status == 200
     data = await response.json()
     assert data["models"] == ["a-model", "z-model"]
+
+
+async def test_latency_probe_stream_parsing():
+    """Content deltas count; reasoning-only deltas are ignored."""
+    assert _delta_text({"choices": [{"delta": {"content": "你好"}}]}) == "你好"
+    assert _delta_text({"choices": [{"delta": {"reasoning_content": "想"}}]}) == ""
+    assert _delta_text({}) == ""
+    sample = LatencySample(model="m", ok=True, ttft_ms=420.0)
+    assert sample.as_dict()["model"] == "m"
+
+
+async def test_harness_latency_api_probes_models(hass, hass_client, mock_config_entry):
+    """The latency endpoint probes models concurrently and preserves order."""
+    assert await async_setup_component(hass, "http", {})
+    calls: list[str] = []
+
+    async def fake_probe(self, *, model, max_tokens=32, timeout_s=25):
+        calls.append(model)
+        return LatencySample(
+            model=model,
+            ok=True,
+            ttft_ms=420.5 if model == "fast-m" else 900.0,
+            tokens=10,
+            tps=30.0,
+            total_ms=800.0,
+        )
+
+    with patch.object(LLMGatewayClient, "async_probe_latency", fake_probe):
+        mock_config_entry.add_to_hass(hass)
+        await async_setup_panel(hass)
+        client = await hass_client()
+
+        response = await client.post(
+            "/api/llm_gateway/harness/config/latency",
+            json={
+                "entry_id": mock_config_entry.entry_id,
+                "models": ["deep-m", "fast-m", "fast-m"],
+            },
+        )
+
+    assert response.status == 200
+    data = await response.json()
+    results = data["results"]
+    assert [r["model"] for r in results] == ["deep-m", "fast-m"]
+    assert results[1]["ttft_ms"] == 420.5
+    assert calls == ["deep-m", "fast-m"]
+
+
+async def test_harness_latency_api_maps_auth_error(
+    hass, hass_client, mock_config_entry
+):
+    """Auth failures become per-model error samples instead of HTTP 500."""
+    assert await async_setup_component(hass, "http", {})
+
+    async def fake_probe(self, *, model, max_tokens=32, timeout_s=25):
+        raise LLMGatewayAuthError("bad key")
+
+    with patch.object(LLMGatewayClient, "async_probe_latency", fake_probe):
+        mock_config_entry.add_to_hass(hass)
+        await async_setup_panel(hass)
+        client = await hass_client()
+
+        response = await client.post(
+            "/api/llm_gateway/harness/config/latency",
+            json={"entry_id": mock_config_entry.entry_id, "models": ["m1"]},
+        )
+
+    assert response.status == 200
+    data = await response.json()
+    assert data["results"][0]["ok"] is False
+    assert data["results"][0]["error"] == "invalid_auth"
+
+
+@pytest.mark.parametrize(
+    ("payload", "code"),
+    [
+        ({"models": []}, "no_models"),
+        ({"models": [f"m{i}" for i in range(9)]}, "too_many_models"),
+        ({}, "no_models"),
+    ],
+)
+async def test_harness_latency_api_rejects_bad_input(
+    hass, hass_client, mock_config_entry, payload, code
+):
+    """Malformed model lists fail fast without probing."""
+    assert await async_setup_component(hass, "http", {})
+    mock_config_entry.add_to_hass(hass)
+    await async_setup_panel(hass)
+    client = await hass_client()
+
+    response = await client.post(
+        "/api/llm_gateway/harness/config/latency",
+        json={"entry_id": mock_config_entry.entry_id, **payload},
+    )
+
+    assert response.status == 400
+    data = await response.json()
+    assert data["code"] == code
 
 
 async def test_harness_status_api(hass, hass_client):
