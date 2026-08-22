@@ -76,6 +76,29 @@ async def test_panel_static_module_is_served(hass, hass_client):
     assert "Phosh 锁屏运行中" in body
 
 
+async def test_panel_merges_settings_into_config_tab(hass, hass_client):
+    """The panel serves one merged Configuration tab and no legacy forms."""
+    assert await async_setup_component(hass, "http", {})
+
+    await async_setup_panel(hass)
+    client = await hass_client()
+
+    response = await client.get(PANEL_MODULE)
+    assert response.status == 200
+    body = await response.text()
+    # Merged Configuration tab is present with collapsible cards.
+    assert 'data-form="config"' in body
+    assert "configCard" in body
+    assert "config.group_core" in body
+    assert "config.group_audio_traces" in body
+    # Legacy Settings form and its API path are gone from the bundle.
+    assert 'data-form="settings"' not in body
+    assert '"tab.settings"' not in body
+    # Earcons moved into the Satellite render instead of a dedicated tab.
+    assert '"tab.earcons"' not in body
+    assert "_renderEarcons()" in body
+
+
 async def test_harness_config_api_get_redacts_secrets(
     hass, hass_client, mock_config_entry
 ):

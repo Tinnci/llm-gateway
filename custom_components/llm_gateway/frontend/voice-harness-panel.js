@@ -59,19 +59,16 @@ import {
  * @typedef {{ entity_id: string, state: string, available: boolean, name?: string, unit?: string, attributes?: Record<string, unknown> }} SatelliteEntityState
  * @typedef {{ states?: Record<string, SatelliteEntityState>, services?: Record<string, boolean>, diagnostic_snapshot?: Record<string, any> }} SatelliteStatus
  * @typedef {{ entries: HarnessEntry[], editable: EditableSchema, satellite?: SatelliteStatus, earcons?: EarconPack, prompt_policies?: PromptPolicy[], sample_scenarios?: SampleScenario[], domain?: string }} HarnessStatus
- * @typedef {{ entry_id: string, options: { routing_mode: RouteKind, models: TierTextMap, max_tokens: TierNumberMap, timeouts: TierNumberMap, trace: TraceOptions, first_response_audio?: FirstResponseAudioOptions } }} OptionsUpdateRequest
  * @typedef {{ user: string, response: string, expected: string }} ScenarioDraft
  */
 
 const TABS = [
   ["runs", "tab.runs", "mdi:play-circle-outline"],
-  ["settings", "tab.settings", "mdi:tune-variant"],
   ["config", "tab.config", "mdi:cog-outline"],
   ["satellite", "tab.satellite", "mdi:microphone-settings"],
   ["policies", "tab.policies", "mdi:shield-check-outline"],
   ["scenarios", "tab.scenarios", "mdi:clipboard-text-search-outline"],
   ["memory", "tab.memory", "mdi:database-eye-outline"],
-  ["earcons", "tab.earcons", "mdi:music-note-outline"],
 ];
 
 const TAB_IDS = new Set(TABS.map(([id]) => id));
@@ -84,17 +81,6 @@ const DEFAULT_EXPECTED = {
   },
 };
 
-/** @type {EditableSchema} */
-const DEFAULT_EDITABLE = {
-  routing_modes: ["auto", "fast", "mid", "deep"],
-  models: ["gpt-4o-mini", "deepseek-chat", "o1-preview", "gpt-4o", "claude-3-5-sonnet-latest"],
-  max_tokens: { min: 1, max: 16384 },
-  timeouts: { min: 5, max: 300 },
-  trace_max_runs: { min: 1, max: 200 },
-  trace_retention_hours: { min: 1, max: 168 },
-  first_response_playback_adapters: ["local", "ha_media_player", "auto"],
-};
-
 const I18N = {
   en: {
     "app.title": "Voice Harness",
@@ -105,13 +91,11 @@ const I18N = {
     "common.enabled": "Enabled",
     "common.disabled": "Disabled",
     "tab.runs": "Runs",
-    "tab.settings": "Settings",
-    "tab.config": "Integration config",
+    "tab.config": "Configuration",
     "tab.satellite": "Satellite",
     "tab.policies": "Prompt Policies",
     "tab.scenarios": "Scenarios",
     "tab.memory": "Memory Lab",
-    "tab.earcons": "Earcons",
     "status.loading": "Reading integration status",
     "status.waiting": "Waiting for Home Assistant",
     "status.no_entries": "No LLM Gateway config entries loaded yet",
@@ -237,8 +221,6 @@ const I18N = {
     "runs.no_conversation": "No conversation id",
     "entry.base_url_missing": "Base URL not configured",
     "settings.empty": "No editable config entries.",
-    "settings.title": "Editable runtime settings",
-    "settings.description": "These fields update runtime-safe options. Secrets, base URL, HA LLM API exposure and the system prompt use Home Assistant options flow for admin validation and redaction.",
     "settings.routing": "Routing",
     "settings.routing_mode": "Routing mode",
     "settings.models": "Models",
@@ -264,7 +246,6 @@ const I18N = {
     "settings.include_raw": "Store compressed raw messages",
     "settings.max_runs": "Maximum diagnostic runs",
     "settings.retention_hours": "Diagnostic retention hours",
-    "settings.saved": "Settings saved.",
     "settings.api_title": "Provider & API",
     "settings.api_description": "Base URL, API key, provider profiles and HA LLM API exposure are managed in the Home Assistant options flow so secrets are validated and redacted there.",
     "settings.api_base_url": "Base URL",
@@ -273,7 +254,12 @@ const I18N = {
     "settings.api_key_missing": "Not configured",
     "settings.api_fallbacks": "Fallback providers",
     "settings.api_open_options": "Open Home Assistant options",
-    "config.title": "Integration configuration",
+    "config.title": "Configuration",
+    "config.group_core": "Connection, models and budgets",
+    "config.group_ha_prompt": "Home Assistant control and prompt",
+    "config.group_search_fallbacks": "Search and provider fallbacks",
+    "config.group_audio_traces": "Audio and diagnostics",
+    "config.earcons_section": "Earcons",
     "config.description": "Edit the full LLM Gateway config entry. Secrets are write-only: leave a secret field empty to keep its current value.",
     "config.connection": "Connection",
     "config.base_url": "Base URL",
@@ -531,13 +517,11 @@ const I18N = {
     "common.enabled": "已启用",
     "common.disabled": "未启用",
     "tab.runs": "运行记录",
-    "tab.settings": "配置",
-    "tab.config": "集成配置",
+    "tab.config": "配置中心",
     "tab.satellite": "卫星端",
     "tab.policies": "提示策略",
     "tab.scenarios": "场景测试",
     "tab.memory": "记忆实验室",
-    "tab.earcons": "提示音",
     "status.loading": "正在读取集成状态",
     "status.waiting": "等待 Home Assistant",
     "status.no_entries": "尚未加载 LLM Gateway 配置项",
@@ -663,8 +647,6 @@ const I18N = {
     "runs.no_conversation": "无会话 id",
     "entry.base_url_missing": "未配置 Base URL",
     "settings.empty": "没有可编辑的配置项。",
-    "settings.title": "可编辑运行配置",
-    "settings.description": "这些字段只更新运行期安全选项。密钥、Base URL、HA LLM API 暴露范围和系统提示词使用 Home Assistant options flow 做管理员校验和脱敏。",
     "settings.routing": "路由",
     "settings.routing_mode": "路由模式",
     "settings.models": "模型",
@@ -690,7 +672,6 @@ const I18N = {
     "settings.include_raw": "保存压缩原始消息",
     "settings.max_runs": "最多诊断运行数",
     "settings.retention_hours": "诊断保留小时数",
-    "settings.saved": "配置已保存。",
     "settings.api_title": "模型服务与 API",
     "settings.api_description": "Base URL、API Key、Provider Profiles 和 HA LLM API 暴露范围在 Home Assistant 集成选项流中管理，避免在面板中明文处理密钥。",
     "settings.api_base_url": "Base URL",
@@ -699,7 +680,12 @@ const I18N = {
     "settings.api_key_missing": "未配置",
     "settings.api_fallbacks": "Fallback Providers",
     "settings.api_open_options": "打开 Home Assistant 集成选项",
-    "config.title": "集成配置",
+    "config.title": "配置中心",
+    "config.group_core": "连接、模型与预算",
+    "config.group_ha_prompt": "Home Assistant 控制与提示词",
+    "config.group_search_fallbacks": "搜索与提供商回退",
+    "config.group_audio_traces": "音频与诊断",
+    "config.earcons_section": "提示音",
     "config.description": "编辑完整的 LLM Gateway 配置项。密钥只写不读：密钥字段留空表示保持当前值。",
     "config.connection": "连接",
     "config.base_url": "Base URL",
@@ -973,7 +959,6 @@ class VoiceHarnessPanel extends HTMLElement {
     this._error = "";
     this._busy = false;
     this._result = null;
-    this._settingsSaved = "";
     /** @type {any} */
     this._configData = null;
     this._configSaved = "";
@@ -1104,30 +1089,6 @@ class VoiceHarnessPanel extends HTMLElement {
     }
   }
 
-  /** @param {OptionsUpdateRequest} payload */
-  async _saveOptions(payload) {
-    this._busy = true;
-    this._error = "";
-    this._settingsSaved = "";
-    this._render();
-    try {
-      const result = await this._api("POST", "llm_gateway/harness/options", payload);
-      if (result.entry && this._data?.entries) {
-        this._data = {
-          ...this._data,
-          entries: this._data.entries.map((entry) =>
-            entry.entry_id === result.entry.entry_id ? result.entry : entry
-          ),
-        };
-      }
-      this._settingsSaved = this._t("settings.saved");
-    } catch (err) {
-      this._error = err.message || String(err);
-    } finally {
-      this._busy = false;
-      this._render();
-    }
-  }
 
   async _satelliteAction(action) {
     if (!this.hass?.callService) {
@@ -1387,10 +1348,6 @@ class VoiceHarnessPanel extends HTMLElement {
   _onSubmit(event) {
     event.preventDefault();
     const form = event.target;
-    if (form.dataset.form === "settings") {
-      this._submitSettingsForm(form);
-      return;
-    }
     if (form.dataset.form === "config") {
       this._submitConfigForm(form);
       return;
@@ -1411,52 +1368,6 @@ class VoiceHarnessPanel extends HTMLElement {
     });
   }
 
-  /** @param {HTMLFormElement} form */
-  _submitSettingsForm(form) {
-    const data = new FormData(form);
-    const numberValue = (name) => Number(data.get(name) || 0);
-    const modelValue = (tier) => {
-      const selected = String(data.get(`${tier}_model`) || "");
-      if (selected === "__custom__" || selected === "") {
-        return String(data.get(`${tier}_model_custom`) || "").trim();
-      }
-      return selected;
-    };
-    this._saveOptions({
-      entry_id: form.dataset.entryId || "",
-      options: {
-        routing_mode: this._routeKind(data.get("routing_mode")),
-        models: {
-          fast: modelValue("fast"),
-          mid: modelValue("mid"),
-          deep: modelValue("deep"),
-        },
-        max_tokens: {
-          fast: numberValue("fast_max_tokens"),
-          mid: numberValue("mid_max_tokens"),
-          deep: numberValue("deep_max_tokens"),
-        },
-        timeouts: {
-          fast: numberValue("fast_timeout"),
-          mid: numberValue("mid_timeout"),
-          deep: numberValue("deep_timeout"),
-        },
-        trace: {
-          enabled: data.get("diagnostic_traces") === "on",
-          include_raw_messages: data.get("trace_include_raw_messages") === "on",
-          max_runs: numberValue("trace_max_runs"),
-          retention_hours: numberValue("trace_retention_hours"),
-        },
-        first_response_audio: {
-          enabled: data.get("first_response_audio_enabled") === "on",
-          adapter: this._firstResponseAdapter(data.get("first_response_adapter")),
-          local_service: String(data.get("first_response_local_service") || "").trim(),
-          tts_entity: String(data.get("first_response_tts_entity") || "").trim(),
-          media_player_entity: String(data.get("first_response_media_player") || "").trim(),
-        },
-      },
-    });
-  }
 
   /** @param {HTMLFormElement} form */
   _submitConfigForm(form) {
@@ -1756,9 +1667,6 @@ class VoiceHarnessPanel extends HTMLElement {
     if (this._activeTab === "runs") {
       return this._renderRuns(entries);
     }
-    if (this._activeTab === "settings") {
-      return this._renderSettings(entries);
-    }
     if (this._activeTab === "config") {
       return this._renderConfig(entries);
     }
@@ -1773,9 +1681,6 @@ class VoiceHarnessPanel extends HTMLElement {
     }
     if (this._activeTab === "memory") {
       return this._renderMemory(entries);
-    }
-    if (this._activeTab === "earcons") {
-      return this._renderEarcons();
     }
     return this._renderRuns(entries);
   }
@@ -1857,213 +1762,6 @@ class VoiceHarnessPanel extends HTMLElement {
           ${(event.action_buttons || []).length ? `<span class="chip warning">${escapeHtml(this._t("runs.actions_available"))}: ${escapeHtml((event.action_buttons || []).join(", "))}</span>` : ""}
         </div>
       </div>
-    `;
-  }
-
-  _renderSettings(entries) {
-    if (!entries.length) {
-      return `<div class="empty">${escapeHtml(this._t("settings.empty"))}</div>`;
-    }
-    return `
-      <div class="settingsGrid">
-        ${this._settingsSaved ? `<div class="banner success">${escapeHtml(this._settingsSaved)}</div>` : ""}
-        ${entries.map((entry) => this._settingsForm(entry)).join("")}
-      </div>
-    `;
-  }
-
-  _settingsForm(entry) {
-    const options = entry.options || {};
-    const trace = entry.trace || {};
-    const editable = this._data?.editable || DEFAULT_EDITABLE;
-    const tokenRange = editable.max_tokens || { min: 1, max: 16384 };
-    const timeoutRange = editable.timeouts || { min: 5, max: 300 };
-    const traceRunsRange = editable.trace_max_runs || { min: 1, max: 200 };
-    const traceHoursRange = editable.trace_retention_hours || { min: 1, max: 168 };
-    const routingModes = editable.routing_modes || ["auto", "fast", "mid", "deep"];
-    const audioOptions = options.first_response_audio || {};
-    const audioStatus = entry.first_response_audio || {};
-    const playbackAdapters = editable.first_response_playback_adapters || ["local", "ha_media_player", "auto"];
-    const formId = safeId(entry.entry_id);
-    const modelCandidates = Array.isArray(entry.model_candidates) && entry.model_candidates.length
-      ? entry.model_candidates
-      : (editable.models || ["gpt-4o-mini", "deepseek-chat", "o1-preview", "gpt-4o", "claude-3-5-sonnet-latest"]);
-    const providerStatus = entry.model_providers || {};
-    const primaryProvider = providerStatus.primary || {};
-    const fallbackProviders = Array.isArray(providerStatus.fallbacks) ? providerStatus.fallbacks : [];
-    const localServices = audioStatus.candidates?.local_services || [];
-    const ttsCandidates = audioStatus.candidates?.tts || [];
-    const mediaCandidates = audioStatus.candidates?.media_player || [];
-    return `
-      <form class="surface settingsForm" data-form="settings" data-entry-id="${escapeHtml(entry.entry_id)}">
-        <div class="sectionHead">
-          <div>
-            <h2>${escapeHtml(this._t("settings.title"))}</h2>
-            <div class="meta">${escapeHtml(entry.title)} · ${escapeHtml(entry.base_url || this._t("entry.base_url_missing"))}</div>
-          </div>
-          <button class="primary" type="submit" ${this._busy ? "disabled" : ""}>
-            <ha-icon icon="mdi:content-save-outline"></ha-icon>
-            <span>${escapeHtml(this._t("common.save"))}</span>
-          </button>
-        </div>
-        <p class="settingsNote">${escapeHtml(this._t("settings.description"))}</p>
-        <fieldset>
-          <legend>${escapeHtml(this._t("settings.routing"))}</legend>
-          <label>
-            <span>${escapeHtml(this._t("settings.routing_mode"))}</span>
-            <select name="routing_mode">
-              ${routingModes.map((mode) => `
-                <option value="${escapeHtml(mode)}" ${options.routing_mode === mode ? "selected" : ""}>
-                  ${escapeHtml(this._modeLabel(mode))}
-                </option>
-              `).join("")}
-            </select>
-          </label>
-        </fieldset>
-        <fieldset>
-          <legend>${escapeHtml(this._t("settings.models"))}</legend>
-          ${["fast", "mid", "deep"].map((tier) => {
-            const currentModel = options.models?.[tier] || "";
-            const knownModels = Array.from(new Set((modelCandidates || []).filter(Boolean)));
-            const useCustom = Boolean(currentModel) && !knownModels.includes(currentModel);
-            const pickerOptions = useCustom
-              ? knownModels
-              : (knownModels.includes(currentModel) || !currentModel ? knownModels : [...knownModels, currentModel]);
-            return `
-              <div class="modelPicker">
-                <label>
-                  <span>${escapeHtml(this._t("settings.model", { tier: this._tierLabel(tier) }))}</span>
-                  <select name="${tier}_model" data-model-select="${tier}">
-                    ${pickerOptions.map((model) => `
-                      <option value="${escapeHtml(model)}" ${model === currentModel ? "selected" : ""}>${escapeHtml(model)}</option>
-                    `).join("")}
-                    <option value="__custom__" ${useCustom ? "selected" : ""}>${escapeHtml(this._t("settings.model_custom"))}</option>
-                  </select>
-                </label>
-                <input
-                  name="${tier}_model_custom"
-                  data-model-custom="${tier}"
-                  value="${escapeHtml(useCustom ? currentModel : "")}"
-                  placeholder="${escapeHtml(this._t("settings.model_custom_placeholder"))}"
-                  autocomplete="off"
-                  maxlength="256"
-                  ${useCustom ? "" : "hidden"}
-                >
-              </div>
-            `;
-          }).join("")}
-        </fieldset>
-        <fieldset>
-          <legend>${escapeHtml(this._t("settings.api_title"))}</legend>
-          <p class="settingsNote">${escapeHtml(this._t("settings.api_description"))}</p>
-          <div class="apiSummary">
-            <div>
-              <span>${escapeHtml(this._t("settings.api_base_url"))}</span>
-              <strong>${escapeHtml(entry.base_url || this._t("entry.base_url_missing"))}</strong>
-            </div>
-            <div>
-              <span>${escapeHtml(this._t("settings.api_key_status"))}</span>
-              <strong>${escapeHtml(this._t(primaryProvider.has_api_key === false ? "settings.api_key_missing" : "settings.api_key_configured"))}</strong>
-            </div>
-            <div>
-              <span>${escapeHtml(this._t("settings.api_fallbacks"))}</span>
-              <strong>${escapeHtml(String(fallbackProviders.length))}</strong>
-            </div>
-          </div>
-          ${providerStatus.config_error ? `<div class="banner error">${escapeHtml(this._t("providers.config_error", { message: providerStatus.config_error }))}</div>` : ""}
-          <button type="button" class="secondary" data-action="open-integration-config">
-            <ha-icon icon="mdi:cog-outline"></ha-icon>
-            <span>${escapeHtml(this._t("settings.api_open_options"))}</span>
-          </button>
-        </fieldset>
-        <fieldset>
-          <legend>${escapeHtml(this._t("settings.budgets"))}</legend>
-          <div class="settingsTriples">
-            ${["fast", "mid", "deep"].map((tier) => `
-              <label>
-                <span>${escapeHtml(this._t("settings.max_tokens", { tier: this._tierLabel(tier) }))}</span>
-                <input name="${tier}_max_tokens" type="number" min="${tokenRange.min}" max="${tokenRange.max}" step="1" value="${Number(options.max_tokens?.[tier] || 0)}" required>
-              </label>
-              <label>
-                <span>${escapeHtml(this._t("settings.timeout", { tier: this._tierLabel(tier) }))}</span>
-                <input name="${tier}_timeout" type="number" min="${timeoutRange.min}" max="${timeoutRange.max}" step="1" value="${Number(options.timeouts?.[tier] || 0)}" required>
-              </label>
-            `).join("")}
-          </div>
-        </fieldset>
-        <fieldset>
-          <legend>${escapeHtml(this._t("settings.first_response_audio"))}</legend>
-          <label class="checkRow">
-            <input name="first_response_audio_enabled" type="checkbox" ${audioOptions.enabled !== false ? "checked" : ""}>
-            <span>${escapeHtml(this._t("settings.first_response_audio_enabled"))}</span>
-          </label>
-          <label>
-            <span>${escapeHtml(this._t("settings.first_response_adapter"))}</span>
-            <select name="first_response_adapter">
-              ${playbackAdapters.map((adapter) => `
-                <option value="${escapeHtml(adapter)}" ${this._firstResponseAdapter(audioOptions.adapter) === adapter ? "selected" : ""}>
-                  ${escapeHtml(this._adapterLabel(adapter))}
-                </option>
-              `).join("")}
-            </select>
-          </label>
-          ${this._audioRoutePanel(audioStatus, entry.feedback_policy || {})}
-          <label>
-            <span>${escapeHtml(this._t("settings.first_response_local_service"))}</span>
-            <input
-              name="first_response_local_service"
-              value="${escapeHtml(audioOptions.local_service || "")}"
-              list="local-services-${formId}"
-              autocomplete="off"
-              placeholder="rest_command.kukui_voice_feedback"
-              maxlength="256"
-            >
-            <small>${escapeHtml(this._t("settings.first_response_local_service_hint"))}</small>
-          </label>
-          <datalist id="local-services-${formId}">
-            ${localServices.map((item) => `<option value="${escapeHtml(item.service || "")}"></option>`).join("")}
-          </datalist>
-          <div class="settingsNote">${escapeHtml(this._t("settings.ha_fallback_notice"))}</div>
-          <div class="settingsTriples two">
-            <label>
-              <span>${escapeHtml(this._t("settings.first_response_tts_entity"))}</span>
-              <input name="first_response_tts_entity" value="${escapeHtml(audioOptions.tts_entity || "")}" list="tts-candidates-${formId}" autocomplete="off" maxlength="256">
-            </label>
-            <label>
-              <span>${escapeHtml(this._t("settings.first_response_media_player"))}</span>
-              <input name="first_response_media_player" value="${escapeHtml(audioOptions.media_player_entity || "")}" list="media-player-candidates-${formId}" autocomplete="off" maxlength="256">
-            </label>
-          </div>
-          <datalist id="tts-candidates-${formId}">
-            ${ttsCandidates.map((item) => `<option value="${escapeHtml(item.entity_id || "")}"></option>`).join("")}
-          </datalist>
-          <datalist id="media-player-candidates-${formId}">
-            ${mediaCandidates.map((item) => `<option value="${escapeHtml(item.entity_id || "")}"></option>`).join("")}
-          </datalist>
-          ${this._audioCandidatePanel(audioStatus)}
-        </fieldset>
-        <fieldset>
-          <legend>${escapeHtml(this._t("settings.traces"))}</legend>
-          <label class="checkRow">
-            <input name="diagnostic_traces" type="checkbox" ${trace.enabled ? "checked" : ""}>
-            <span>${escapeHtml(this._t("settings.diagnostic_traces"))}</span>
-          </label>
-          <label class="checkRow">
-            <input name="trace_include_raw_messages" type="checkbox" ${trace.include_raw_messages ? "checked" : ""}>
-            <span>${escapeHtml(this._t("settings.include_raw"))}</span>
-          </label>
-          <div class="settingsTriples two">
-            <label>
-              <span>${escapeHtml(this._t("settings.max_runs"))}</span>
-              <input name="trace_max_runs" type="number" min="${traceRunsRange.min}" max="${traceRunsRange.max}" step="1" value="${Number(trace.max_runs || 0)}" required>
-            </label>
-            <label>
-              <span>${escapeHtml(this._t("settings.retention_hours"))}</span>
-              <input name="trace_retention_hours" type="number" min="${traceHoursRange.min}" max="${traceHoursRange.max}" step="1" value="${Number(trace.retention_hours || 0)}" required>
-            </label>
-          </div>
-        </fieldset>
-      </form>
     `;
   }
 
@@ -2165,9 +1863,21 @@ class VoiceHarnessPanel extends HTMLElement {
     const providerProfiles = Array.isArray(options.provider_profiles)
       ? options.provider_profiles
       : [];
-    const playbackAdapters = this._data?.editable?.first_response_playback_adapters
+    /** @type {Partial<EditableSchema>} */
+    const editable = this._data?.editable || {};
+    const tokenRange = editable.max_tokens || { min: 1, max: 16384 };
+    const timeoutRange = editable.timeouts || { min: 5, max: 300 };
+    const traceRunsRange = editable.trace_max_runs || { min: 1, max: 200 };
+    const traceHoursRange = editable.trace_retention_hours || { min: 1, max: 168 };
+    const playbackAdapters = editable.first_response_playback_adapters
       || ["local", "ha_media_player", "auto"];
     const adapter = this._firstResponseAdapter(options.first_response_adapter);
+    const audioStatus = entry.first_response_audio || {};
+    const formId = safeId(entry.entry_id);
+    const localServices = audioStatus.candidates?.local_services || [];
+    const ttsCandidates = audioStatus.candidates?.tts || [];
+    const mediaCandidates = audioStatus.candidates?.media_player || [];
+
     return `
       <form class="surface settingsForm" data-form="config" data-entry-id="${escapeHtml(entry.entry_id)}">
         <div class="sectionHead">
@@ -2182,194 +1892,235 @@ class VoiceHarnessPanel extends HTMLElement {
         </div>
         <p class="settingsNote">${escapeHtml(this._t("config.description"))}</p>
 
-        <fieldset>
-          <legend>${escapeHtml(this._t("config.connection"))}</legend>
-          <label>
-            <span>${escapeHtml(this._t("config.base_url"))}</span>
-            <input name="base_url" value="${escapeHtml(cfg.base_url || "")}" autocomplete="off" required maxlength="512">
-          </label>
-          <label>
-            <span>${escapeHtml(this._t("config.api_key"))}</span>
-            <input name="api_key" type="password" placeholder="${cfg.has_api_key ? escapeHtml(this._t("config.api_key_hint")) : ""}" autocomplete="off" maxlength="512">
-              ${cfg.api_key_hint ? `<small>${escapeHtml(cfg.api_key_hint)}</small>` : ""}
-          </label>
-          <button type="button" class="secondary" data-action="test-connection">
-            <ha-icon icon="mdi:lan-connect"></ha-icon>
-            <span>${escapeHtml(this._t("config.test_connection"))}</span>
-          </button>
-          <div class="meta" data-test-result></div>
-        </fieldset>
+        <details class="configCard" open>
+          <summary>${escapeHtml(this._t("config.group_core"))}</summary>
 
-        <fieldset>
-          <legend>${escapeHtml(this._t("config.models"))}</legend>
-          <div class="modelsToolbar">
-            <button type="button" class="secondary" data-action="refresh-models">
-              <ha-icon icon="mdi:refresh"></ha-icon>
-              <span>${escapeHtml(this._t("config.refresh_models"))}</span>
-            </button>
-            <div class="meta" data-models-status></div>
-          </div>
-          ${["fast", "mid", "deep"].map((tier) => {
-            const current = options[`${tier}_model`] || "";
-            const known = Array.from(new Set((candidates || []).filter(Boolean)));
-            const useCustom = Boolean(current) && !known.includes(current);
-            const pickerOptions = useCustom
-              ? known
-              : (known.includes(current) || !current ? known : [...known, current]);
-            return `
-              <div class="modelPicker">
-                <label>
-                  <span>${escapeHtml(this._t("settings.model", { tier: this._tierLabel(tier) }))}</span>
-                  <select name="${tier}_model" data-model-select="${tier}">
-                    ${pickerOptions.map((model) => `
-                      <option value="${escapeHtml(model)}" ${model === current ? "selected" : ""}>${escapeHtml(model)}</option>
-                    `).join("")}
-                    <option value="__custom__" ${useCustom ? "selected" : ""}>${escapeHtml(this._t("settings.model_custom"))}</option>
-                  </select>
-                </label>
-                <input
-                  name="${tier}_model_custom"
-                  data-model-custom="${tier}"
-                  value="${escapeHtml(useCustom ? current : "")}"
-                  placeholder="${escapeHtml(this._t("settings.model_custom_placeholder"))}"
-                  autocomplete="off"
-                  maxlength="256"
-                  ${useCustom ? "" : "hidden"}
-                >
-              </div>
-            `;
-          }).join("")}
-        </fieldset>
-
-        <fieldset>
-          <legend>${escapeHtml(this._t("config.routing_budgets"))}</legend>
-          <label>
-            <span>${escapeHtml(this._t("settings.routing_mode"))}</span>
-            <select name="routing_mode">
-              ${(this._data?.editable?.routing_modes || ["auto", "fast", "mid", "deep"]).map((mode) => `
-                <option value="${escapeHtml(mode)}" ${options.routing_mode === mode ? "selected" : ""}>${escapeHtml(this._modeLabel(mode))}</option>
-              `).join("")}
-            </select>
-          </label>
-          <div class="settingsTriples">
-            ${["fast", "mid", "deep"].map((tier) => `
-              ${this._configNumber(`${tier}_max_tokens`, this._t("settings.max_tokens", { tier: this._tierLabel(tier) }), options[`${tier}_max_tokens`] || 0, 1, 16384)}
-              ${this._configNumber(`${tier}_chat_timeout`, this._t("settings.timeout", { tier: this._tierLabel(tier) }), options[`${tier}_chat_timeout`] || 0, 5, 300)}
-            `).join("")}
-          </div>
-        </fieldset>
-
-        <fieldset>
-          <legend>${escapeHtml(this._t("config.sampling"))}</legend>
-          <div class="settingsTriples two">
-            ${this._configNumber("temperature", "temperature", options.temperature ?? 0, 0, 2, "0.05")}
-            ${this._configNumber("top_p", "top_p", options.top_p ?? 0, 0, 1, "0.05")}
-          </div>
-        </fieldset>
-
-        <fieldset>
-          <legend>${escapeHtml(this._t("config.extra_body"))}</legend>
-          <div class="settingsTriples two">
-            ${this._configTextarea("extra_body", this._t("config.extra_body"), options.extra_body || "")}
-            ${this._configTextarea("fast_extra_body", this._t("config.fast_extra_body"), options.fast_extra_body || "")}
-            ${this._configTextarea("mid_extra_body", this._t("config.mid_extra_body"), options.mid_extra_body || "")}
-            ${this._configTextarea("deep_extra_body", this._t("config.deep_extra_body"), options.deep_extra_body || "")}
-          </div>
-        </fieldset>
-
-        <fieldset>
-          <legend>${escapeHtml(this._t("config.provider_profiles"))}</legend>
-          ${providerProfiles.length ? `
-            <div class="providerSummary">
-              <span class="meta">${escapeHtml(this._t("config.provider_profiles_summary"))}</span>
-              ${providerProfiles.map((profile) => `
-                <span class="chip ${profile.error ? "warning" : "muted"}">
-                  ${escapeHtml(profile.name || profile.error || "")} · ${escapeHtml(profile.base_url || "")} · ${profile.has_api_key ? "key" : "no key"}
-                </span>
-              `).join("")}
-            </div>
-          ` : ""}
-          <label>
-            <span>${escapeHtml(this._t("config.provider_profiles"))}</span>
-            <textarea name="provider_profiles" rows="6" placeholder="${escapeHtml(this._t("config.provider_profiles_hint"))}"></textarea>
-            <small>${escapeHtml(this._t("config.provider_profiles_hint"))}</small>
-          </label>
-        </fieldset>
-
-        <fieldset>
-          <legend>${escapeHtml(this._t("config.ha_llm_api"))}</legend>
-          <p class="settingsNote">${escapeHtml(this._t("config.ha_llm_api_hint"))}</p>
-          ${llmHassApis.map((api) => `
-            <label class="checkRow">
-              <input name="llm_hass_api" type="checkbox" value="${escapeHtml(api.id)}" ${currentHassApis.includes(api.id) ? "checked" : ""}>
-              <span>${escapeHtml(api.name)}</span>
+          <fieldset>
+            <legend>${escapeHtml(this._t("config.connection"))}</legend>
+            <label>
+              <span>${escapeHtml(this._t("config.base_url"))}</span>
+              <input name="base_url" value="${escapeHtml(cfg.base_url || "")}" autocomplete="off" required maxlength="512">
             </label>
-          `).join("") || `<span class="meta">${escapeHtml(this._t("settings.empty"))}</span>`}
-          <label>
-            <span>${escapeHtml(this._t("config.prompt"))}</span>
-            <textarea name="prompt" rows="6" placeholder="${escapeHtml(this._t("config.prompt_hint"))}">${escapeHtml(options.prompt || "")}</textarea>
-          </label>
-        </fieldset>
+            <label>
+              <span>${escapeHtml(this._t("config.api_key"))}</span>
+              <input name="api_key" type="password" placeholder="${cfg.has_api_key ? escapeHtml(this._t("config.api_key_hint")) : ""}" autocomplete="off" maxlength="512">
+              ${cfg.api_key_hint ? `<small>${escapeHtml(cfg.api_key_hint)}</small>` : ""}
+            </label>
+            <button type="button" class="secondary" data-action="test-connection">
+              <ha-icon icon="mdi:lan-connect"></ha-icon>
+              <span>${escapeHtml(this._t("config.test_connection"))}</span>
+            </button>
+            <div class="meta" data-test-result></div>
+          </fieldset>
 
-        <fieldset>
-          <legend>${escapeHtml(this._t("config.search"))}</legend>
-          <label class="checkRow">
-            <input name="search_enabled" type="checkbox" ${options.search_enabled ? "checked" : ""}>
-            <span>${escapeHtml(this._t("config.search_enabled"))}</span>
-          </label>
-          <div class="settingsTriples two">
-            ${["tavily", "serper", "firecrawl", "brave"].map((provider) => {
-              const field = `${provider}_api_key`;
-              const configured = options[`has_${field}`];
+          <fieldset>
+            <legend>${escapeHtml(this._t("config.models"))}</legend>
+            <div class="modelsToolbar">
+              <button type="button" class="secondary" data-action="refresh-models">
+                <ha-icon icon="mdi:refresh"></ha-icon>
+                <span>${escapeHtml(this._t("config.refresh_models"))}</span>
+              </button>
+              <div class="meta" data-models-status></div>
+            </div>
+            ${["fast", "mid", "deep"].map((tier) => {
+              const current = options[`${tier}_model`] || "";
+              const known = Array.from(new Set((candidates || []).filter(Boolean)));
+              const useCustom = Boolean(current) && !known.includes(current);
+              const pickerOptions = useCustom
+                ? known
+                : (known.includes(current) || !current ? known : [...known, current]);
               return `
-                <label>
-                  <span>${escapeHtml(provider)} API key</span>
-                  <input name="${field}" type="password" placeholder="${configured ? escapeHtml(this._t("config.api_key_hint")) : ""}" autocomplete="off" maxlength="512">
-                </label>
+                <div class="modelPicker">
+                  <label>
+                    <span>${escapeHtml(this._t("settings.model", { tier: this._tierLabel(tier) }))}</span>
+                    <select name="${tier}_model" data-model-select="${tier}">
+                      ${pickerOptions.map((model) => `
+                        <option value="${escapeHtml(model)}" ${model === current ? "selected" : ""}>${escapeHtml(model)}</option>
+                      `).join("")}
+                      <option value="__custom__" ${useCustom ? "selected" : ""}>${escapeHtml(this._t("settings.model_custom"))}</option>
+                    </select>
+                  </label>
+                  <input
+                    name="${tier}_model_custom"
+                    data-model-custom="${tier}"
+                    value="${escapeHtml(useCustom ? current : "")}"
+                    placeholder="${escapeHtml(this._t("settings.model_custom_placeholder"))}"
+                    autocomplete="off"
+                    maxlength="256"
+                    ${useCustom ? "" : "hidden"}
+                  >
+                </div>
               `;
             }).join("")}
-          </div>
-        </fieldset>
+          </fieldset>
 
-        <fieldset>
-          <legend>${escapeHtml(this._t("config.traces"))}</legend>
-          <label class="checkRow">
-            <input name="diagnostic_traces" type="checkbox" ${options.diagnostic_traces ? "checked" : ""}>
-            <span>${escapeHtml(this._t("settings.diagnostic_traces"))}</span>
-          </label>
-          <label class="checkRow">
-            <input name="trace_include_raw_messages" type="checkbox" ${options.trace_include_raw_messages ? "checked" : ""}>
-            <span>${escapeHtml(this._t("settings.include_raw"))}</span>
-          </label>
-          <div class="settingsTriples two">
-            ${this._configNumber("trace_max_runs", this._t("settings.max_runs"), options.trace_max_runs || 0, 1, 200)}
-            ${this._configNumber("trace_retention_hours", this._t("settings.retention_hours"), options.trace_retention_hours || 0, 1, 168)}
-          </div>
-        </fieldset>
-
-        <fieldset>
-          <legend>${escapeHtml(this._t("config.first_response_audio"))}</legend>
-          <label class="checkRow">
-            <input name="first_response_audio_enabled" type="checkbox" ${options.first_response_audio_enabled !== false ? "checked" : ""}>
-            <span>${escapeHtml(this._t("settings.first_response_audio_enabled"))}</span>
-          </label>
-          <label>
-            <span>${escapeHtml(this._t("settings.first_response_adapter"))}</span>
-            <select name="first_response_adapter">
-              ${playbackAdapters.map((item) => `
-                <option value="${escapeHtml(item)}" ${adapter === item ? "selected" : ""}>${escapeHtml(this._adapterLabel(item))}</option>
+          <fieldset>
+            <legend>${escapeHtml(this._t("config.routing_budgets"))}</legend>
+            <label>
+              <span>${escapeHtml(this._t("settings.routing_mode"))}</span>
+              <select name="routing_mode">
+                ${(editable.routing_modes || ["auto", "fast", "mid", "deep"]).map((mode) => `
+                  <option value="${escapeHtml(mode)}" ${options.routing_mode === mode ? "selected" : ""}>${escapeHtml(this._modeLabel(mode))}</option>
+                `).join("")}
+              </select>
+            </label>
+            <div class="settingsTriples">
+              ${["fast", "mid", "deep"].map((tier) => `
+                ${this._configNumber(`${tier}_max_tokens`, this._t("settings.max_tokens", { tier: this._tierLabel(tier) }), options[`${tier}_max_tokens`] || 0, tokenRange.min, tokenRange.max)}
+                ${this._configNumber(`${tier}_chat_timeout`, this._t("settings.timeout", { tier: this._tierLabel(tier) }), options[`${tier}_chat_timeout`] || 0, timeoutRange.min, timeoutRange.max)}
               `).join("")}
-            </select>
-          </label>
-          <div class="settingsTriples two">
-            ${this._configText("first_response_local_service", this._t("settings.first_response_local_service"), options.first_response_local_service || "")}
-            ${this._configText("first_response_tts_entity", this._t("settings.first_response_tts_entity"), options.first_response_tts_entity || "")}
-            ${this._configText("first_response_media_player_entity", this._t("settings.first_response_media_player"), options.first_response_media_player_entity || "")}
-          </div>
-        </fieldset>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>${escapeHtml(this._t("config.sampling"))}</legend>
+            <div class="settingsTriples two">
+              ${this._configNumber("temperature", "temperature", options.temperature ?? 0, 0, 2, "0.05")}
+              ${this._configNumber("top_p", "top_p", options.top_p ?? 0, 0, 1, "0.05")}
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>${escapeHtml(this._t("config.extra_body"))}</legend>
+            <div class="settingsTriples two">
+              ${this._configTextarea("extra_body", this._t("config.extra_body"), options.extra_body || "")}
+              ${this._configTextarea("fast_extra_body", this._t("config.fast_extra_body"), options.fast_extra_body || "")}
+              ${this._configTextarea("mid_extra_body", this._t("config.mid_extra_body"), options.mid_extra_body || "")}
+              ${this._configTextarea("deep_extra_body", this._t("config.deep_extra_body"), options.deep_extra_body || "")}
+            </div>
+          </fieldset>
+        </details>
+
+        <details class="configCard">
+          <summary>${escapeHtml(this._t("config.group_ha_prompt"))}</summary>
+          <fieldset>
+            <legend>${escapeHtml(this._t("config.ha_llm_api"))}</legend>
+            <p class="settingsNote">${escapeHtml(this._t("config.ha_llm_api_hint"))}</p>
+            ${llmHassApis.map((api) => `
+              <label class="checkRow">
+                <input name="llm_hass_api" type="checkbox" value="${escapeHtml(api.id)}" ${currentHassApis.includes(api.id) ? "checked" : ""}>
+                <span>${escapeHtml(api.name)}</span>
+              </label>
+            `).join("") || `<span class="meta">${escapeHtml(this._t("settings.empty"))}</span>`}
+            <label>
+              <span>${escapeHtml(this._t("config.prompt"))}</span>
+              <textarea name="prompt" rows="6" placeholder="${escapeHtml(this._t("config.prompt_hint"))}">${escapeHtml(options.prompt || "")}</textarea>
+            </label>
+          </fieldset>
+        </details>
+
+        <details class="configCard">
+          <summary>${escapeHtml(this._t("config.group_search_fallbacks"))}</summary>
+          <fieldset>
+            <legend>${escapeHtml(this._t("config.search"))}</legend>
+            <label class="checkRow">
+              <input name="search_enabled" type="checkbox" ${options.search_enabled ? "checked" : ""}>
+              <span>${escapeHtml(this._t("config.search_enabled"))}</span>
+            </label>
+            <div class="settingsTriples two">
+              ${["tavily", "serper", "firecrawl", "brave"].map((provider) => {
+                const field = `${provider}_api_key`;
+                const configured = options[`has_${field}`];
+                return `
+                  <label>
+                    <span>${escapeHtml(provider)} API key</span>
+                    <input name="${field}" type="password" placeholder="${configured ? escapeHtml(this._t("config.api_key_hint")) : ""}" autocomplete="off" maxlength="512">
+                  </label>
+                `;
+              }).join("")}
+            </div>
+          </fieldset>
+          <fieldset>
+            <legend>${escapeHtml(this._t("config.provider_profiles"))}</legend>
+            ${providerProfiles.length ? `
+              <div class="providerSummary">
+                <span class="meta">${escapeHtml(this._t("config.provider_profiles_summary"))}</span>
+                ${providerProfiles.map((profile) => `
+                  <span class="chip ${profile.error ? "warning" : "muted"}">
+                    ${escapeHtml(profile.name || profile.error || "")} · ${escapeHtml(profile.base_url || "")} · ${profile.has_api_key ? "key" : "no key"}
+                  </span>
+                `).join("")}
+              </div>
+            ` : ""}
+            <label>
+              <span>${escapeHtml(this._t("config.provider_profiles"))}</span>
+              <textarea name="provider_profiles" rows="6" placeholder="${escapeHtml(this._t("config.provider_profiles_hint"))}"></textarea>
+              <small>${escapeHtml(this._t("config.provider_profiles_hint"))}</small>
+            </label>
+          </fieldset>
+        </details>
+
+        <details class="configCard">
+          <summary>${escapeHtml(this._t("config.group_audio_traces"))}</summary>
+          <fieldset>
+            <legend>${escapeHtml(this._t("config.first_response_audio"))}</legend>
+            <label class="checkRow">
+              <input name="first_response_audio_enabled" type="checkbox" ${options.first_response_audio_enabled !== false ? "checked" : ""}>
+              <span>${escapeHtml(this._t("settings.first_response_audio_enabled"))}</span>
+            </label>
+            <label>
+              <span>${escapeHtml(this._t("settings.first_response_adapter"))}</span>
+              <select name="first_response_adapter">
+                ${playbackAdapters.map((item) => `
+                  <option value="${escapeHtml(item)}" ${adapter === item ? "selected" : ""}>${escapeHtml(this._adapterLabel(item))}</option>
+                `).join("")}
+              </select>
+            </label>
+            <label>
+              <span>${escapeHtml(this._t("settings.first_response_local_service"))}</span>
+              <input
+                name="first_response_local_service"
+                value="${escapeHtml(options.first_response_local_service || "")}"
+                list="local-services-${formId}"
+                autocomplete="off"
+                placeholder="rest_command.kukui_voice_feedback"
+                maxlength="256"
+              >
+              <small>${escapeHtml(this._t("settings.first_response_local_service_hint"))}</small>
+            </label>
+            <datalist id="local-services-${formId}">
+              ${localServices.map((item) => `<option value="${escapeHtml(item.service || "")}"></option>`).join("")}
+            </datalist>
+            ${this._audioRoutePanel(audioStatus, entry.feedback_policy || {})}
+            <div class="settingsNote">${escapeHtml(this._t("settings.ha_fallback_notice"))}</div>
+            <div class="settingsTriples two">
+              <label>
+                <span>${escapeHtml(this._t("settings.first_response_tts_entity"))}</span>
+                <input name="first_response_tts_entity" value="${escapeHtml(options.first_response_tts_entity || "")}" list="tts-candidates-${formId}" autocomplete="off" maxlength="256">
+              </label>
+              <label>
+                <span>${escapeHtml(this._t("settings.first_response_media_player"))}</span>
+                <input name="first_response_media_player" value="${escapeHtml(options.first_response_media_player_entity || "")}" list="media-player-candidates-${formId}" autocomplete="off" maxlength="256">
+              </label>
+            </div>
+            <datalist id="tts-candidates-${formId}">
+              ${ttsCandidates.map((item) => `<option value="${escapeHtml(item.entity_id || "")}"></option>`).join("")}
+            </datalist>
+            <datalist id="media-player-candidates-${formId}">
+              ${mediaCandidates.map((item) => `<option value="${escapeHtml(item.entity_id || "")}"></option>`).join("")}
+            </datalist>
+            ${this._audioCandidatePanel(audioStatus)}
+          </fieldset>
+          <fieldset>
+            <legend>${escapeHtml(this._t("config.traces"))}</legend>
+            <label class="checkRow">
+              <input name="diagnostic_traces" type="checkbox" ${options.diagnostic_traces ? "checked" : ""}>
+              <span>${escapeHtml(this._t("settings.diagnostic_traces"))}</span>
+            </label>
+            <label class="checkRow">
+              <input name="trace_include_raw_messages" type="checkbox" ${options.trace_include_raw_messages ? "checked" : ""}>
+              <span>${escapeHtml(this._t("settings.include_raw"))}</span>
+            </label>
+            <div class="settingsTriples two">
+              ${this._configNumber("trace_max_runs", this._t("settings.max_runs"), options.trace_max_runs || 0, traceRunsRange.min, traceRunsRange.max)}
+              ${this._configNumber("trace_retention_hours", this._t("settings.retention_hours"), options.trace_retention_hours || 0, traceHoursRange.min, traceHoursRange.max)}
+            </div>
+          </fieldset>
+        </details>
       </form>
     `;
   }
+
 
   _configNumber(name, label, value, min, max, step = "1") {
     return `
@@ -2516,6 +2267,10 @@ class VoiceHarnessPanel extends HTMLElement {
           ${snapshot.generated_at ? `<span class="chip muted">${escapeHtml(this._t("satellite.generated"))}: ${escapeHtml(this._formatTime(snapshot.generated_at))}</span>` : ""}
         </div>
       </article>
+      <section class="earconSection" aria-label="${escapeHtml(this._t("config.earcons_section"))}">
+        <h2>${escapeHtml(this._t("config.earcons_section"))}</h2>
+        ${this._renderEarcons()}
+      </section>
     `;
   }
 
@@ -3997,7 +3752,6 @@ class VoiceHarnessPanel extends HTMLElement {
           </article>
         `).join("") || `<div class="empty">${escapeHtml(this._t("policies.empty"))}</div>`}
       </div>
-      ${entries.length ? `<div class="surface modelSurface">${entries.map((entry) => this._modelRows(entry.options)).join("")}</div>` : ""}
     `;
   }
 
@@ -4264,22 +4018,6 @@ class VoiceHarnessPanel extends HTMLElement {
         <span class="routeKind">${escapeHtml(this._routeLabel(route.kind))}</span>
         <strong>${escapeHtml(route.model)}</strong>
         <span>${escapeHtml(this._t("route.tokens", { count: route.max_tokens }))} · ${escapeHtml(this._t("route.timeout", { seconds: route.timeout_s }))}</span>
-      </div>
-    `;
-  }
-
-  _modelRows(options) {
-    const tiers = ["fast", "mid", "deep"];
-    return `
-      <div class="table">
-        ${tiers.map((tier) => `
-          <div class="row">
-            <span class="tier ${tier}">${escapeHtml(this._tierLabel(tier))}</span>
-            <strong>${escapeHtml(options.models[tier])}</strong>
-            <span>${escapeHtml(this._t("route.tokens", { count: options.max_tokens[tier] }))}</span>
-            <span>${options.timeouts[tier]}s</span>
-          </div>
-        `).join("")}
       </div>
     `;
   }
@@ -5042,6 +4780,39 @@ const styles = `
 
   .modelsToolbar [data-models-status] {
     min-height: 18px;
+  }
+
+  .configCard {
+    margin: 0 0 14px;
+    border: 1px solid var(--divider-color, #e0e0e0);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .configCard > summary {
+    cursor: pointer;
+    padding: 12px 16px;
+    font-weight: 600;
+    font-size: 15px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    list-style: none;
+    user-select: none;
+  }
+
+  .configCard[open] > summary {
+    border-bottom: 1px solid var(--divider-color, #eeeeee);
+  }
+
+  .configCard > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .earconSection {
+    display: grid;
+    gap: 12px;
+    margin-top: 4px;
   }
 
   .checkRow input {
@@ -5944,10 +5715,6 @@ const styles = `
   .table {
     display: grid;
     gap: 8px;
-  }
-
-  .modelSurface {
-    margin-top: 14px;
   }
 
   .ruleList {
