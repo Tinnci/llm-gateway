@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 SESSION_TTL = timedelta(minutes=10)
 RAW_TURN_LIMIT = 6
 SUMMARY_TURN_THRESHOLD = 8
+SUMMARY_ITEM_LIMIT = 8
 UNSTABLE_FAILURE_MARKERS = (
     "没有权限",
     "无法查看",
@@ -55,6 +56,7 @@ class VoiceMemory:
         )
         self._facts: list[str] = []
         self._sessions: dict[str, SessionMemory] = {}
+        self._default_session_id = entry_id
 
     async def async_load(self) -> None:
         """Load persistent memory from Home Assistant storage."""
@@ -71,15 +73,15 @@ class VoiceMemory:
         self, conversation_id: str | None, user_text: str, assistant_text: str
     ) -> None:
         """Record a completed turn."""
-        if not conversation_id:
-            return
+        session_id = conversation_id or self._default_session_id
         now = datetime.now(UTC).isoformat()
-        session = self._sessions.setdefault(conversation_id, SessionMemory())
+        session = self._sessions.setdefault(session_id, SessionMemory())
         session.turns.append(MemoryTurn(user_text, assistant_text, now))
-        session.turns = session.turns[-RAW_TURN_LIMIT:]
         session.updated_at = now
-        if len(session.turns) >= SUMMARY_TURN_THRESHOLD and not session.summary:
-            session.summary = "；".join(turn.user for turn in session.turns[-4:])
+        if len(session.turns) >= SUMMARY_TURN_THRESHOLD:
+            evicted = session.turns[:-RAW_TURN_LIMIT]
+            session.summary = _merge_summary(session.summary, evicted)
+            session.turns = session.turns[-RAW_TURN_LIMIT:]
         self._prune_sessions()
         await self._store.async_save(self._as_dict())
 
@@ -90,7 +92,8 @@ class VoiceMemory:
             facts = "\n".join(f"- {fact}" for fact in self._facts[:12])
             parts.append(f"长期记忆：\n{facts}")
 
-        if conversation_id and (session := self._sessions.get(conversation_id)):
+        session_id = conversation_id or self._default_session_id
+        if session := self._sessions.get(session_id):
             if session.summary:
                 parts.append(f"本轮会话摘要：{session.summary}")
             if session.turns:
@@ -167,6 +170,12 @@ def _turn_context_line(turn: MemoryTurn) -> str:
     if _is_unstable_failure(assistant):
         assistant = "上一轮回答失败，不能当作事实引用。"
     return f"用户：{turn.user}\n助手：{assistant}"
+
+
+def _merge_summary(existing: str, turns: list[MemoryTurn]) -> str:
+    items = [item.strip() for item in existing.split("；") if item.strip()]
+    items.extend(turn.user.strip() for turn in turns if turn.user.strip())
+    return "；".join(items[-SUMMARY_ITEM_LIMIT:])
 
 
 def _is_unstable_failure(text: str) -> bool:
