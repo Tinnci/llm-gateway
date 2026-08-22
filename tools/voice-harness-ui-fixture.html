@@ -431,6 +431,19 @@
                     triggered_ms: 120,
                   },
                   speech: { final: "空气质量良好。", tts_cleaned: true },
+                  causal_chain: {
+                    complete: true,
+                    ordered: true,
+                    missing_event_types: [],
+                    barge_in_stop_latency_ms: null,
+                  },
+                  event_stream: [
+                    { type: "satellite/wake_detected", source: "kukui", offset_ms: 0, duration_ms: 36, status: "ok" },
+                    { type: "asr/endpoint_detected", source: "doubao-asr", offset_ms: 92, duration_ms: 28, status: "ok" },
+                    { type: "gateway/route_decision", source: "mid-turn-loop", offset_ms: 120, duration_ms: 112, status: "ok" },
+                    { type: "gateway/search_result", source: "tavily", offset_ms: 1020, duration_ms: 800, status: "ok" },
+                    { type: "tts/synth_complete", source: "edge-tts", offset_ms: 1820, duration_ms: 340, status: "ok" },
+                  ],
                   timeline_spans: [
                     { stage: "received", start_ms: 0, duration_ms: 120, status: "ok", attrs: {} },
                     { stage: "first_response", start_ms: 120, duration_ms: 900, status: "ok", attrs: { cue: "search" } },
@@ -523,10 +536,7 @@
         if (!root) {
           return;
         }
-        root.querySelectorAll("details").forEach((details) => {
-          if (details.closest(".result")) {
-            return;
-          }
+        root.querySelectorAll("details.traceCard").forEach((details) => {
           details.open = true;
         });
       }, 100);

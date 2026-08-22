@@ -127,6 +127,11 @@ const I18N = {
     "runs.replay": "Dry-run replay",
     "runs.replay_complete": "Replay fork created without live service calls.",
     "runs.causal_chain": "Endpoint-to-stop chain",
+    "runs.trajectory": "Turn trajectory",
+    "runs.trajectory_hint": "Ordered runtime events for this turn",
+    "runs.inspect_evidence": "Inspect evidence and diagnostics",
+    "runs.loop": "Loop",
+    "runs.runtime_config": "Runtime configuration",
     "runs.open_settings": "Open settings",
     "runs.live_idle": "No live run is active.",
     "runs.live": "Recent live runs",
@@ -494,6 +499,11 @@ const I18N = {
     "runs.replay": "无副作用重放",
     "runs.replay_complete": "已创建重放分支，未调用实时服务。",
     "runs.causal_chain": "端点到停止因果链",
+    "runs.trajectory": "Turn 运行轨迹",
+    "runs.trajectory_hint": "按时间排序的本轮运行事件",
+    "runs.inspect_evidence": "查看证据与诊断详情",
+    "runs.loop": "Loop",
+    "runs.runtime_config": "运行时配置",
     "runs.open_settings": "打开配置",
     "runs.live_idle": "当前没有实时运行。",
     "runs.live": "最近实时运行",
@@ -1317,12 +1327,20 @@ class VoiceHarnessPanel extends HTMLElement {
               </div>
               <span class="chip ok">${escapeHtml(entry.state || "unknown")}</span>
             </div>
-            <div class="routeGrid">
-              ${(entry.routes || []).map((route) => this._routeCard(route)).join("")}
-            </div>
-            ${this._providerPanel(entry)}
             ${this._liveStatusBanner(entry)}
             ${this._renderTracePanel(entry)}
+            <details class="runtimeConfigDrawer">
+              <summary>
+                <span>${escapeHtml(this._t("runs.runtime_config"))}</span>
+                <span class="meta">${(entry.routes || []).length} routes</span>
+              </summary>
+              <div class="runtimeConfigContent">
+                <div class="routeGrid">
+                  ${(entry.routes || []).map((route) => this._routeCard(route)).join("")}
+                </div>
+                ${this._providerPanel(entry)}
+              </div>
+            </details>
           </article>
         `).join("")}
       </div>
@@ -2288,7 +2306,6 @@ class VoiceHarnessPanel extends HTMLElement {
           status: event.status,
           attrs: event.attrs,
         })) : []);
-    const flags = record.debug_flags || {};
     const tools = Array.isArray(record.tools) ? record.tools : [];
     const errors = Array.isArray(record.errors) ? record.errors : [];
     const input = record.input || {};
@@ -2297,16 +2314,22 @@ class VoiceHarnessPanel extends HTMLElement {
     const completion = record.completion || {};
     const speech = record.speech || {};
     const causalChain = record.causal_chain || {};
+    const loopName = record.loop?.name || record.loop_name || `${route.kind || "auto"}-turn-loop`;
     return `
       <details class="traceCard">
         <summary>
-          <div>
-            <strong>${escapeHtml(this._formatTime(record.created_at))}</strong>
-            <span>${escapeHtml(record.user_text || "")}</span>
-            <span>${escapeHtml(record.first_response_text || firstResponse.spoken_hint || firstResponse.task_type || "")}</span>
-            <span>${escapeHtml(record.final_speech_text || record.assistant_text || "")}</span>
-            <span>${escapeHtml(`${this._routeLabel(route.kind)} · ${route.model || ""} · ${Number(record.latency_ms || 0)} ms`)}</span>
-            <span>${escapeHtml(`${firstResponse.task_type || ""} · ${searchGate.decision || ""}`)}</span>
+          <div class="runIdentity">
+            <div class="runEyebrow">
+              <span>${escapeHtml(this._formatTime(record.created_at))}</span>
+              <span>${escapeHtml(record.run_id || record.id || "")}</span>
+            </div>
+            <strong>${escapeHtml(record.user_text || "")}</strong>
+            <span>${escapeHtml(record.final_speech_text || record.assistant_text || record.first_response_text || firstResponse.spoken_hint || "")}</span>
+            <div class="runMeta">
+              <span>${escapeHtml(this._routeLabel(route.kind))}</span>
+              <span>${escapeHtml(loopName)}</span>
+              <span>${Number(record.latency_ms || 0)} ms</span>
+            </div>
           </div>
           <div class="summaryChips">
             ${this._runFlagChips(record)}
@@ -2314,10 +2337,13 @@ class VoiceHarnessPanel extends HTMLElement {
           </div>
         </summary>
         <div class="traceBody">
-          <div class="sectionHead">
-            <h3>${escapeHtml(this._t("runs.detail"))}</h3>
+          <div class="runCommandBar">
+            <div>
+              <span class="runCommandLabel">${escapeHtml(this._t("runs.loop"))}</span>
+              <strong>${escapeHtml(loopName)}</strong>
+            </div>
             <button
-              class="secondary"
+              class="primary replayButton"
               data-replay-run="${escapeHtml(record.run_id || record.id || "")}"
               data-entry-id="${escapeHtml(entryId || "")}"
               ${this._busy || record.lineage?.mode === "dry_run" ? "disabled" : ""}
@@ -2326,19 +2352,13 @@ class VoiceHarnessPanel extends HTMLElement {
               <span>${escapeHtml(this._t("runs.replay"))}</span>
             </button>
           </div>
-          <div class="runFlags">
-            ${this._flagChip(this._t("runs.search"), Boolean(flags.search), Boolean(flags.search) ? "warning" : "muted")}
-            ${this._flagChip(this._t("runs.deep_model"), Boolean(flags.deep_route), Boolean(flags.deep_route) ? "warning" : "muted")}
-            ${this._flagChip(this._t("runs.deep_verifier"), Boolean(flags.deep_verifier_waited), Boolean(flags.deep_verifier_waited) ? "bad" : "muted")}
-            ${this._flagChip(this._t("runs.high_risk"), Boolean(flags.high_risk), Boolean(flags.high_risk) ? "bad" : "muted")}
-            ${this._flagChip(this._t("runs.final_modified"), Boolean(flags.final_modified_by_grounding), Boolean(flags.final_modified_by_grounding) ? "warning" : "muted")}
-            ${this._flagChip(this._t("runs.polluted_evidence"), Boolean(flags.polluted_evidence_present), Boolean(flags.polluted_evidence_used) ? "bad" : (flags.polluted_evidence_present ? "warning" : "muted"))}
-            <span class="chip muted">${escapeHtml(this._t("runs.verifier_mode"))}: ${escapeHtml(this._verifierModeLabel(record.verifier_mode))}</span>
+          <div class="runFlags compactFlags">
+            ${this._runFlagChips(record)}
+            ${record.verifier_mode && record.verifier_mode !== "disabled" ? `<span class="chip muted">${escapeHtml(this._t("runs.verifier_mode"))}: ${escapeHtml(this._verifierModeLabel(record.verifier_mode))}</span>` : ""}
           </div>
-          <div class="detailGrid">
+          <div class="turnOverview">
             ${this._detailItem(this._t("runs.input"), [
               input.text || record.user_text || "",
-              input.conversation_id || record.conversation_id || "",
             ])}
             ${this._detailItem(this._t("runs.route"), [
               `${this._routeLabel(route.kind)} · ${route.model || ""}`,
@@ -2364,6 +2384,15 @@ class VoiceHarnessPanel extends HTMLElement {
               speech.final || record.final_speech_text || record.assistant_text || "",
               `${Number(record.latency_ms || 0)} ms`,
             ])}
+          </div>
+          ${this._trajectoryPanel(record, timeline, causalChain)}
+          <details class="diagnosticDrawer">
+            <summary>
+              <span>${escapeHtml(this._t("runs.inspect_evidence"))}</span>
+              <span class="meta">${escapeHtml(this._t("runs.tools", { count: tools.length }))} · ${errors.length} ${escapeHtml(this._t("runs.errors").toLowerCase())}</span>
+            </summary>
+            <div class="diagnosticContent">
+          <div class="detailGrid">
             ${this._detailItem(this._t("runs.causal_chain"), [
               causalChain.complete ? "complete" : "incomplete",
               causalChain.ordered ? "ordered" : "not ordered",
@@ -2429,6 +2458,8 @@ class VoiceHarnessPanel extends HTMLElement {
             </div>
           ` : ""}
           ${record.raw_payload ? this._jsonDetails(this._t("runs.raw_payload"), record.raw_payload) : ""}
+            </div>
+          </details>
         </div>
       </details>
     `;
@@ -2437,13 +2468,15 @@ class VoiceHarnessPanel extends HTMLElement {
   _runFlagChips(record) {
     const flags = record.debug_flags || {};
     return [
-      this._flagChip("S", Boolean(flags.search), Boolean(flags.search) ? "warning" : "muted", this._t("runs.search")),
-      this._flagChip("D", Boolean(flags.deep_route), Boolean(flags.deep_route) ? "warning" : "muted", this._t("runs.deep_model")),
-      this._flagChip("V", Boolean(flags.deep_verifier_waited), Boolean(flags.deep_verifier_waited) ? "bad" : "muted", this._t("runs.deep_verifier")),
-      this._flagChip("R", Boolean(flags.high_risk), Boolean(flags.high_risk) ? "bad" : "muted", this._t("runs.high_risk")),
-      this._flagChip("G", Boolean(flags.final_modified_by_grounding), Boolean(flags.final_modified_by_grounding) ? "warning" : "muted", this._t("runs.final_modified")),
-      this._flagChip("E", Boolean(flags.polluted_evidence_present), Boolean(flags.polluted_evidence_used) ? "bad" : (flags.polluted_evidence_present ? "warning" : "muted"), this._t("runs.polluted_evidence")),
-    ].join("");
+      flags.search ? this._flagChip("S", true, "warning", this._t("runs.search")) : "",
+      flags.deep_route ? this._flagChip("D", true, "warning", this._t("runs.deep_model")) : "",
+      flags.deep_verifier_waited ? this._flagChip("V", true, "bad", this._t("runs.deep_verifier")) : "",
+      flags.high_risk ? this._flagChip("R", true, "bad", this._t("runs.high_risk")) : "",
+      flags.final_modified_by_grounding ? this._flagChip("G", true, "warning", this._t("runs.final_modified")) : "",
+      flags.polluted_evidence_present
+        ? this._flagChip("E", true, flags.polluted_evidence_used ? "bad" : "warning", this._t("runs.polluted_evidence"))
+        : "",
+    ].filter(Boolean).join("");
   }
 
   /**
@@ -2464,6 +2497,77 @@ class VoiceHarnessPanel extends HTMLElement {
         <strong>${escapeHtml(label)}</strong>
         ${visible.map((line) => `<span>${escapeHtml(line)}</span>`).join("") || `<span class="meta">-</span>`}
       </div>
+    `;
+  }
+
+  _trajectoryPanel(record, timeline, causalChain) {
+    const stream = Array.isArray(record.event_stream) ? record.event_stream : [];
+    const streamTimes = stream.map((event) => {
+      if (event.monotonic_ms !== null && event.monotonic_ms !== undefined && Number.isFinite(Number(event.monotonic_ms))) {
+        return Number(event.monotonic_ms);
+      }
+      const parsed = Date.parse(event.occurred_at || "");
+      return Number.isFinite(parsed) ? parsed : null;
+    }).filter((value) => value !== null);
+    const streamOrigin = streamTimes.length ? Math.min(...streamTimes) : 0;
+    const events = stream.length
+      ? stream.map((event) => {
+          const monotonic = event.monotonic_ms !== null && event.monotonic_ms !== undefined
+            ? Number(event.monotonic_ms)
+            : Number.NaN;
+          const occurredAt = Date.parse(event.occurred_at || "");
+          const absolute = Number.isFinite(monotonic) ? monotonic : occurredAt;
+          const derivedStart = Number.isFinite(absolute) ? Math.max(0, absolute - streamOrigin) : 0;
+          return {
+            label: event.type || event.event_type || event.name || "event",
+            source: event.source || event.component || "runtime",
+            start: Number(event.offset_ms ?? event.t_ms ?? derivedStart),
+            duration: Number(event.duration_ms || 0),
+            status: event.status || "ok",
+          };
+        })
+      : timeline.map((event) => ({
+          label: event.stage || "event",
+          source: event.attrs?.source || event.attrs?.name || "gateway",
+          start: Number(event.start_ms ?? event.t_ms ?? 0),
+          duration: Number(event.duration_ms || 0),
+          status: event.status || "ok",
+        }));
+    if (!events.length) return "";
+    const end = Math.max(1, ...events.map((event) => event.start + Math.max(event.duration, 1)));
+    const chainTone = causalChain.complete && causalChain.ordered ? "ok" : "warning";
+    return `
+      <section class="trajectoryLedger">
+        <div class="trajectoryHead">
+          <div>
+            <h3>${escapeHtml(this._t("runs.trajectory"))}</h3>
+            <span>${escapeHtml(this._t("runs.trajectory_hint"))}</span>
+          </div>
+          <span class="chip ${chainTone}">${escapeHtml(causalChain.complete ? "causal chain complete" : "causal chain incomplete")}</span>
+        </div>
+        <div class="trajectoryScale" aria-hidden="true">
+          <span>0 ms</span><span>${Math.round(end / 2)} ms</span><span>${Math.round(end)} ms</span>
+        </div>
+        <div class="trajectoryRows">
+          ${events.map((event, index) => {
+            const left = Math.min(98, Math.max(0, (event.start / end) * 100));
+            const width = Math.max(1.2, Math.min(100 - left, (Math.max(event.duration, end * 0.012) / end) * 100));
+            return `
+              <div class="trajectoryRow ${event.status === "error" ? "bad" : ""}">
+                <span class="trajectoryIndex">${String(index + 1).padStart(2, "0")}</span>
+                <div class="trajectoryEvent">
+                  <strong>${escapeHtml(event.label)}</strong>
+                  <span>${escapeHtml(event.source)}</span>
+                </div>
+                <div class="trajectoryTrack">
+                  <i style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%"></i>
+                </div>
+                <span class="trajectoryTime">${event.start} ms${event.duration ? ` · ${event.duration} ms` : ""}</span>
+              </div>
+            `;
+          }).join("")}
+        </div>
+      </section>
     `;
   }
 
@@ -4382,25 +4486,63 @@ const styles = `
 
   .traceCard {
     border: 1px solid var(--divider-color);
-    border-radius: 8px;
-    background: var(--primary-background-color);
+    border-radius: 10px;
+    background: var(--card-background-color);
     overflow: hidden;
   }
 
   .traceCard summary {
-    min-height: 54px;
+    min-height: 76px;
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding: 10px 12px;
+    padding: 12px 14px;
     cursor: pointer;
+  }
+
+  .traceCard[open] > summary {
+    background: color-mix(in srgb, var(--primary-color) 4%, var(--card-background-color));
   }
 
   .traceCard summary > div {
     min-width: 0;
     display: grid;
     gap: 2px;
+  }
+
+  .runIdentity {
+    gap: 5px !important;
+  }
+
+  .runIdentity > strong {
+    font-size: 15px;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+
+  .runEyebrow,
+  .runMeta {
+    display: flex !important;
+    flex-wrap: wrap;
+    gap: 6px 12px !important;
+  }
+
+  .runEyebrow span {
+    color: var(--secondary-text-color);
+    font-family: var(--code-font-family, Menlo, Consolas, monospace);
+    font-size: 11px !important;
+  }
+
+  .runMeta span {
+    position: relative;
+    font-size: 11px !important;
+  }
+
+  .runMeta span + span::before {
+    position: absolute;
+    left: -7px;
+    content: "·";
   }
 
   .summaryChips {
@@ -4419,9 +4561,193 @@ const styles = `
 
   .traceBody {
     border-top: 1px solid var(--divider-color);
-    padding: 12px;
+    padding: 14px;
+    display: grid;
+    gap: 14px;
+  }
+
+  .runCommandBar,
+  .trajectoryHead {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .runCommandBar > div,
+  .trajectoryHead > div {
+    min-width: 0;
+    display: grid;
+    gap: 3px;
+  }
+
+  .runCommandLabel,
+  .trajectoryHead span:not(.chip) {
+    color: var(--secondary-text-color);
+    font-size: 11px;
+  }
+
+  .replayButton {
+    min-height: 36px;
+  }
+
+  .compactFlags .chip {
+    min-height: 22px;
+    padding: 0 8px;
+    font-size: 11px;
+  }
+
+  .turnOverview {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    border: 1px solid var(--divider-color);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .turnOverview .detailItem {
+    min-height: 88px;
+    border: 0;
+    border-right: 1px solid var(--divider-color);
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .turnOverview .detailItem:nth-child(3n) {
+    border-right: 0;
+  }
+
+  .turnOverview .detailItem:nth-child(-n + 3) {
+    border-bottom: 1px solid var(--divider-color);
+  }
+
+  .trajectoryLedger {
+    border: 1px solid var(--divider-color);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--primary-background-color);
+  }
+
+  .trajectoryHead {
+    min-height: 52px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--divider-color);
+    background: var(--card-background-color);
+  }
+
+  .trajectoryScale {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    padding: 5px 112px 5px 178px;
+    color: var(--secondary-text-color);
+    font-family: var(--code-font-family, Menlo, Consolas, monospace);
+    font-size: 10px;
+  }
+
+  .trajectoryScale span:nth-child(2) { text-align: center; }
+  .trajectoryScale span:last-child { text-align: right; }
+
+  .trajectoryRows {
+    display: grid;
+  }
+
+  .trajectoryRow {
+    min-height: 36px;
+    display: grid;
+    grid-template-columns: 28px 132px minmax(120px, 1fr) 96px;
+    align-items: center;
+    gap: 8px;
+    padding: 0 10px;
+    border-top: 1px solid color-mix(in srgb, var(--divider-color) 70%, transparent);
+  }
+
+  .trajectoryRow:hover {
+    background: color-mix(in srgb, var(--primary-color) 6%, transparent);
+  }
+
+  .trajectoryIndex,
+  .trajectoryTime {
+    color: var(--secondary-text-color);
+    font-family: var(--code-font-family, Menlo, Consolas, monospace);
+    font-size: 10px;
+  }
+
+  .trajectoryTime { text-align: right; }
+
+  .trajectoryEvent {
+    min-width: 0;
+    display: grid;
+    gap: 1px;
+  }
+
+  .trajectoryEvent strong,
+  .trajectoryEvent span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .trajectoryEvent strong { font-size: 11px; }
+  .trajectoryEvent span { color: var(--secondary-text-color); font-size: 10px; }
+
+  .trajectoryTrack {
+    position: relative;
+    height: 5px;
+    border-radius: 2px;
+    background: color-mix(in srgb, var(--divider-color) 55%, transparent);
+  }
+
+  .trajectoryTrack i {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    border-radius: 2px;
+    background: var(--primary-color);
+  }
+
+  .trajectoryRow.bad .trajectoryTrack i { background: var(--error-color); }
+
+  .diagnosticDrawer,
+  .runtimeConfigDrawer {
+    border: 1px solid var(--divider-color);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .diagnosticDrawer > summary,
+  .runtimeConfigDrawer > summary {
+    min-height: 44px;
+    padding: 0 12px;
+    background: var(--primary-background-color);
+    font-size: 12px;
+    font-weight: 650;
+  }
+
+  .diagnosticDrawer > summary .meta,
+  .runtimeConfigDrawer > summary .meta {
+    font-weight: 400;
+  }
+
+  .diagnosticContent {
     display: grid;
     gap: 12px;
+    padding: 12px;
+    border-top: 1px solid var(--divider-color);
+  }
+
+  .runtimeConfigDrawer {
+    margin-top: 14px;
+  }
+
+  .runtimeConfigContent {
+    display: grid;
+    gap: 12px;
+    padding: 12px;
+    border-top: 1px solid var(--divider-color);
+  }
+
+  .runtimeConfigContent .providerPanel {
+    margin-top: 0;
   }
 
   .traceText {
@@ -4939,6 +5265,41 @@ const styles = `
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
+    .turnOverview {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .turnOverview .detailItem {
+      border-right: 1px solid var(--divider-color);
+      border-bottom: 1px solid var(--divider-color);
+    }
+
+    .turnOverview .detailItem:nth-child(2) {
+      border-right: 0;
+    }
+
+    .turnOverview .detailItem:nth-child(4) {
+      border-right: 0;
+    }
+
+    .turnOverview .detailItem:nth-child(5),
+    .turnOverview .detailItem:nth-child(6) {
+      border-bottom: 0;
+    }
+
+    .turnOverview .detailItem:nth-child(6) {
+      border-right: 0;
+    }
+
+    .trajectoryScale {
+      padding-left: 138px;
+      padding-right: 88px;
+    }
+
+    .trajectoryRow {
+      grid-template-columns: 24px 90px minmax(96px, 1fr) 72px;
+    }
+
     .traceReadiness {
       grid-template-columns: 32px minmax(0, 1fr);
     }
@@ -4991,8 +5352,43 @@ const styles = `
     }
 
     .runSummary {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .runSummary .summaryMetric:last-child {
+      grid-column: 1 / -1;
+    }
+
+    .runCommandBar,
+    .trajectoryHead {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .replayButton {
+      width: 100%;
+    }
+
+    .turnOverview {
       grid-template-columns: 1fr;
     }
+
+    .turnOverview .detailItem {
+      border-right: 0;
+      border-bottom: 1px solid var(--divider-color);
+    }
+
+    .turnOverview .detailItem:last-child {
+      border-bottom: 0;
+    }
+
+    .trajectoryScale { display: none; }
+
+    .trajectoryRow {
+      grid-template-columns: 24px minmax(0, 1fr) 72px;
+    }
+
+    .trajectoryTrack { display: none; }
 
     .traceReadiness {
       grid-template-columns: 1fr;
