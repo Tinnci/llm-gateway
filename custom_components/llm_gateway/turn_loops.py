@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Protocol
 
-from .capability_executor import async_try_execute_local_capability
+from .capability_executor import (
+    LocalCapabilityResult,
+    async_try_execute_local_capability,
+)
+from .dialogue import (
+    DialogueFrame,
+    dialogue_frame_from_local_capability,
+    dialogue_frame_from_route,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterable
@@ -13,7 +21,6 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
     from .capabilities import RouteDecision
-    from .capability_executor import LocalCapabilityResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +29,29 @@ class TurnLoopContext:
 
     text: str
     route_decision: RouteDecision
+    turn_id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class TurnLoopTraceEvent:
+    """One trace event proposed by a loop and committed by the kernel."""
+
+    stage: str
+    status: str = "ok"
+    attrs: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class TurnLoopResult:
+    """Effect proposal returned to the kernel for trace and response commit."""
+
+    status: str
+    speech: str
+    route_kind: str
+    route_model: str
+    trace_events: tuple[TurnLoopTraceEvent, ...] = ()
+    dialogue_frame: DialogueFrame | None = None
+    proposed_actions: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,7 +77,7 @@ class TurnLoop(Protocol):
         hass: HomeAssistant,
         context: TurnLoopContext,
         services: TurnLoopServices,
-    ) -> LocalCapabilityResult | None:
+    ) -> TurnLoopResult | None:
         """Run without committing a response or writing traces."""
 
 
@@ -67,11 +97,106 @@ class DeterministicCapabilityLoop:
         hass: HomeAssistant,
         context: TurnLoopContext,
         services: TurnLoopServices,
-    ) -> LocalCapabilityResult | None:
-        return await services.execute_local_capability(
+    ) -> TurnLoopResult | None:
+        capability = await services.execute_local_capability(
             hass,
             context.text,
             context.route_decision,
+        )
+        if capability is None or not capability.handled:
+            return None
+        trace_attrs = capability.trace_attrs()
+        action_trace = trace_attrs.get("action_trace")
+        action_trace = action_trace if isinstance(action_trace, dict) else {}
+        proposed_actions = tuple(
+            dict(action)
+            for action in action_trace.get("proposed_actions", ())
+            if isinstance(action, dict)
+        )
+        events = [
+            TurnLoopTraceEvent(
+                stage="local_capability_execute",
+                status={"executed": "ok", "partial": "warning"}.get(
+                    capability.status, capability.status
+                ),
+                attrs=trace_attrs,
+            )
+        ]
+        frame = None
+        if capability.status == "clarify":
+            frame = dialogue_frame_from_local_capability(
+                context.turn_id,
+                capability.speech,
+                context.route_decision,
+                trace_attrs,
+            )
+            events.append(
+                TurnLoopTraceEvent(
+                    stage="local_route_clarify",
+                    attrs={
+                        "llm_used": False,
+                        "tools_used": [],
+                        "tools_used_count": 0,
+                        **context.route_decision.as_dict(),
+                        "interaction_state": "awaiting_user_info",
+                        "prompt": capability.speech,
+                        "commitment": action_trace.get("resolution_frame", {}).get(
+                            "commitment", {}
+                        ),
+                    },
+                )
+            )
+        return TurnLoopResult(
+            status=capability.status,
+            speech=capability.speech,
+            route_kind="local_action",
+            route_model="capability_executor",
+            trace_events=tuple(events),
+            dialogue_frame=frame,
+            proposed_actions=proposed_actions,
+        )
+
+
+class ClarificationDialogueLoop:
+    """Propose a local clarification without owning dialogue state or commit."""
+
+    name = "clarification_dialogue"
+
+    def matches(self, context: TurnLoopContext) -> bool:
+        decision = context.route_decision
+        return decision.route == "local_clarify" and decision.next_action in {
+            "ask_location_permission",
+            "clarify",
+        }
+
+    async def run(
+        self,
+        _hass: HomeAssistant,
+        context: TurnLoopContext,
+        _services: TurnLoopServices,
+    ) -> TurnLoopResult:
+        decision = context.route_decision
+        prompt = (
+            decision.user_visible_prompt or "我还不确定你想让我做什么，可以换个说法吗？"
+        )
+        return TurnLoopResult(
+            status="clarify",
+            speech=prompt,
+            route_kind="local_clarify",
+            route_model="capability_router",
+            trace_events=(
+                TurnLoopTraceEvent(
+                    stage="local_route_clarify",
+                    attrs={
+                        "llm_used": False,
+                        "tools_used": [],
+                        "tools_used_count": 0,
+                        **decision.as_dict(),
+                        "interaction_state": "awaiting_user_info",
+                    },
+                ),
+            ),
+            dialogue_frame=dialogue_frame_from_route(context.turn_id, decision),
         )
 
 

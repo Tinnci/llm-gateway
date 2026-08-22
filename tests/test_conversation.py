@@ -623,6 +623,17 @@ async def test_nearby_place_query_without_location_asks_permission_locally(
     assert trace["first_response_audio"].get("scheduled") is not True
     assert trace["first_response_audio"]["suppressed_reason"] == "missing_location"
     assert not trace["tools"]
+    loop_selected = next(
+        span for span in trace["timeline_spans"] if span["stage"] == "loop_selected"
+    )
+    assert loop_selected["attrs"]["loop"] == "clarification_dialogue"
+    loop_completed = next(
+        span for span in trace["timeline_spans"] if span["stage"] == "loop_completed"
+    )
+    assert loop_completed["attrs"] == {
+        "loop": "clarification_dialogue",
+        "outcome": "clarify",
+    }
     clarify_span = next(
         span
         for span in trace["timeline_spans"]

@@ -250,6 +250,59 @@ def dialogue_frame_from_route(
     )
 
 
+def dialogue_frame_from_local_capability(
+    turn_id: str,
+    prompt: str,
+    route: RouteDecision,
+    trace_attrs: dict[str, Any],
+) -> DialogueFrame | None:
+    """Create a transactional frame from a target-resolution proposal."""
+    action_trace = trace_attrs.get("action_trace")
+    if not isinstance(action_trace, dict):
+        return None
+    resolution_frame = action_trace.get("resolution_frame")
+    if not isinstance(resolution_frame, dict):
+        return None
+    commitment = resolution_frame.get("commitment")
+    referents = resolution_frame.get("referents")
+    if (
+        resolution_frame.get("frame_type") != "home_control"
+        or not isinstance(commitment, dict)
+        or commitment.get("state")
+        not in {"targeted_clarify", "list_candidates", "ask_missing_slot"}
+        or not isinstance(referents, list)
+        or not referents
+        or not isinstance(referents[0], dict)
+        or referents[0].get("slot") != "target_device"
+    ):
+        return None
+    candidates = tuple(
+        dict(candidate)
+        for candidate in referents[0].get("candidates", ())
+        if isinstance(candidate, dict)
+    )
+    if not candidates:
+        return None
+    return DialogueFrame(
+        id=f"{turn_id}:target_device",
+        frame_type="home_control",
+        operation=str(resolution_frame.get("operation") or ""),
+        status=(
+            "awaiting_confirmation"
+            if commitment.get("state") == "targeted_clarify"
+            else "awaiting_referent"
+        ),
+        missing_referents=("target_device",),
+        last_prompt=prompt,
+        candidates=candidates,
+        route_decision={
+            **route.as_dict(),
+            "resolution_frame": dict(resolution_frame),
+            "commitment": dict(commitment),
+        },
+    )
+
+
 def pending_task_from_route(turn_id: str, route: RouteDecision) -> PendingTask | None:
     """Create a pending task for routes that need user-supplied slots."""
     if "location_hint" not in route.missing_requirements:

@@ -113,7 +113,7 @@ async def async_replay_turn(
     )
     if result is None:
         raise ReplayError("not_replayable", "turn produced no dry-run proposal")
-    proposed_actions = list(result.action_trace.get("proposed_actions") or [])
+    proposed_actions = list(result.proposed_actions)
     recorder.mark(
         fork_id,
         "loop_completed",

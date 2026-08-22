@@ -38,9 +38,7 @@ from .const import (
     TOOL_LOOP_GUARD_SPEECH,
 )
 from .dialogue import (
-    DialogueFrame,
     DialogueFrameStack,
-    dialogue_frame_from_route,
     interaction_state_for_policy_block,
     resolve_dialogue_transaction,
 )
@@ -79,6 +77,7 @@ from .search import (
 from .static_context import render_device_inventory, render_scalar_state_answer
 from .traces import TraceTurn
 from .turn_loops import (
+    ClarificationDialogueLoop,
     DeterministicCapabilityLoop,
     TurnLoopContext,
     TurnLoopServices,
@@ -442,64 +441,6 @@ def _resolution_frame_for_route(
             answerability=str(route_decision.metadata.get("answerability") or ""),
         )
     return None
-
-
-def _dialogue_frame_from_local_capability(  # noqa: PLR0911 - validation exits keep the frame seam explicit.
-    turn_id: str,
-    prompt: str,
-    route_decision: RouteDecision,
-    trace_attrs: dict[str, Any],
-) -> DialogueFrame | None:
-    """Create a transactional frame from a local target-resolution clarification."""
-    action_trace = trace_attrs.get("action_trace")
-    if not isinstance(action_trace, dict):
-        return None
-    resolution_frame = action_trace.get("resolution_frame")
-    if not isinstance(resolution_frame, dict):
-        return None
-    if resolution_frame.get("frame_type") != "home_control":
-        return None
-    commitment = resolution_frame.get("commitment")
-    if not isinstance(commitment, dict):
-        return None
-    if commitment.get("state") not in {
-        "targeted_clarify",
-        "list_candidates",
-        "ask_missing_slot",
-    }:
-        return None
-    referents = resolution_frame.get("referents")
-    if not isinstance(referents, list) or not referents:
-        return None
-    referent = referents[0]
-    if not isinstance(referent, dict) or referent.get("slot") != "target_device":
-        return None
-    candidates = tuple(
-        dict(candidate)
-        for candidate in referent.get("candidates", ())
-        if isinstance(candidate, dict)
-    )
-    if not candidates:
-        return None
-    operation = str(resolution_frame.get("operation") or "")
-    return DialogueFrame(
-        id=f"{turn_id}:target_device",
-        frame_type="home_control",
-        operation=operation,
-        status=(
-            "awaiting_confirmation"
-            if commitment.get("state") == "targeted_clarify"
-            else "awaiting_referent"
-        ),
-        missing_referents=("target_device",),
-        last_prompt=prompt,
-        candidates=candidates,
-        route_decision={
-            **route_decision.as_dict(),
-            "resolution_frame": dict(resolution_frame),
-            "commitment": dict(commitment),
-        },
-    )
 
 
 def _local_live_context_tool_args(text: str) -> dict[str, Any]:
@@ -926,9 +867,10 @@ class LLMGatewayConversationEntity(
         loop_context = TurnLoopContext(
             text=effective_text,
             route_decision=route_decision,
+            turn_id=run_id,
         )
         selected_loop = select_turn_loop(
-            (DeterministicCapabilityLoop(),),
+            (DeterministicCapabilityLoop(), ClarificationDialogueLoop()),
             loop_context,
         )
         if selected_loop is not None:
@@ -938,77 +880,53 @@ class LLMGatewayConversationEntity(
                 "loop_selected",
                 attrs={"loop": selected_loop.name},
             )
-            local_capability_result = await selected_loop.run(
+            loop_result = await selected_loop.run(
                 self.hass,
                 loop_context,
                 TurnLoopServices(),
             )
-            if local_capability_result is not None and local_capability_result.handled:
-                local_capability_trace = local_capability_result.trace_attrs()
-                self._mark_run(
-                    runtime,
-                    run_id,
-                    "local_capability_execute",
-                    status={
-                        "executed": "ok",
-                        "partial": "warning",
-                    }.get(
-                        local_capability_result.status,
-                        local_capability_result.status,
-                    ),
-                    attrs=local_capability_trace,
-                )
+            if loop_result is not None:
+                frame = loop_result.dialogue_frame
+                if frame is not None:
+                    stack = self._dialogue_frames.setdefault(
+                        pending_key,
+                        DialogueFrameStack(),
+                    )
+                    stack.push(frame)
+                for event in loop_result.trace_events:
+                    attrs = dict(event.attrs)
+                    if event.stage == "local_route_clarify":
+                        attrs.update(
+                            {
+                                "dialogue_frame": frame.as_dict() if frame else {},
+                                "dialogue_frame_stack": (
+                                    self._dialogue_frames[pending_key].as_dict()
+                                    if frame is not None
+                                    and pending_key in self._dialogue_frames
+                                    else {}
+                                ),
+                            }
+                        )
+                    self._mark_run(
+                        runtime,
+                        run_id,
+                        event.stage,
+                        status=event.status,
+                        attrs=attrs,
+                    )
                 self._mark_run(
                     runtime,
                     run_id,
                     "loop_completed",
                     attrs={
                         "loop": selected_loop.name,
-                        "outcome": local_capability_result.status,
+                        "outcome": loop_result.status,
                     },
                 )
-                if local_capability_result.status == "clarify":
-                    frame = _dialogue_frame_from_local_capability(
-                        run_id,
-                        local_capability_result.speech,
-                        route_decision,
-                        local_capability_trace,
-                    )
-                    if frame is not None:
-                        stack = self._dialogue_frames.setdefault(
-                            pending_key,
-                            DialogueFrameStack(),
-                        )
-                        stack.push(frame)
-                    self._mark_run(
-                        runtime,
-                        run_id,
-                        "local_route_clarify",
-                        attrs={
-                            "llm_used": False,
-                            "tools_used": [],
-                            "tools_used_count": 0,
-                            **route_decision.as_dict(),
-                            "interaction_state": "awaiting_user_info",
-                            "prompt": local_capability_result.speech,
-                            "dialogue_frame": frame.as_dict() if frame else {},
-                            "dialogue_frame_stack": (
-                                self._dialogue_frames[pending_key].as_dict()
-                                if frame is not None
-                                and pending_key in self._dialogue_frames
-                                else {}
-                            ),
-                            "commitment": (
-                                local_capability_trace.get("action_trace", {})
-                                .get("resolution_frame", {})
-                                .get("commitment", {})
-                            ),
-                        },
-                    )
                 async for _tool_result in chat_log.async_add_assistant_content(
                     conversation.AssistantContent(
                         agent_id=self.entity_id,
-                        content=local_capability_result.speech,
+                        content=loop_result.speech,
                     )
                 ):
                     pass
@@ -1017,8 +935,8 @@ class LLMGatewayConversationEntity(
                     chat_log,
                     started,
                     _local_route_trace(
-                        "local_action",
-                        "capability_executor",
+                        loop_result.route_kind,
+                        loop_result.route_model,
                         first_response,
                         route_decision,
                     ),
@@ -1050,56 +968,6 @@ class LLMGatewayConversationEntity(
                 _local_route_trace(
                     "local_action",
                     "capability_executor",
-                    first_response,
-                    route_decision,
-                ),
-                run_id,
-                turn_token,
-            )
-        if route_decision.next_action in {"ask_location_permission", "clarify"}:
-            prompt = (
-                route_decision.user_visible_prompt
-                or "我还不确定你想让我做什么，可以换个说法吗？"
-            )
-            frame = dialogue_frame_from_route(run_id, route_decision)
-            if frame is not None:
-                stack = self._dialogue_frames.setdefault(
-                    pending_key,
-                    DialogueFrameStack(),
-                )
-                stack.push(frame)
-            self._mark_run(
-                runtime,
-                run_id,
-                "local_route_clarify",
-                attrs={
-                    "llm_used": False,
-                    "tools_used": [],
-                    "tools_used_count": 0,
-                    **route_decision.as_dict(),
-                    "dialogue_frame": frame.as_dict() if frame else {},
-                    "dialogue_frame_stack": (
-                        self._dialogue_frames[pending_key].as_dict()
-                        if pending_key in self._dialogue_frames
-                        else {}
-                    ),
-                    "interaction_state": "awaiting_user_info",
-                },
-            )
-            async for _tool_result in chat_log.async_add_assistant_content(
-                conversation.AssistantContent(
-                    agent_id=self.entity_id,
-                    content=prompt,
-                )
-            ):
-                pass
-            return await self._async_finalize_turn(
-                user_input,
-                chat_log,
-                started,
-                _local_route_trace(
-                    "local_clarify",
-                    "capability_router",
                     first_response,
                     route_decision,
                 ),
