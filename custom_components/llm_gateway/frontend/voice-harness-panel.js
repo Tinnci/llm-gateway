@@ -5243,7 +5243,9 @@ const styles = `
     padding: 6px 10px;
     border: 1px solid var(--divider-color, #c0c0c0);
     border-radius: 8px;
-    background: var(--card-bg-color, #fff);
+    /* Canonical HA theme variable — the closed picker pill must follow
+     * the active theme like every other surface (dark mode regression). */
+    background: var(--card-background-color, var(--primary-background-color, #fff));
     color: inherit;
     cursor: pointer;
     font-size: 14px;
@@ -5272,7 +5274,7 @@ const styles = `
     left: 0;
     right: 0;
     color: var(--primary-text-color, #1a1a1a);
-    background: var(--card-bg-color, var(--primary-background-color, #fff));
+    background: var(--card-background-color, var(--primary-background-color, #fff));
     border: 1px solid var(--divider-color, #b0b0b0);
     border-radius: 10px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
