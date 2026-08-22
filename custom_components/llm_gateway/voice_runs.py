@@ -11,6 +11,11 @@ from homeassistant.util import ulid
 
 RUN_LIMIT = 40
 STALE_RUNNING_MS = 10 * 60 * 1000
+EVENT_TYPES = {
+    "barge_in_requested": "playback.interrupt.requested",
+    "stale_result_discarded": "gateway.result.late_dropped",
+    "turn_cancelled": "gateway.turn.superseded",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,7 +36,10 @@ class VoiceRunEvent:
         return {
             "event_id": self.event_id,
             "turn_id": self.turn_id,
-            "event_type": f"gateway.{self.stage.replace('_', '.')}",
+            "event_type": EVENT_TYPES.get(
+                self.stage,
+                f"gateway.{self.stage.replace('_', '.')}",
+            ),
             "source": "llm-gateway",
             "source_sequence": self.sequence,
             "occurred_at": self.occurred_at,

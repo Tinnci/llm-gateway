@@ -105,6 +105,7 @@ class TraceStore:
         diagnostic_snapshot = _diagnostic_snapshot_summary(
             satellite_diagnostic_snapshot(self._hass)
         )
+        event_stream = _event_stream(turn.timeline, diagnostic_snapshot)
         record = {
             "id": record_id,
             "run_id": record_id,
@@ -132,6 +133,7 @@ class TraceStore:
                 turn.status, turn.latency_ms, timeline_spans
             ),
             "timeline": turn.timeline,
+            "event_stream": event_stream,
             "timeline_spans": timeline_spans,
             "critical_path": _critical_path(timeline_spans, verifier_mode),
             "critical_path_flags": _critical_path_flags(timeline_spans),
@@ -531,6 +533,76 @@ def _timeline_spans(timeline: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return spans
 
 
+def _event_stream(
+    timeline: list[dict[str, Any]],
+    diagnostic_snapshot: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Project local events and correlated satellite evidence into one stream."""
+    events = [dict(event) for event in timeline if isinstance(event, dict)]
+    turn_id = str(events[0].get("turn_id") or "") if events else ""
+    generated_at = str(diagnostic_snapshot.get("generated_at") or "")
+
+    asr = diagnostic_snapshot.get("asr")
+    endpoint = asr.get("endpoint") if isinstance(asr, dict) else None
+    if isinstance(endpoint, dict) and endpoint.get("endpoint_detected") is True:
+        evidence = _external_event(
+            turn_id=turn_id,
+            event_type="asr.endpoint.detected",
+            occurred_at=generated_at,
+            payload=endpoint,
+        )
+        events.insert(0, evidence)
+        if len(events) > 1 and not events[1].get("caused_by"):
+            events[1]["caused_by"] = evidence["event_id"]
+
+    interrupt = diagnostic_snapshot.get("playback_interrupt")
+    if isinstance(interrupt, dict) and interrupt.get("phase") == "interrupted":
+        requested = next(
+            (
+                event
+                for event in reversed(events)
+                if event.get("event_type") == "playback.interrupt.requested"
+            ),
+            None,
+        )
+        events.append(
+            _external_event(
+                turn_id=turn_id,
+                event_type="playback.interrupt.observed",
+                occurred_at=generated_at,
+                payload=interrupt,
+                caused_by=str(requested.get("event_id") or "")
+                if isinstance(requested, dict)
+                else "",
+            )
+        )
+    return events
+
+
+def _external_event(
+    *,
+    turn_id: str,
+    event_type: str,
+    occurred_at: str,
+    payload: dict[str, Any],
+    caused_by: str = "",
+) -> dict[str, Any]:
+    """Build trace-safe evidence whose ordering is inferred from a snapshot."""
+    return {
+        "event_id": ulid.ulid_now(),
+        "turn_id": turn_id,
+        "event_type": event_type,
+        "source": str(payload.get("source") or "unknown"),
+        "source_sequence": None,
+        "occurred_at": occurred_at,
+        "monotonic_ms": None,
+        "caused_by": caused_by,
+        "privacy": "trace_safe",
+        "correlation": "snapshot_time_window",
+        "payload": _bound_mapping(payload, limit=1200),
+    }
+
+
 def _tool_calls_by_iteration(
     timeline_spans: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -829,6 +901,10 @@ def _diagnostic_snapshot_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
         "pipewire_graph": _bound_mapping(snapshot.get("pipewire_graph"), limit=1200),
         "asr": _bound_mapping(snapshot.get("asr"), limit=1200),
         "tts": _bound_mapping(snapshot.get("tts"), limit=1200),
+        "playback_interrupt": _bound_mapping(
+            snapshot.get("playback_interrupt"),
+            limit=1200,
+        ),
         "acoustic_measurement": _bound_mapping(
             snapshot.get("acoustic_measurement"),
             limit=1200,

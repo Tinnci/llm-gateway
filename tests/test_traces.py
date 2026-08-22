@@ -9,6 +9,7 @@ from custom_components.llm_gateway.const import (
     CONF_TRACE_RETENTION_HOURS,
 )
 from custom_components.llm_gateway.traces import TraceStore, TraceTurn
+from custom_components.llm_gateway.voice_runs import VoiceRunRecorder
 
 
 async def test_trace_store_is_disabled_by_default(hass):
@@ -166,6 +167,69 @@ async def test_trace_store_attaches_satellite_diagnostic_snapshot(hass):
     assert diagnostic["pipewire_graph"]["aec_enabled"] is True
     assert diagnostic["tts"]["last_synthesis_trace"]["message_chars"] == 8
     assert diagnostic["acoustic_measurement"]["echo_suppression_db"] == 14.2
+
+
+async def test_trace_store_projects_endpoint_and_interrupt_evidence(hass):
+    hass.states.async_set(
+        "sensor.kukui_diagnostic_snapshot",
+        "ok",
+        {
+            "snapshot": {
+                "schema_version": 1,
+                "generated_at": "2026-08-22T08:00:00+00:00",
+                "asr": {
+                    "endpoint": {
+                        "endpoint_detected": True,
+                        "source": "doubao-asr",
+                        "endpoint_latency_ms": 930,
+                    }
+                },
+                "playback_interrupt": {
+                    "phase": "interrupted",
+                    "source": "kukui-display-agent",
+                    "request_id": "interrupt-1",
+                    "barge_in_stop_latency_ms": 42,
+                },
+                "checks": [],
+            }
+        },
+    )
+    recorder = VoiceRunRecorder()
+    turn_id = recorder.start(conversation_id="conv-1", user_text="停")
+    recorder.mark(turn_id, "barge_in_requested", attrs={"request_id": "interrupt-1"})
+    timeline = recorder.finish(turn_id, status="complete")
+    store = TraceStore(hass, "entry-event-stream")
+    await store.async_load()
+
+    await store.async_record_turn(
+        {CONF_DIAGNOSTIC_TRACES: True},
+        TraceTurn(
+            conversation_id="conv-1",
+            user_text="停",
+            assistant_text="已停止。",
+            route={"kind": "local_control"},
+            latency_ms=50,
+            status="complete",
+            run_id=turn_id,
+            timeline=timeline,
+            raw_payload={"messages": []},
+        ),
+    )
+
+    events = store.snapshot()["records"][0]["event_stream"]
+    endpoint, received = events[:2]
+    requested = next(
+        event
+        for event in events
+        if event["event_type"] == "playback.interrupt.requested"
+    )
+    observed = events[-1]
+    assert endpoint["event_type"] == "asr.endpoint.detected"
+    assert endpoint["correlation"] == "snapshot_time_window"
+    assert received["caused_by"] == endpoint["event_id"]
+    assert observed["event_type"] == "playback.interrupt.observed"
+    assert observed["caused_by"] == requested["event_id"]
+    assert observed["payload"]["barge_in_stop_latency_ms"] == 42
 
 
 async def test_trace_store_keeps_blocked_diagnostics_distinct(hass):

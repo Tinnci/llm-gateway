@@ -57,6 +57,22 @@ def test_voice_run_recorder_reports_running_stage() -> None:
     assert run["running_duration_ms"] >= 0
 
 
+def test_voice_run_recorder_normalizes_causal_event_types() -> None:
+    recorder = VoiceRunRecorder()
+    turn_id = recorder.start(conversation_id="conv-1", user_text="旧请求")
+    recorder.mark(turn_id, "turn_cancelled")
+    recorder.mark(turn_id, "stale_result_discarded")
+    recorder.mark(turn_id, "barge_in_requested")
+
+    events = recorder.timeline(turn_id)
+
+    assert [event["event_type"] for event in events[-3:]] == [
+        "gateway.turn.superseded",
+        "gateway.result.late_dropped",
+        "playback.interrupt.requested",
+    ]
+
+
 def test_voice_run_recorder_expires_stale_running_runs(monkeypatch) -> None:
     recorder = VoiceRunRecorder(limit=2)
     monkeypatch.setattr(
