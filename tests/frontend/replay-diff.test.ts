@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { replayDiffSections, resolveReplayPair } from "../../custom_components/llm_gateway/frontend/voice-harness-replay-diff";
+import { replayDiffSections, resolveReplayPair, shouldVirtualizeTrace } from "../../custom_components/llm_gateway/frontend/voice-harness-replay-diff";
 
 test("compares route, actions, speech, and event trajectory", () => {
   const sections = replayDiffSections(
@@ -41,4 +41,10 @@ test("restores the latest persisted replay lineage", () => {
   expect(resolveReplayPair([latestFork, olderFork, source])?.forkId).toBe("fork-2");
   expect(resolveReplayPair([latestFork, olderFork, source], { sourceId: "source", forkId: "fork-1" })?.forkId).toBe("fork-1");
   expect(resolveReplayPair([latestFork])).toBeNull();
+});
+
+test("virtualization requires measured scale", () => {
+  expect(shouldVirtualizeTrace(9, 15)).toBe(false);
+  expect(shouldVirtualizeTrace(200, 15)).toBe(true);
+  expect(shouldVirtualizeTrace(9, 1000)).toBe(true);
 });
