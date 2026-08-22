@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
@@ -31,6 +30,11 @@ from homeassistant.helpers.selector import (
 )
 
 from .api import LLMGatewayAuthError, LLMGatewayClient, LLMGatewayError
+from .config_editor import (
+    normalize_json_option,
+    normalize_optional_secret,
+    normalize_provider_profiles_option,
+)
 from .const import (
     CONF_BASE_URL,
     CONF_BRAVE_API_KEY,
@@ -89,7 +93,6 @@ from .const import (
     ROUTING_MODE_AUTO,
     ROUTING_MODES,
 )
-from .providers import normalize_provider_profiles_json
 
 if TYPE_CHECKING:
     from .config_entry import LLMGatewayConfigEntry
@@ -158,15 +161,15 @@ class LLMGatewayOptionsFlow(OptionsFlow):
                 CONF_MID_EXTRA_BODY,
                 CONF_DEEP_EXTRA_BODY,
             ):
-                _normalize_json_option(user_input, errors, field)
-            _normalize_provider_profiles_option(user_input, errors)
+                normalize_json_option(user_input, errors, field)
+            normalize_provider_profiles_option(user_input, errors)
             for field in (
                 CONF_TAVILY_API_KEY,
                 CONF_SERPER_API_KEY,
                 CONF_FIRECRAWL_API_KEY,
                 CONF_BRAVE_API_KEY,
             ):
-                _normalize_optional_string(user_input, field)
+                normalize_optional_secret(user_input, field)
 
             if not errors:
                 return self.async_create_entry(title="", data=user_input)
@@ -377,41 +380,3 @@ class LLMGatewayOptionsFlow(OptionsFlow):
             data_schema=self.add_suggested_values_to_schema(schema, suggested),
             errors=errors,
         )
-
-
-def _normalize_json_option(
-    user_input: dict[str, Any], errors: dict[str, str], field: str
-) -> None:
-    raw = (user_input.get(field) or "").strip()
-    if not raw:
-        user_input.pop(field, None)
-        return
-
-    try:
-        json.loads(raw)
-    except ValueError:
-        errors[field] = "invalid_json"
-    else:
-        user_input[field] = raw
-
-
-def _normalize_provider_profiles_option(
-    user_input: dict[str, Any], errors: dict[str, str]
-) -> None:
-    raw = (user_input.get(CONF_PROVIDER_PROFILES) or "").strip()
-    if not raw:
-        user_input.pop(CONF_PROVIDER_PROFILES, None)
-        return
-
-    try:
-        user_input[CONF_PROVIDER_PROFILES] = normalize_provider_profiles_json(raw)
-    except ValueError:
-        errors[CONF_PROVIDER_PROFILES] = "invalid_provider_profiles"
-
-
-def _normalize_optional_string(user_input: dict[str, Any], field: str) -> None:
-    value = (user_input.get(field) or "").strip()
-    if value:
-        user_input[field] = value
-    else:
-        user_input.pop(field, None)

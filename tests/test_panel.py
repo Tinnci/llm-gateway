@@ -6,9 +6,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from homeassistant.components import frontend
+from homeassistant.const import CONF_API_KEY
 from homeassistant.setup import async_setup_component
 
 from custom_components.llm_gateway.const import (
+    CONF_BASE_URL,
     CONF_CHAT_MODEL,
     CONF_DIAGNOSTIC_TRACES,
     CONF_FAST_CHAT_TIMEOUT,
@@ -19,9 +21,12 @@ from custom_components.llm_gateway.const import (
     CONF_FIRST_RESPONSE_PLAYBACK_ADAPTER,
     CONF_FIRST_RESPONSE_TTS_ENTITY,
     CONF_PROVIDER_PROFILES,
+    CONF_SEARCH_ENABLED,
+    CONF_TAVILY_API_KEY,
     CONF_TRACE_INCLUDE_RAW_MESSAGES,
     CONF_TRACE_MAX_RUNS,
     CONF_TRACE_RETENTION_HOURS,
+    DEFAULT_BASE_URL,
     RECOMMENDED_FAST_MODEL,
     ROUTING_MODE_MID,
 )
@@ -69,6 +74,115 @@ async def test_panel_static_module_is_served(hass, hass_client):
     assert "voice-harness-panel" in body
     assert "Phosh lock screen is running" in body
     assert "Phosh 锁屏运行中" in body
+
+
+async def test_harness_config_api_get_redacts_secrets(
+    hass, hass_client, mock_config_entry
+):
+    """Config GET returns write-only secret fields only as has_* booleans."""
+    assert await async_setup_component(hass, "http", {})
+    mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        options={
+            **mock_config_entry.options,
+            CONF_TAVILY_API_KEY: "tavily-secret",
+            CONF_PROVIDER_PROFILES: (
+                '{"providers":[{"name":"fallback","base_url":"https://fallback.test/v1",'
+                '"api_key":"profile-secret","models":{"fast":"fallback-fast"}}]}'
+            ),
+        },
+    )
+    await async_setup_panel(hass)
+    client = await hass_client()
+
+    response = await client.get("/api/llm_gateway/harness/config")
+
+    assert response.status == 200
+    data = await response.json()
+    entry = data["entries"][0]
+    assert entry["base_url"] == DEFAULT_BASE_URL
+    assert entry["has_api_key"] is True
+    assert "api_key" not in entry
+    assert entry["options"]["has_tavily_api_key"] is True
+    assert "tavily_api_key" not in entry["options"]
+    profiles = entry["options"]["provider_profiles"]
+    assert profiles[0]["name"] == "fallback"
+    assert profiles[0]["has_api_key"] is True
+    assert "api_key" not in profiles[0]
+
+
+async def test_harness_config_api_post_updates_entry(
+    hass, hass_client, aioclient_mock, mock_config_entry
+):
+    """Config POST validates provider credentials and updates the entry."""
+    assert await async_setup_component(hass, "http", {})
+    aioclient_mock.get(
+        "https://example.test/v1/models",
+        json={"data": [{"id": "m1"}, {"id": "m2"}]},
+    )
+    mock_config_entry.add_to_hass(hass)
+    await async_setup_panel(hass)
+    client = await hass_client()
+
+    response = await client.post(
+        "/api/llm_gateway/harness/config",
+        json={
+            "entry_id": mock_config_entry.entry_id,
+            "data": {
+                "base_url": "https://example.test/v1",
+                "api_key": "new-key",
+            },
+            "options": {
+                "routing_mode": ROUTING_MODE_MID,
+                "models": {"fast": "m1", "mid": "m2", "deep": "m2"},
+                "max_tokens": {"fast": 512, "mid": 1024, "deep": 2048},
+                "timeouts": {"fast": 30, "mid": 90, "deep": 180},
+                "temperature": 0.5,
+                "top_p": 0.9,
+                "search_enabled": True,
+                "llm_hass_api": [],
+                "prompt": "",
+            },
+        },
+    )
+
+    assert response.status == 200
+    data = await response.json()
+    assert data["entry"]["base_url"] == "https://example.test/v1"
+    assert data["entry"]["has_api_key"] is True
+    assert mock_config_entry.data[CONF_BASE_URL] == "https://example.test/v1"
+    assert mock_config_entry.data[CONF_API_KEY] == "new-key"
+    assert mock_config_entry.options[CONF_FAST_MODEL] == "m1"
+    assert mock_config_entry.options[CONF_SEARCH_ENABLED] is True
+
+
+async def test_harness_config_api_rejects_invalid_connection(
+    hass, hass_client, aioclient_mock, mock_config_entry
+):
+    """Config POST keeps the old entry when provider credentials are invalid."""
+    assert await async_setup_component(hass, "http", {})
+    aioclient_mock.get("https://bad.test/v1/models", status=401)
+    mock_config_entry.add_to_hass(hass)
+    await async_setup_panel(hass)
+    client = await hass_client()
+
+    response = await client.post(
+        "/api/llm_gateway/harness/config",
+        json={
+            "entry_id": mock_config_entry.entry_id,
+            "data": {
+                "base_url": "https://bad.test/v1",
+                "api_key": "bad-key",
+            },
+        },
+    )
+
+    assert response.status == 400
+    data = await response.json()
+    assert data["code"] == "invalid_auth"
+    assert mock_config_entry.data[CONF_BASE_URL] == DEFAULT_BASE_URL
+    assert mock_config_entry.data[CONF_API_KEY] == "test-key"
 
 
 async def test_harness_status_api(hass, hass_client):

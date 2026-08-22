@@ -66,6 +66,7 @@ import {
 const TABS = [
   ["runs", "tab.runs", "mdi:play-circle-outline"],
   ["settings", "tab.settings", "mdi:tune-variant"],
+  ["config", "tab.config", "mdi:cog-outline"],
   ["satellite", "tab.satellite", "mdi:microphone-settings"],
   ["policies", "tab.policies", "mdi:shield-check-outline"],
   ["scenarios", "tab.scenarios", "mdi:clipboard-text-search-outline"],
@@ -105,6 +106,7 @@ const I18N = {
     "common.disabled": "Disabled",
     "tab.runs": "Runs",
     "tab.settings": "Settings",
+    "tab.config": "Integration config",
     "tab.satellite": "Satellite",
     "tab.policies": "Prompt Policies",
     "tab.scenarios": "Scenarios",
@@ -271,6 +273,37 @@ const I18N = {
     "settings.api_key_missing": "Not configured",
     "settings.api_fallbacks": "Fallback providers",
     "settings.api_open_options": "Open Home Assistant options",
+    "config.title": "Integration configuration",
+    "config.description": "Edit the full LLM Gateway config entry. Secrets are write-only: leave a secret field empty to keep its current value.",
+    "config.connection": "Connection",
+    "config.base_url": "Base URL",
+    "config.api_key": "API key",
+    "config.api_key_hint": "Leave empty to keep the current API key.",
+    "config.test_connection": "Test connection",
+    "config.testing_connection": "Testing connection…",
+    "config.connection_ok": "Connection works.",
+    "config.connection_failed": "Connection failed: {message}",
+    "config.models": "Models",
+    "config.refresh_models": "Refresh candidates from /v1/models",
+    "config.routing_budgets": "Routing and budgets",
+    "config.sampling": "Sampling",
+    "config.extra_body": "Extra body (JSON)",
+    "config.fast_extra_body": "Fast extra body (JSON)",
+    "config.mid_extra_body": "Mid extra body (JSON)",
+    "config.deep_extra_body": "Deep extra body (JSON)",
+    "config.provider_profiles": "Provider profiles (JSON)",
+    "config.provider_profiles_hint": "Leave empty to keep existing profiles. Keys are write-only and never returned by the API.",
+    "config.provider_profiles_summary": "Configured providers",
+    "config.ha_llm_api": "HA LLM API exposure",
+    "config.ha_llm_api_hint": "Expose the LLM Gateway conversation agent to Home Assistant Assist.",
+    "config.prompt": "System prompt",
+    "config.prompt_hint": "Optional; empty clears the override.",
+    "config.search": "Search and retrieval",
+    "config.search_enabled": "Enable search",
+    "config.search_api_keys": "Search provider API keys",
+    "config.traces": "Diagnostic traces",
+    "config.first_response_audio": "First response audio",
+    "config.saved": "Configuration saved.",
     "satellite.title": "Satellite and voice controls",
     "satellite.description": "These controls use HA entities and the typed local apply API exposed by the display agent. Applying wake or mic changes restarts the local satellite path.",
     "satellite.overview": "Runtime overview",
@@ -497,6 +530,7 @@ const I18N = {
     "common.disabled": "未启用",
     "tab.runs": "运行记录",
     "tab.settings": "配置",
+    "tab.config": "集成配置",
     "tab.satellite": "卫星端",
     "tab.policies": "提示策略",
     "tab.scenarios": "场景测试",
@@ -663,6 +697,37 @@ const I18N = {
     "settings.api_key_missing": "未配置",
     "settings.api_fallbacks": "Fallback Providers",
     "settings.api_open_options": "打开 Home Assistant 集成选项",
+    "config.title": "集成配置",
+    "config.description": "编辑完整的 LLM Gateway 配置项。密钥只写不读：密钥字段留空表示保持当前值。",
+    "config.connection": "连接",
+    "config.base_url": "Base URL",
+    "config.api_key": "API Key",
+    "config.api_key_hint": "留空则保持当前 API Key。",
+    "config.test_connection": "测试连接",
+    "config.testing_connection": "正在测试连接…",
+    "config.connection_ok": "连接正常。",
+    "config.connection_failed": "连接失败：{message}",
+    "config.models": "模型",
+    "config.refresh_models": "从 /v1/models 刷新候选",
+    "config.routing_budgets": "路由与预算",
+    "config.sampling": "采样参数",
+    "config.extra_body": "额外请求体（JSON）",
+    "config.fast_extra_body": "Fast 额外请求体（JSON）",
+    "config.mid_extra_body": "Mid 额外请求体（JSON）",
+    "config.deep_extra_body": "Deep 额外请求体（JSON）",
+    "config.provider_profiles": "Provider Profiles（JSON）",
+    "config.provider_profiles_hint": "留空则保持现有 profiles；密钥只写不读，API 不会返回。",
+    "config.provider_profiles_summary": "已配置 Providers",
+    "config.ha_llm_api": "HA LLM API 暴露",
+    "config.ha_llm_api_hint": "把 LLM Gateway 会话代理暴露给 Home Assistant Assist。",
+    "config.prompt": "系统提示词",
+    "config.prompt_hint": "可选；留空会清除自定义提示词。",
+    "config.search": "搜索与检索",
+    "config.search_enabled": "启用搜索",
+    "config.search_api_keys": "搜索 Provider API Key",
+    "config.traces": "诊断记录",
+    "config.first_response_audio": "首反馈音频",
+    "config.saved": "配置已保存。",
     "satellite.title": "卫星端与语音控制",
     "satellite.description": "这些控件使用 HA 实体和 display-agent 暴露的 typed apply API。应用唤醒或麦克风改动会重启本地 satellite 链路。",
     "satellite.overview": "运行概览",
@@ -905,6 +970,9 @@ class VoiceHarnessPanel extends HTMLElement {
     this._busy = false;
     this._result = null;
     this._settingsSaved = "";
+    /** @type {any} */
+    this._configData = null;
+    this._configSaved = "";
     this._replayStatus = "";
     this._replayComparison = null;
     this._trajectoryQuery = "";
@@ -954,6 +1022,23 @@ class VoiceHarnessPanel extends HTMLElement {
     this._render();
     try {
       this._data = await this._api("GET", "llm_gateway/harness/status");
+    } catch (err) {
+      this._error = err.message || String(err);
+    } finally {
+      this._busy = false;
+      this._render();
+    }
+  }
+
+  async _loadConfig() {
+    if (!this.hass || this._busy) {
+      return;
+    }
+    this._busy = true;
+    this._error = "";
+    this._render();
+    try {
+      this._configData = await this._api("GET", "llm_gateway/harness/config");
     } catch (err) {
       this._error = err.message || String(err);
     } finally {
@@ -1142,6 +1227,9 @@ class VoiceHarnessPanel extends HTMLElement {
     if (tab) {
       if (TAB_IDS.has(tab)) {
         this._activeTab = tab;
+        if (tab === "config" && !this._configData) {
+          this._loadConfig();
+        }
       }
       this._render();
       return;
@@ -1190,6 +1278,13 @@ class VoiceHarnessPanel extends HTMLElement {
         "_blank",
         "noopener",
       );
+      return;
+    }
+    if (button.dataset.action === "test-connection") {
+      const form = button.closest("form");
+      if (form) {
+        this._testConnection(form);
+      }
       return;
     }
     const loadSampleId = button.dataset.loadSample;
@@ -1271,6 +1366,10 @@ class VoiceHarnessPanel extends HTMLElement {
       this._submitSettingsForm(form);
       return;
     }
+    if (form.dataset.form === "config") {
+      this._submitConfigForm(form);
+      return;
+    }
     if (form.dataset.form !== "scenario") {
       return;
     }
@@ -1332,6 +1431,144 @@ class VoiceHarnessPanel extends HTMLElement {
         },
       },
     });
+  }
+
+  /** @param {HTMLFormElement} form */
+  _submitConfigForm(form) {
+    const data = new FormData(form);
+    const entryId = form.dataset.entryId || "";
+    const numberValue = (name) => Number(data.get(name) || 0);
+    const optionalText = (name) => String(data.get(name) || "").trim();
+    const modelValue = (tier) => {
+      const selected = String(data.get(`${tier}_model`) || "");
+      if (selected === "__custom__" || selected === "") {
+        return String(data.get(`${tier}_model_custom`) || "").trim();
+      }
+      return selected;
+    };
+
+    const dataPayload = { base_url: optionalText("base_url") };
+    const apiKey = optionalText("api_key");
+    if (apiKey) {
+      dataPayload.api_key = apiKey;
+    }
+
+    const providerProfiles = optionalText("provider_profiles");
+    const options = {
+      routing_mode: String(data.get("routing_mode") || "auto"),
+      models: {
+        fast: modelValue("fast"),
+        mid: modelValue("mid"),
+        deep: modelValue("deep"),
+      },
+      max_tokens: {
+        fast: numberValue("fast_max_tokens"),
+        mid: numberValue("mid_max_tokens"),
+        deep: numberValue("deep_max_tokens"),
+      },
+      timeouts: {
+        fast: numberValue("fast_chat_timeout"),
+        mid: numberValue("mid_chat_timeout"),
+        deep: numberValue("deep_chat_timeout"),
+      },
+      temperature: Number(data.get("temperature") || 0),
+      top_p: Number(data.get("top_p") || 0),
+      extra_body: optionalText("extra_body"),
+      fast_extra_body: optionalText("fast_extra_body"),
+      mid_extra_body: optionalText("mid_extra_body"),
+      deep_extra_body: optionalText("deep_extra_body"),
+      llm_hass_api: data.getAll("llm_hass_api").map(String),
+      prompt: optionalText("prompt"),
+      search_enabled: data.get("search_enabled") === "on",
+      diagnostic_traces: data.get("diagnostic_traces") === "on",
+      trace_include_raw_messages: data.get("trace_include_raw_messages") === "on",
+      trace_max_runs: numberValue("trace_max_runs"),
+      trace_retention_hours: numberValue("trace_retention_hours"),
+      first_response_audio: {
+        enabled: data.get("first_response_audio_enabled") === "on",
+        adapter: this._firstResponseAdapter(data.get("first_response_adapter")),
+        local_service: optionalText("first_response_local_service"),
+        tts_entity: optionalText("first_response_tts_entity"),
+        media_player_entity: optionalText("first_response_media_player_entity"),
+      },
+    };
+
+    if (providerProfiles) {
+      options.provider_profiles = providerProfiles;
+    }
+    for (const key of [
+      "tavily_api_key",
+      "serper_api_key",
+      "firecrawl_api_key",
+      "brave_api_key",
+    ]) {
+      const value = optionalText(key);
+      if (value) {
+        options[key] = value;
+      }
+    }
+
+    this._saveConfig({ entry_id: entryId, data: dataPayload, options });
+  }
+
+  async _saveConfig(payload) {
+    this._busy = true;
+    this._error = "";
+    this._configSaved = "";
+    this._render();
+    try {
+      const result = await this._api(
+        "POST",
+        "llm_gateway/harness/config",
+        payload,
+      );
+      if (result.entry && this._configData?.entries) {
+        this._configData = {
+          ...this._configData,
+          entries: this._configData.entries.map((entry) => (
+            entry.entry_id === result.entry.entry_id ? result.entry : entry
+          )),
+        };
+      }
+      this._configSaved = this._t("config.saved");
+    } catch (err) {
+      this._error = err.message || String(err);
+    } finally {
+      this._busy = false;
+    }
+    await this._load();
+    this._render();
+  }
+
+  /** @param {HTMLFormElement} form */
+  async _testConnection(form) {
+    const data = new FormData(form);
+    const resultEl = form.querySelector("[data-test-result]");
+    if (resultEl) {
+      resultEl.textContent = this._t("config.testing_connection");
+    }
+    try {
+      await this._api(
+        "POST",
+        "llm_gateway/harness/config/test-connection",
+        {
+          entry_id: form.dataset.entryId || "",
+          data: {
+            base_url: String(data.get("base_url") || "").trim(),
+            api_key: String(data.get("api_key") || "").trim(),
+          },
+        },
+      );
+      if (resultEl) {
+        resultEl.textContent = this._t("config.connection_ok");
+      }
+    } catch (err) {
+      if (resultEl) {
+        resultEl.textContent = this._t("config.connection_failed", {
+          message: err.message || String(err),
+        });
+      }
+    }
   }
 
   _playEarcon(name) {
@@ -1405,6 +1642,9 @@ class VoiceHarnessPanel extends HTMLElement {
     }
     if (this._activeTab === "settings") {
       return this._renderSettings(entries);
+    }
+    if (this._activeTab === "config") {
+      return this._renderConfig(entries);
     }
     if (this._activeTab === "satellite") {
       return this._renderSatellite();
@@ -1772,6 +2012,261 @@ class VoiceHarnessPanel extends HTMLElement {
           </div>
         `).join("")}
       </div>
+    `;
+  }
+
+  _renderConfig(entries) {
+    if (!entries.length) {
+      return `<div class="empty">${escapeHtml(this._t("status.no_entries"))}</div>`;
+    }
+    const configEntries = Array.isArray(this._configData?.entries)
+      ? this._configData.entries
+      : [];
+    return `
+      <div class="settingsGrid">
+        ${this._configSaved ? `<div class="banner success">${escapeHtml(this._configSaved)}</div>` : ""}
+        ${entries.map((entry) => this._configForm(
+          entry,
+          configEntries.find((item) => item.entry_id === entry.entry_id) || {},
+        )).join("")}
+      </div>
+    `;
+  }
+
+  _configForm(entry, cfg) {
+    const options = cfg.options || {};
+    const candidates = Array.isArray(cfg.model_candidates)
+      ? cfg.model_candidates
+      : (this._data?.editable?.models || []);
+    const llmHassApis = Array.isArray(cfg.llm_hass_apis) ? cfg.llm_hass_apis : [];
+    const currentHassApis = Array.isArray(options.llm_hass_api)
+      ? options.llm_hass_api
+      : (options.llm_hass_api ? [options.llm_hass_api] : []);
+    const providerProfiles = Array.isArray(options.provider_profiles)
+      ? options.provider_profiles
+      : [];
+    const playbackAdapters = this._data?.editable?.first_response_playback_adapters
+      || ["local", "ha_media_player", "auto"];
+    const adapter = this._firstResponseAdapter(options.first_response_adapter);
+    return `
+      <form class="surface settingsForm" data-form="config" data-entry-id="${escapeHtml(entry.entry_id)}">
+        <div class="sectionHead">
+          <div>
+            <h2>${escapeHtml(this._t("config.title"))}</h2>
+            <div class="meta">${escapeHtml(entry.title)} · ${escapeHtml(cfg.base_url || this._t("entry.base_url_missing"))}</div>
+          </div>
+          <button class="primary" type="submit" ${this._busy ? "disabled" : ""}>
+            <ha-icon icon="mdi:content-save-outline"></ha-icon>
+            <span>${escapeHtml(this._t("common.save"))}</span>
+          </button>
+        </div>
+        <p class="settingsNote">${escapeHtml(this._t("config.description"))}</p>
+
+        <fieldset>
+          <legend>${escapeHtml(this._t("config.connection"))}</legend>
+          <label>
+            <span>${escapeHtml(this._t("config.base_url"))}</span>
+            <input name="base_url" value="${escapeHtml(cfg.base_url || "")}" autocomplete="off" required maxlength="512">
+          </label>
+          <label>
+            <span>${escapeHtml(this._t("config.api_key"))}</span>
+            <input name="api_key" type="password" placeholder="${cfg.has_api_key ? escapeHtml(this._t("config.api_key_hint")) : ""}" autocomplete="off" maxlength="512">
+          </label>
+          <button type="button" class="secondary" data-action="test-connection">
+            <ha-icon icon="mdi:lan-connect"></ha-icon>
+            <span>${escapeHtml(this._t("config.test_connection"))}</span>
+          </button>
+          <div class="meta" data-test-result></div>
+        </fieldset>
+
+        <fieldset>
+          <legend>${escapeHtml(this._t("config.models"))}</legend>
+          ${["fast", "mid", "deep"].map((tier) => {
+            const current = options[`${tier}_model`] || "";
+            const known = Array.from(new Set((candidates || []).filter(Boolean)));
+            const useCustom = Boolean(current) && !known.includes(current);
+            const pickerOptions = useCustom
+              ? known
+              : (known.includes(current) || !current ? known : [...known, current]);
+            return `
+              <div class="modelPicker">
+                <label>
+                  <span>${escapeHtml(this._t("settings.model", { tier: this._tierLabel(tier) }))}</span>
+                  <select name="${tier}_model" data-model-select="${tier}">
+                    ${pickerOptions.map((model) => `
+                      <option value="${escapeHtml(model)}" ${model === current ? "selected" : ""}>${escapeHtml(model)}</option>
+                    `).join("")}
+                    <option value="__custom__" ${useCustom ? "selected" : ""}>${escapeHtml(this._t("settings.model_custom"))}</option>
+                  </select>
+                </label>
+                <input
+                  name="${tier}_model_custom"
+                  data-model-custom="${tier}"
+                  value="${escapeHtml(useCustom ? current : "")}"
+                  placeholder="${escapeHtml(this._t("settings.model_custom_placeholder"))}"
+                  autocomplete="off"
+                  maxlength="256"
+                  ${useCustom ? "" : "hidden"}
+                >
+              </div>
+            `;
+          }).join("")}
+        </fieldset>
+
+        <fieldset>
+          <legend>${escapeHtml(this._t("config.routing_budgets"))}</legend>
+          <label>
+            <span>${escapeHtml(this._t("settings.routing_mode"))}</span>
+            <select name="routing_mode">
+              ${(this._data?.editable?.routing_modes || ["auto", "fast", "mid", "deep"]).map((mode) => `
+                <option value="${escapeHtml(mode)}" ${options.routing_mode === mode ? "selected" : ""}>${escapeHtml(this._modeLabel(mode))}</option>
+              `).join("")}
+            </select>
+          </label>
+          <div class="settingsTriples">
+            ${["fast", "mid", "deep"].map((tier) => `
+              ${this._configNumber(`${tier}_max_tokens`, this._t("settings.max_tokens", { tier: this._tierLabel(tier) }), options[`${tier}_max_tokens`] || 0, 1, 16384)}
+              ${this._configNumber(`${tier}_chat_timeout`, this._t("settings.timeout", { tier: this._tierLabel(tier) }), options[`${tier}_chat_timeout`] || 0, 5, 300)}
+            `).join("")}
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>${escapeHtml(this._t("config.sampling"))}</legend>
+          <div class="settingsTriples two">
+            ${this._configNumber("temperature", "temperature", options.temperature ?? 0, 0, 2, "0.05")}
+            ${this._configNumber("top_p", "top_p", options.top_p ?? 0, 0, 1, "0.05")}
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>${escapeHtml(this._t("config.extra_body"))}</legend>
+          <div class="settingsTriples two">
+            ${this._configTextarea("extra_body", this._t("config.extra_body"), options.extra_body || "")}
+            ${this._configTextarea("fast_extra_body", this._t("config.fast_extra_body"), options.fast_extra_body || "")}
+            ${this._configTextarea("mid_extra_body", this._t("config.mid_extra_body"), options.mid_extra_body || "")}
+            ${this._configTextarea("deep_extra_body", this._t("config.deep_extra_body"), options.deep_extra_body || "")}
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>${escapeHtml(this._t("config.provider_profiles"))}</legend>
+          ${providerProfiles.length ? `
+            <div class="providerSummary">
+              <span class="meta">${escapeHtml(this._t("config.provider_profiles_summary"))}</span>
+              ${providerProfiles.map((profile) => `
+                <span class="chip ${profile.error ? "warning" : "muted"}">
+                  ${escapeHtml(profile.name || profile.error || "")} · ${escapeHtml(profile.base_url || "")} · ${profile.has_api_key ? "key" : "no key"}
+                </span>
+              `).join("")}
+            </div>
+          ` : ""}
+          <label>
+            <span>${escapeHtml(this._t("config.provider_profiles"))}</span>
+            <textarea name="provider_profiles" rows="6" placeholder="${escapeHtml(this._t("config.provider_profiles_hint"))}"></textarea>
+            <small>${escapeHtml(this._t("config.provider_profiles_hint"))}</small>
+          </label>
+        </fieldset>
+
+        <fieldset>
+          <legend>${escapeHtml(this._t("config.ha_llm_api"))}</legend>
+          <p class="settingsNote">${escapeHtml(this._t("config.ha_llm_api_hint"))}</p>
+          ${llmHassApis.map((api) => `
+            <label class="checkRow">
+              <input name="llm_hass_api" type="checkbox" value="${escapeHtml(api.id)}" ${currentHassApis.includes(api.id) ? "checked" : ""}>
+              <span>${escapeHtml(api.name)}</span>
+            </label>
+          `).join("") || `<span class="meta">${escapeHtml(this._t("settings.empty"))}</span>`}
+          <label>
+            <span>${escapeHtml(this._t("config.prompt"))}</span>
+            <textarea name="prompt" rows="6" placeholder="${escapeHtml(this._t("config.prompt_hint"))}">${escapeHtml(options.prompt || "")}</textarea>
+          </label>
+        </fieldset>
+
+        <fieldset>
+          <legend>${escapeHtml(this._t("config.search"))}</legend>
+          <label class="checkRow">
+            <input name="search_enabled" type="checkbox" ${options.search_enabled ? "checked" : ""}>
+            <span>${escapeHtml(this._t("config.search_enabled"))}</span>
+          </label>
+          <div class="settingsTriples two">
+            ${["tavily", "serper", "firecrawl", "brave"].map((provider) => {
+              const field = `${provider}_api_key`;
+              const configured = options[`has_${field}`];
+              return `
+                <label>
+                  <span>${escapeHtml(provider)} API key</span>
+                  <input name="${field}" type="password" placeholder="${configured ? escapeHtml(this._t("config.api_key_hint")) : ""}" autocomplete="off" maxlength="512">
+                </label>
+              `;
+            }).join("")}
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>${escapeHtml(this._t("config.traces"))}</legend>
+          <label class="checkRow">
+            <input name="diagnostic_traces" type="checkbox" ${options.diagnostic_traces ? "checked" : ""}>
+            <span>${escapeHtml(this._t("settings.diagnostic_traces"))}</span>
+          </label>
+          <label class="checkRow">
+            <input name="trace_include_raw_messages" type="checkbox" ${options.trace_include_raw_messages ? "checked" : ""}>
+            <span>${escapeHtml(this._t("settings.include_raw"))}</span>
+          </label>
+          <div class="settingsTriples two">
+            ${this._configNumber("trace_max_runs", this._t("settings.max_runs"), options.trace_max_runs || 0, 1, 200)}
+            ${this._configNumber("trace_retention_hours", this._t("settings.retention_hours"), options.trace_retention_hours || 0, 1, 168)}
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>${escapeHtml(this._t("config.first_response_audio"))}</legend>
+          <label class="checkRow">
+            <input name="first_response_audio_enabled" type="checkbox" ${options.first_response_audio_enabled !== false ? "checked" : ""}>
+            <span>${escapeHtml(this._t("settings.first_response_audio_enabled"))}</span>
+          </label>
+          <label>
+            <span>${escapeHtml(this._t("settings.first_response_adapter"))}</span>
+            <select name="first_response_adapter">
+              ${playbackAdapters.map((item) => `
+                <option value="${escapeHtml(item)}" ${adapter === item ? "selected" : ""}>${escapeHtml(this._adapterLabel(item))}</option>
+              `).join("")}
+            </select>
+          </label>
+          <div class="settingsTriples two">
+            ${this._configText("first_response_local_service", this._t("settings.first_response_local_service"), options.first_response_local_service || "")}
+            ${this._configText("first_response_tts_entity", this._t("settings.first_response_tts_entity"), options.first_response_tts_entity || "")}
+            ${this._configText("first_response_media_player_entity", this._t("settings.first_response_media_player"), options.first_response_media_player_entity || "")}
+          </div>
+        </fieldset>
+      </form>
+    `;
+  }
+
+  _configNumber(name, label, value, min, max, step = "1") {
+    return `
+      <label>
+        <span>${escapeHtml(label)}</span>
+        <input name="${name}" type="number" min="${min}" max="${max}" step="${step}" value="${Number(value || 0)}" required>
+      </label>
+    `;
+  }
+
+  _configText(name, label, value) {
+    return `
+      <label>
+        <span>${escapeHtml(label)}</span>
+        <input name="${name}" value="${escapeHtml(value || "")}" autocomplete="off" maxlength="256">
+      </label>
+    `;
+  }
+
+  _configTextarea(name, label, value) {
+    return `
+      <label>
+        <span>${escapeHtml(label)}</span>
+        <textarea name="${name}" rows="4">${escapeHtml(value || "")}</textarea>
+      </label>
     `;
   }
 

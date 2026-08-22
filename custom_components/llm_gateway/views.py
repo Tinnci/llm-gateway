@@ -8,16 +8,30 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.http.decorators import require_admin
+from homeassistant.const import CONF_API_KEY, CONF_LLM_HASS_API, CONF_PROMPT
+from homeassistant.helpers import llm
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.http import HomeAssistantView
 from homeassistant.util import dt as dt_util
 
+from .api import LLMGatewayAuthError, LLMGatewayClient, LLMGatewayError
+from .config_editor import (
+    OPTIONAL_SECRET_FIELDS,
+    normalize_json_option,
+    normalize_optional_secret,
+    redact_options,
+)
 from .const import (
+    CONF_BASE_URL,
     CONF_CHAT_MODEL,
     CONF_DEEP_CHAT_TIMEOUT,
+    CONF_DEEP_EXTRA_BODY,
     CONF_DEEP_MAX_TOKENS,
     CONF_DEEP_MODEL,
     CONF_DIAGNOSTIC_TRACES,
+    CONF_EXTRA_BODY,
     CONF_FAST_CHAT_TIMEOUT,
+    CONF_FAST_EXTRA_BODY,
     CONF_FAST_MAX_TOKENS,
     CONF_FAST_MODEL,
     CONF_FIRST_RESPONSE_AUDIO_ENABLED,
@@ -27,13 +41,18 @@ from .const import (
     CONF_FIRST_RESPONSE_TTS_ENTITY,
     CONF_MAX_TOKENS,
     CONF_MID_CHAT_TIMEOUT,
+    CONF_MID_EXTRA_BODY,
     CONF_MID_MAX_TOKENS,
     CONF_MID_MODEL,
     CONF_PROVIDER_PROFILES,
     CONF_ROUTING_MODE,
+    CONF_SEARCH_ENABLED,
+    CONF_TEMPERATURE,
+    CONF_TOP_P,
     CONF_TRACE_INCLUDE_RAW_MESSAGES,
     CONF_TRACE_MAX_RUNS,
     CONF_TRACE_RETENTION_HOURS,
+    DEFAULT_BASE_URL,
     DOMAIN,
     FIRST_RESPONSE_PLAYBACK_ADAPTERS,
     MAX_CHAT_TIMEOUT,
@@ -396,6 +415,8 @@ def async_register_views(hass: HomeAssistant) -> None:
     hass.http.register_view(HarnessReplayView)
     hass.http.register_view(HarnessEvaluateView)
     hass.http.register_view(HarnessOptionsView)
+    hass.http.register_view(HarnessConfigView)
+    hass.http.register_view(HarnessConfigTestView)
     hass.http.register_view(HarnessFactsView)
 
 
@@ -652,6 +673,179 @@ class HarnessOptionsView(HomeAssistantView):
         hass.config_entries.async_update_entry(entry, options=new_options)
 
         return self.json({"entry": _entry_status(hass, entry)})
+
+
+def _config_status(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
+    """Return a redacted, panel-safe snapshot of one config entry."""
+    options = entry.options
+    return {
+        "entry_id": entry.entry_id,
+        "title": entry.title,
+        "state": getattr(entry.state, "value", str(entry.state)),
+        "base_url": entry.data.get(CONF_BASE_URL),
+        "has_api_key": bool(entry.data.get(CONF_API_KEY)),
+        "options": redact_options(options),
+        "model_candidates": _model_candidates(options, entry),
+        "llm_hass_apis": [
+            {"id": api.id, "name": api.name} for api in llm.async_get_apis(hass)
+        ],
+    }
+
+
+class HarnessConfigView(HomeAssistantView):
+    """Read redacted config and apply full connection/options updates."""
+
+    name = f"api:{DOMAIN}:harness:config"
+    url = f"{API_BASE}/harness/config"
+
+    @require_admin
+    async def get(self, request: web.Request) -> web.Response:
+        """Return redacted configuration for every entry."""
+        hass: HomeAssistant = request.app["hass"]
+        return self.json(
+            {"entries": [_config_status(hass, entry) for entry in _entries(hass)]}
+        )
+
+    @require_admin
+    async def post(self, request: web.Request) -> web.Response:  # noqa: PLR0911, PLR0912
+        """Validate and apply a full configuration update."""
+        try:
+            payload = await request.json()
+        except ValueError:
+            return self.json_message(
+                "Invalid JSON body", HTTPStatus.BAD_REQUEST, "invalid_json"
+            )
+
+        if not isinstance(payload, dict):
+            return self.json_message(
+                "JSON body must be an object",
+                HTTPStatus.BAD_REQUEST,
+                "invalid_payload",
+            )
+
+        hass: HomeAssistant = request.app["hass"]
+        entry = _select_entry(hass, payload.get("entry_id"))
+        if entry is None:
+            return self.json_message(
+                "No LLM Gateway config entry found",
+                HTTPStatus.NOT_FOUND,
+                "entry_not_found",
+            )
+
+        data_payload = payload.get("data")
+        options_payload = payload.get("options")
+        new_data = dict(entry.data)
+
+        if data_payload is not None:
+            if not isinstance(data_payload, dict):
+                return self.json_message(
+                    "data must be an object",
+                    HTTPStatus.BAD_REQUEST,
+                    "invalid_data",
+                )
+            try:
+                base_url = _config_base_url(data_payload, new_data)
+                api_key = _config_api_key(data_payload, new_data)
+            except ValueError as err:
+                return self.json_message(
+                    str(err), HTTPStatus.BAD_REQUEST, "invalid_data"
+                )
+
+            if base_url != new_data.get(CONF_BASE_URL) or api_key != new_data.get(
+                CONF_API_KEY
+            ):
+                client = LLMGatewayClient(
+                    async_get_clientsession(hass), base_url, api_key
+                )
+                try:
+                    await client.async_list_models()
+                except LLMGatewayAuthError:
+                    return self.json_message(
+                        "Invalid API key", HTTPStatus.BAD_REQUEST, "invalid_auth"
+                    )
+                except LLMGatewayError:
+                    return self.json_message(
+                        "Cannot reach the model provider",
+                        HTTPStatus.BAD_REQUEST,
+                        "cannot_connect",
+                    )
+            new_data[CONF_BASE_URL] = base_url
+            if api_key != new_data.get(CONF_API_KEY):
+                new_data[CONF_API_KEY] = api_key
+
+        new_options = dict(entry.options)
+        if options_payload is not None:
+            if not isinstance(options_payload, dict):
+                return self.json_message(
+                    "options must be an object",
+                    HTTPStatus.BAD_REQUEST,
+                    "invalid_options",
+                )
+            try:
+                updates = _validate_config_options(options_payload)
+            except ValueError as err:
+                return self.json_message(
+                    str(err), HTTPStatus.BAD_REQUEST, "invalid_options"
+                )
+            new_options.update(updates)
+            if updates.get(CONF_FAST_MODEL):
+                new_options[CONF_CHAT_MODEL] = updates[CONF_FAST_MODEL]
+
+        hass.config_entries.async_update_entry(
+            entry, data=new_data, options=new_options
+        )
+        return self.json({"entry": _config_status(hass, entry)})
+
+
+class HarnessConfigTestView(HomeAssistantView):
+    """Validate provider credentials without saving them."""
+
+    name = f"api:{DOMAIN}:harness:config_test"
+    url = f"{API_BASE}/harness/config/test-connection"
+
+    @require_admin
+    async def post(self, request: web.Request) -> web.Response:
+        """Handle connection tests from the panel config form."""
+        try:
+            payload = await request.json()
+        except ValueError:
+            return self.json_message(
+                "Invalid JSON body", HTTPStatus.BAD_REQUEST, "invalid_json"
+            )
+        if not isinstance(payload, dict):
+            return self.json_message(
+                "JSON body must be an object",
+                HTTPStatus.BAD_REQUEST,
+                "invalid_payload",
+            )
+
+        hass: HomeAssistant = request.app["hass"]
+        entry = _select_entry(hass, payload.get("entry_id"))
+        current = dict(entry.data) if entry else {}
+        data_payload = payload.get("data")
+        if not isinstance(data_payload, dict):
+            data_payload = {}
+
+        try:
+            base_url = _config_base_url(data_payload, current)
+            api_key = _config_api_key(data_payload, current)
+        except ValueError as err:
+            return self.json_message(str(err), HTTPStatus.BAD_REQUEST, "invalid_data")
+
+        client = LLMGatewayClient(async_get_clientsession(hass), base_url, api_key)
+        try:
+            await client.async_list_models()
+        except LLMGatewayAuthError:
+            return self.json_message(
+                "Invalid API key", HTTPStatus.BAD_REQUEST, "invalid_auth"
+            )
+        except LLMGatewayError:
+            return self.json_message(
+                "Cannot reach the model provider",
+                HTTPStatus.BAD_REQUEST,
+                "cannot_connect",
+            )
+        return self.json({"ok": True})
 
 
 class HarnessFactsView(HomeAssistantView):
@@ -1118,6 +1312,96 @@ def _validate_editable_options(payload: dict[str, Any]) -> dict[str, Any]:  # no
             updates[CONF_PROVIDER_PROFILES] = ""
 
     return updates
+
+
+def _config_base_url(data_payload: dict[str, Any], current: dict[str, Any]) -> str:
+    """Return a non-empty base URL from a config update payload."""
+    base_url = str(
+        data_payload.get("base_url") or current.get("base_url") or DEFAULT_BASE_URL
+    ).strip()
+    if not base_url:
+        raise ValueError("base_url is required")
+    return base_url
+
+
+def _config_api_key(data_payload: dict[str, Any], current: dict[str, Any]) -> str:
+    """Return the current API key unless a new one was explicitly provided."""
+    api_key = str(data_payload.get("api_key") or "").strip()
+    return api_key or str(current.get("api_key") or "")
+
+
+def _validate_config_options(payload: dict[str, Any]) -> dict[str, Any]:
+    """Validate the full option set accepted by the panel config form."""
+    updates = _validate_editable_options(payload)
+
+    if CONF_TEMPERATURE in payload:
+        updates[CONF_TEMPERATURE] = _bounded_float(
+            payload[CONF_TEMPERATURE],
+            "temperature",
+            minimum=0,
+            maximum=2,
+        )
+
+    if CONF_TOP_P in payload:
+        updates[CONF_TOP_P] = _bounded_float(
+            payload[CONF_TOP_P],
+            "top_p",
+            minimum=0,
+            maximum=1,
+        )
+
+    for field in (
+        CONF_EXTRA_BODY,
+        CONF_FAST_EXTRA_BODY,
+        CONF_MID_EXTRA_BODY,
+        CONF_DEEP_EXTRA_BODY,
+    ):
+        if field in payload:
+            provisional = {field: payload[field]}
+            errors: dict[str, str] = {}
+            normalize_json_option(provisional, errors, field)
+            if errors:
+                raise ValueError(f"{field} must be valid JSON")
+            updates[field] = provisional.get(field, "")
+
+    if CONF_SEARCH_ENABLED in payload:
+        updates[CONF_SEARCH_ENABLED] = bool(payload[CONF_SEARCH_ENABLED])
+
+    for field in OPTIONAL_SECRET_FIELDS:
+        if field in payload:
+            provisional = {field: payload[field]}
+            normalize_optional_secret(provisional, field)
+            if field in provisional:
+                updates[field] = provisional[field]
+
+    if CONF_LLM_HASS_API in payload:
+        hass_api = payload[CONF_LLM_HASS_API]
+        if not isinstance(hass_api, list) or not all(
+            isinstance(item, str) for item in hass_api
+        ):
+            raise ValueError("llm_hass_api must be a list of strings")
+        updates[CONF_LLM_HASS_API] = hass_api
+
+    if CONF_PROMPT in payload:
+        updates[CONF_PROMPT] = str(payload[CONF_PROMPT] or "").strip()
+
+    return updates
+
+
+def _bounded_float(
+    value: object,
+    field: str,
+    *,
+    minimum: float,
+    maximum: float,
+) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as err:
+        raise ValueError(f"{field} must be a number") from err
+    if parsed < minimum or parsed > maximum:
+        raise ValueError(f"{field} must be between {minimum} and {maximum}")
+    return parsed
 
 
 def _required_text(value: object, field: str) -> str:
