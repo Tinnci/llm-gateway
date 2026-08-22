@@ -51,5 +51,4 @@ async def async_setup_panel(hass: HomeAssistant) -> None:
         },
         require_admin=True,
         update=True,
-        config_panel_domain=DOMAIN,
     )

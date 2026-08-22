@@ -46,6 +46,7 @@ async def test_panel_registers_sidebar_entry(hass):
     assert panel.sidebar_title == PANEL_TITLE
     assert panel.sidebar_icon == "mdi:microphone-message"
     assert panel.require_admin
+    assert panel.config_panel_domain is None
     assert panel.config["_panel_custom"]["name"] == "voice-harness-panel"
     assert panel.config["_panel_custom"]["module_url"] == PANEL_MODULE
     assert panel.config["api_base"] == "/api/llm_gateway"
