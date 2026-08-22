@@ -18,6 +18,7 @@ import {
   iconButton,
   tabButton,
 } from "./voice-harness-ui.js";
+import { replayDiffSections } from "./voice-harness-replay-diff.js";
 import {
   escapeHtml,
   firstResponseAdapter,
@@ -126,6 +127,7 @@ const I18N = {
     "runs.trace_waiting_hint": "Run a voice turn to populate recorded and live run detail.",
     "runs.replay": "Dry-run replay",
     "runs.replay_complete": "Replay fork created without live service calls.",
+    "runs.proposed_actions": "Proposed actions",
     "runs.causal_chain": "Endpoint-to-stop chain",
     "runs.trajectory": "Turn trajectory",
     "runs.trajectory_hint": "Ordered runtime events for this turn",
@@ -507,6 +509,7 @@ const I18N = {
     "runs.trace_waiting_hint": "执行一次语音对话后，这里会显示记录和实时运行细节。",
     "runs.replay": "无副作用重放",
     "runs.replay_complete": "已创建重放分支，未调用实时服务。",
+    "runs.proposed_actions": "动作计划",
     "runs.causal_chain": "端点到停止因果链",
     "runs.trajectory": "Turn 运行轨迹",
     "runs.trajectory_hint": "按时间排序的本轮运行事件",
@@ -881,6 +884,7 @@ class VoiceHarnessPanel extends HTMLElement {
     this._result = null;
     this._settingsSaved = "";
     this._replayStatus = "";
+    this._replayComparison = null;
     this._trajectoryQuery = "";
     this._selectedTrajectory = null;
     this._trajectoryExpandedRunId = "";
@@ -962,11 +966,21 @@ class VoiceHarnessPanel extends HTMLElement {
       );
       const entry = this._data?.entries?.find((item) => item.entry_id === entryId);
       if (entry?.traces?.records && result.record) {
+        const source = entry.traces.records.find(
+          (record) => String(record.run_id || record.id || "") === String(runId),
+        );
         entry.traces.records = [result.record, ...entry.traces.records];
         entry.traces.storage = {
           ...(entry.traces.storage || {}),
           records: Number(entry.traces.storage?.records || 0) + 1,
         };
+        if (source) {
+          this._replayComparison = {
+            sourceId: String(runId),
+            forkId: String(result.record.run_id || result.record.id || ""),
+            sections: replayDiffSections(source, result.record),
+          };
+        }
       }
       this._replayStatus = this._t("runs.replay_complete");
     } catch (err) {
@@ -2240,6 +2254,7 @@ class VoiceHarnessPanel extends HTMLElement {
           }))}</span>
         </div>
         ${this._runSummaryPanel(records, liveRuns)}
+        ${this._replayDiffInspector(records)}
         ${hasRecords ? `
           <div class="traceList">
             ${this._replayStatus ? `<div class="banner success">${escapeHtml(this._replayStatus)}</div>` : ""}
@@ -2254,6 +2269,25 @@ class VoiceHarnessPanel extends HTMLElement {
         ` : (hasRecords ? `<div class="traceIdle">${escapeHtml(this._t("runs.live_idle"))}</div>` : "")}
       </section>
     `;
+  }
+
+  _replayDiffInspector(records) {
+    const comparison = this._replayComparison;
+    if (!comparison) return "";
+    const source = records.find((record) => String(record.run_id || record.id || "") === comparison.sourceId);
+    const fork = records.find((record) => String(record.run_id || record.id || "") === comparison.forkId);
+    if (!source || !fork) return "";
+    const labels = {
+      route: this._t("runs.route"),
+      actions: this._t("runs.proposed_actions"),
+      speech: this._t("runs.final_speech"),
+      events: this._t("runs.trajectory"),
+    };
+    return `<section class="replayDiffInspector">
+      <header><div><span class="runCommandLabel">Replay / Fork</span><strong>Diff Inspector</strong></div><span class="chip ${comparison.sections.some((section) => section.changed) ? "warning" : "ok"}">${comparison.sections.filter((section) => section.changed).length} changed</span></header>
+      <div class="replayDiffLineage"><span>${escapeHtml(comparison.sourceId)}</span><ha-icon icon="mdi:source-fork"></ha-icon><span>${escapeHtml(comparison.forkId)}</span></div>
+      <div class="replayDiffSections">${comparison.sections.map((section) => `<details class="replayDiffSection" ${section.changed ? "open" : ""}><summary><strong>${escapeHtml(labels[section.id] || section.id)}</strong><span class="chip ${section.changed ? "warning" : "muted"}">${section.changed ? "changed" : "unchanged"}</span></summary><pre>${section.parts.map((part) => `<span class="${part.added ? "added" : part.removed ? "removed" : "same"}">${escapeHtml(part.value)}</span>`).join("")}</pre></details>`).join("")}</div>
+    </section>`;
   }
 
   _traceReadinessPanel(trace, storage) {
@@ -4714,6 +4748,21 @@ const styles = `
     border-bottom: 1px solid var(--divider-color);
   }
 
+  .replayDiffInspector { margin: 14px 0; overflow: hidden; border: 1px solid var(--divider-color); border-radius: 8px; background: var(--card-background-color); }
+  .replayDiffInspector > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; padding: 0 12px; border-bottom: 1px solid var(--divider-color); }
+  .replayDiffInspector > header > div { display: grid; gap: 2px; }
+  .replayDiffLineage { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--divider-color); color: var(--secondary-text-color); font-family: var(--code-font-family, Menlo, Consolas, monospace); font-size: 10px; }
+  .replayDiffLineage span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .replayDiffLineage ha-icon { --mdc-icon-size: 15px; flex: 0 0 auto; color: var(--primary-color); }
+  .replayDiffSections { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .replayDiffSection { min-width: 0; border-right: 1px solid var(--divider-color); border-bottom: 1px solid var(--divider-color); }
+  .replayDiffSection:nth-child(2n) { border-right: 0; }
+  .replayDiffSection > summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 38px; padding: 0 10px; cursor: pointer; font-size: 11px; }
+  .replayDiffSection pre { max-height: 220px; margin: 0; padding: 8px 10px; overflow: auto; border-top: 1px solid var(--divider-color); background: var(--primary-background-color); font-size: 10px; line-height: 1.5; white-space: pre-wrap; }
+  .replayDiffSection pre span { display: block; margin: 0 -10px; padding: 0 10px; }
+  .replayDiffSection pre .added { background: color-mix(in srgb, var(--success-color, #43a047) 16%, transparent); color: var(--success-color, #2e7d32); }
+  .replayDiffSection pre .removed { background: color-mix(in srgb, var(--error-color) 13%, transparent); color: var(--error-color); text-decoration: line-through; }
+
   .trajectoryLedger {
     border: 1px solid var(--divider-color);
     border-radius: 8px;
@@ -5442,6 +5491,8 @@ const styles = `
   }
 
   @media (max-width: 560px) {
+    .replayDiffSections { grid-template-columns: 1fr; }
+    .replayDiffSection { border-right: 0; }
     .shell {
       padding: 12px;
     }
