@@ -57,6 +57,7 @@ from .const import (
 from .feedback import QUIET_HOURS_END, QUIET_HOURS_START
 from .first_response_audio import first_response_audio_status
 from .harness import evaluate_scenario
+from .memory import FactWrite
 from .policy import should_allow_search
 from .providers import normalize_provider_profiles_json, provider_profiles_from_options
 from .replay import ReplayError, ReplayOverrides, async_replay_turn
@@ -393,6 +394,7 @@ def async_register_views(hass: HomeAssistant) -> None:
     hass.http.register_view(HarnessReplayView)
     hass.http.register_view(HarnessEvaluateView)
     hass.http.register_view(HarnessOptionsView)
+    hass.http.register_view(HarnessFactsView)
 
 
 class HarnessStatusView(HomeAssistantView):
@@ -648,6 +650,54 @@ class HarnessOptionsView(HomeAssistantView):
         hass.config_entries.async_update_entry(entry, options=new_options)
 
         return self.json({"entry": _entry_status(hass, entry)})
+
+
+class HarnessFactsView(HomeAssistantView):
+    """Create one explicit evidence-backed fact from the admin Harness."""
+
+    name = f"api:{DOMAIN}:harness:facts"
+    url = f"{API_BASE}/harness/memory/facts"
+
+    @require_admin
+    async def post(self, request: web.Request) -> web.Response:
+        """Validate and persist one explicit fact."""
+        try:
+            payload = await request.json()
+        except ValueError:
+            return self.json_message(
+                "Invalid JSON body", HTTPStatus.BAD_REQUEST, "invalid_json"
+            )
+        if not isinstance(payload, dict):
+            return self.json_message(
+                "JSON body must be an object",
+                HTTPStatus.BAD_REQUEST,
+                "invalid_payload",
+            )
+        hass: HomeAssistant = request.app["hass"]
+        entry = _select_entry(hass, payload.get("entry_id"))
+        runtime = getattr(entry, "runtime_data", None) if entry else None
+        if runtime is None:
+            return self.json_message(
+                "No LLM Gateway config entry found",
+                HTTPStatus.NOT_FOUND,
+                "entry_not_found",
+            )
+        try:
+            fact = await runtime.memory.async_upsert_fact(
+                FactWrite(
+                    key=str(payload.get("key") or ""),
+                    value=str(payload.get("value") or ""),
+                    scope=str(payload.get("scope") or "global"),
+                    evidence_turn_id=str(payload.get("evidence_turn_id") or ""),
+                    confidence=float(payload.get("confidence", 1.0)),
+                    expires_at=str(payload.get("expires_at") or ""),
+                )
+            )
+        except (TypeError, ValueError) as err:
+            return self.json_message(
+                str(err), HTTPStatus.BAD_REQUEST, "invalid_fact"
+            )
+        return self.json({"fact": fact.as_dict()}, status_code=HTTPStatus.CREATED)
 
 
 def _entries(hass: HomeAssistant) -> list[ConfigEntry]:

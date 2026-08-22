@@ -18,6 +18,7 @@ class TurnContextRequest:
     conversation_id: str | None
     route_kind: str
     task_type: str
+    area_id: str = ""
     budget_chars: int = DEFAULT_CONTEXT_BUDGET_CHARS
 
 
@@ -122,7 +123,11 @@ class MemoryContextContributor:
     async def async_get_context(
         self, request: TurnContextRequest
     ) -> ContextSlice | None:
-        content = self._memory.build_context(request.conversation_id)
+        content = self._memory.build_context(
+            request.conversation_id,
+            task_type=request.task_type,
+            area_id=request.area_id,
+        )
         if not content:
             return None
         return ContextSlice(

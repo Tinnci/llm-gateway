@@ -1112,6 +1112,7 @@ class LLMGatewayConversationEntity(
                 conversation_id=user_input.conversation_id,
                 route_kind=route.kind,
                 task_type=route_decision.task_type,
+                area_id=str(route_decision.metadata.get("area") or ""),
             ),
             run_id,
         )

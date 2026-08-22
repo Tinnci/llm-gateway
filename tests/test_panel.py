@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 from homeassistant.components import frontend
 from homeassistant.setup import async_setup_component
@@ -23,6 +24,7 @@ from custom_components.llm_gateway.const import (
     CONF_TRACE_RETENTION_HOURS,
     ROUTING_MODE_MID,
 )
+from custom_components.llm_gateway.memory import VoiceMemory
 from custom_components.llm_gateway.panel import (
     PANEL_MODULE,
     PANEL_TITLE,
@@ -641,6 +643,34 @@ async def test_harness_replay_api_creates_side_effect_free_fork(
     assert record["lineage"]["replay_of"] == "source-replay"
     assert record["lineage"]["overrides"]["prompt"] == "candidate-b"
     assert record["proposed_actions"][0]["target_scope"] == "all"
+
+
+async def test_harness_admin_can_write_evidence_backed_fact(
+    hass, hass_client, mock_config_entry
+):
+    """The admin API persists an explicit structured fact."""
+    assert await async_setup_component(hass, "http", {})
+    mock_config_entry.add_to_hass(hass)
+    memory = VoiceMemory(hass, mock_config_entry.entry_id)
+    memory._store.async_save = AsyncMock()
+    mock_config_entry.runtime_data = SimpleNamespace(memory=memory)
+    await async_setup_panel(hass)
+    client = await hass_client()
+
+    response = await client.post(
+        "/api/llm_gateway/harness/memory/facts",
+        json={
+            "key": "night_brightness",
+            "value": "10%",
+            "scope": "intent:light",
+            "evidence_turn_id": "turn-explicit",
+        },
+    )
+
+    assert response.status == 201
+    fact = (await response.json())["fact"]
+    assert fact["key"] == "night_brightness"
+    assert fact["evidence_turn_id"] == "turn-explicit"
 
 
 async def test_harness_options_api_updates_safe_fields(
