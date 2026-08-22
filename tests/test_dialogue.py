@@ -74,6 +74,7 @@ def test_dialogue_frame_stack_fills_weather_location_referent() -> None:
     assert transaction.slot_updates == {"location_hint": "上海静安"}
     assert transaction.effective_text == "上海静安明天的天气怎么样？"
     assert stack.active_frame() is None
+    assert [item.kind for item in transaction.transitions] == ["filled", "completed"]
 
 
 def test_dialogue_frame_stack_suspends_weather_for_high_confidence_new_task() -> None:
@@ -94,6 +95,7 @@ def test_dialogue_frame_stack_suspends_weather_for_high_confidence_new_task() ->
     assert transaction.interaction_state == "suspended"
     assert frame.status == "suspended"
     assert stack.active_frame() is None
+    assert transaction.transitions[0].kind == "suspended"
 
 
 def test_dialogue_frame_stack_keeps_search_permission_as_followup() -> None:

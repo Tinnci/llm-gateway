@@ -121,21 +121,51 @@ class DialogueFrame:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class DialogueTransition:
+    """One explicit, trace-safe frame state transition."""
+
+    kind: str
+    frame_id: str
+    from_status: str
+    to_status: str
+    reason: str = ""
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "frame_id": self.frame_id,
+            "from_status": self.from_status,
+            "to_status": self.to_status,
+            "reason": self.reason,
+        }
+
+
 @dataclass(slots=True)
 class DialogueFrameStack:
     """Short-lived transactional frame stack for follow-up turns."""
 
     active_frames: list[DialogueFrame] = field(default_factory=list)
 
-    def push(self, frame: DialogueFrame) -> None:
+    def push(self, frame: DialogueFrame) -> tuple[DialogueTransition, ...]:
         """Push one active frame, replacing stale frames of the same type."""
-        self.active_frames = [
-            item
-            for item in self.active_frames
-            if item.status in {"awaiting_referent", "awaiting_confirmation"}
-            and item.frame_type != frame.frame_type
-        ]
+        transitions: list[DialogueTransition] = []
+        retained: list[DialogueFrame] = []
+        for item in self.active_frames:
+            if (
+                item.status in {"awaiting_referent", "awaiting_confirmation"}
+                and item.frame_type == frame.frame_type
+            ):
+                transitions.append(
+                    self._set_status(item, "suspended", "replaced_by_new_frame")
+                )
+            else:
+                retained.append(item)
+        self.active_frames = retained
         self.active_frames.append(frame)
+        transitions.append(
+            DialogueTransition("opened", frame.id, "", frame.status, "frame_proposed")
+        )
+        return tuple(transitions)
 
     def active_frame(self) -> DialogueFrame | None:
         """Return the newest frame still accepting a follow-up."""
@@ -144,21 +174,29 @@ class DialogueFrameStack:
                 return frame
         return None
 
-    def complete(self, frame: DialogueFrame) -> None:
+    def complete(self, frame: DialogueFrame) -> DialogueTransition:
         """Mark a frame completed and remove it from active matching."""
-        frame.status = "completed"
+        return self._set_status(frame, "completed", "referents_resolved")
 
-    def suspend(self, frame: DialogueFrame) -> None:
+    def suspend(self, frame: DialogueFrame) -> DialogueTransition:
         """Suspend a frame when a high-confidence unrelated new task arrives."""
-        frame.status = "suspended"
+        return self._set_status(frame, "suspended", "unrelated_new_task")
 
-    def expire(self, frame: DialogueFrame) -> None:
+    def expire(self, frame: DialogueFrame) -> DialogueTransition:
         """Expire a stale frame."""
-        frame.status = "expired"
+        return self._set_status(frame, "expired", "turn_limit_exceeded")
 
-    def cancel(self, frame: DialogueFrame) -> None:
+    def cancel(self, frame: DialogueFrame) -> DialogueTransition:
         """Cancel a frame by user request."""
-        frame.status = "cancelled"
+        return self._set_status(frame, "cancelled", "user_cancelled")
+
+    @staticmethod
+    def _set_status(
+        frame: DialogueFrame, status: str, reason: str
+    ) -> DialogueTransition:
+        previous = frame.status
+        frame.status = status
+        return DialogueTransition(status, frame.id, previous, status, reason)
 
     def as_dict(self) -> dict[str, Any]:
         """Return trace-safe stack state."""
@@ -209,6 +247,7 @@ class DialogueTransaction:
     prompt: str = ""
     interaction_state: InteractionState = "classifying"
     expired: bool = False
+    transitions: tuple[DialogueTransition, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         """Return trace-safe transaction state."""
@@ -223,6 +262,9 @@ class DialogueTransaction:
             "prompt": self.prompt,
             "interaction_state": self.interaction_state,
             "expired": self.expired,
+            "transitions": [
+                item.as_dict() | {"kind": item.kind} for item in self.transitions
+            ],
             "target_frame": self.target_frame.as_dict() if self.target_frame else {},
             "suspended_frame": (
                 self.suspended_frame.as_dict() if self.suspended_frame else {}
@@ -334,16 +376,19 @@ def resolve_dialogue_transaction(  # noqa: PLR0911 - explicit transaction states
 
     frame.turns_seen += 1
     if frame.turns_seen > frame.expires_after_turns:
-        stack.expire(frame)
-        return DialogueTransaction("unresolved", target_frame=frame, expired=True)
+        transition = stack.expire(frame)
+        return DialogueTransaction(
+            "unresolved", target_frame=frame, expired=True, transitions=(transition,)
+        )
 
     if _CANCEL_RE.match(value):
-        stack.cancel(frame)
+        transition = stack.cancel(frame)
         return DialogueTransaction(
             "cancellation",
             target_frame=frame,
             prompt="好的，已取消。",
             interaction_state="cancelled",
+            transitions=(transition,),
         )
 
     if _SEARCH_PERMISSION_RE.match(value):
@@ -365,19 +410,20 @@ def resolve_dialogue_transaction(  # noqa: PLR0911 - explicit transaction states
             return _commit_device_candidate(stack, frame, candidate)
 
     if _looks_like_new_task(value):
-        stack.suspend(frame)
+        transition = stack.suspend(frame)
         return DialogueTransaction(
             "new_task",
             suspended_frame=frame,
             prompt="已取消上一操作。",
             interaction_state="suspended",
+            transitions=(transition,),
         )
 
     if "location" in frame.missing_referents and _looks_like_location(value):
         location = value.strip(" 。！？!,.，")
         updates = {"location_hint": location}
         frame.filled_referents.update(updates)
-        stack.complete(frame)
+        transition = stack.complete(frame)
         return DialogueTransaction(
             "slot_fill",
             target_frame=frame,
@@ -387,6 +433,13 @@ def resolve_dialogue_transaction(  # noqa: PLR0911 - explicit transaction states
                 location,
             ),
             interaction_state="slot_filled",
+            transitions=(
+                DialogueTransition(
+                    "filled", frame.id, transition.from_status, transition.from_status,
+                    "location_resolved",
+                ),
+                transition,
+            ),
         )
 
     if (
@@ -537,13 +590,20 @@ def _commit_device_candidate(
     """Commit one selected target-device candidate into a follow-up turn."""
     name = str(candidate.get("name") or candidate.get("id") or "")
     frame.filled_referents["target_device"] = dict(candidate)
-    stack.complete(frame)
+    transition = stack.complete(frame)
     return DialogueTransaction(
         "slot_fill",
         target_frame=frame,
         slot_updates={"target_device": dict(candidate)},
         effective_text=_home_control_effective_text(frame.operation, name),
         interaction_state="slot_filled",
+        transitions=(
+            DialogueTransition(
+                "filled", frame.id, transition.from_status, transition.from_status,
+                "target_device_resolved",
+            ),
+            transition,
+        ),
     )
 
 

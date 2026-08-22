@@ -672,6 +672,13 @@ class LLMGatewayConversationEntity(
             user_input.text,
             frame_stack,
         )
+        for transition in dialogue_transaction.transitions:
+            self._mark_run(
+                runtime,
+                run_id,
+                f"dialogue/frame_{transition.kind}",
+                attrs=transition.as_dict(),
+            )
         effective_text = dialogue_transaction.effective_text or user_input.text
         if (
             dialogue_transaction.relation != "new_task"
@@ -899,7 +906,14 @@ class LLMGatewayConversationEntity(
                         pending_key,
                         DialogueFrameStack(),
                     )
-                    stack.push(frame)
+                    transitions = stack.push(frame)
+                    for transition in transitions:
+                        self._mark_run(
+                            runtime,
+                            run_id,
+                            f"dialogue/frame_{transition.kind}",
+                            attrs=transition.as_dict(),
+                        )
                 for event in loop_result.trace_events:
                     attrs = dict(event.attrs)
                     if event.stage == "local_route_clarify":
