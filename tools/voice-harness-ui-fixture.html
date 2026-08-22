@@ -188,6 +188,13 @@
           diagnostic_snapshot: {
             schema_version: 1,
             generated_at: "2026-06-30T16:20:00+08:00",
+            native_ui: {
+              id: "ha-status",
+              kind: "phosh_lockscreen_plugin",
+              enabled: true,
+              library_available: true,
+              metadata_available: true,
+            },
             pipewire_graph: {
               aec_enabled: true,
               aec_reference_active: false,
@@ -512,6 +519,11 @@
       if (params.get("trace") === "off") {
         for (const entry of fixture.entries) {
           entry.trace = { ...entry.trace, enabled: false };
+        }
+      }
+      if (params.get("idle") === "phosh") {
+        for (const entry of fixture.entries) {
+          entry.feedback.latest_display = null;
         }
       }
       const fixtureTabs = new Set(["runs", "settings", "satellite", "policies", "scenarios", "memory", "earcons"]);

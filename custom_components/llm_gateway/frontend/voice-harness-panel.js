@@ -129,6 +129,13 @@ const I18N = {
     "runs.causal_chain": "Endpoint-to-stop chain",
     "runs.trajectory": "Turn trajectory",
     "runs.trajectory_hint": "Ordered runtime events for this turn",
+    "runs.trajectory_search": "Filter events",
+    "runs.trajectory_event": "Event",
+    "runs.trajectory_content": "Content",
+    "runs.trajectory_inspector": "Event inspector",
+    "runs.trajectory_started": "Started",
+    "runs.trajectory_duration": "Duration",
+    "runs.trajectory_source": "Source",
     "runs.inspect_evidence": "Inspect evidence and diagnostics",
     "runs.loop": "Loop",
     "runs.runtime_config": "Runtime configuration",
@@ -137,7 +144,9 @@ const I18N = {
     "runs.live": "Recent live runs",
     "runs.live_empty": "No live run snapshots yet.",
     "runs.live_status": "Live status",
-    "runs.no_live_status": "No live display status yet.",
+    "runs.no_live_status": "No active voice overlay.",
+    "runs.lock_screen_ready": "Phosh lock screen is running",
+    "runs.lock_screen_idle_hint": "No voice overlay is active. The current turn will appear here when voice activity starts.",
     "runs.earcons": "Earcons",
     "runs.no_earcons": "No earcon events.",
     "runs.display_status": "Display status",
@@ -501,6 +510,13 @@ const I18N = {
     "runs.causal_chain": "端点到停止因果链",
     "runs.trajectory": "Turn 运行轨迹",
     "runs.trajectory_hint": "按时间排序的本轮运行事件",
+    "runs.trajectory_search": "筛选事件",
+    "runs.trajectory_event": "事件",
+    "runs.trajectory_content": "内容",
+    "runs.trajectory_inspector": "事件检查器",
+    "runs.trajectory_started": "开始时间",
+    "runs.trajectory_duration": "持续时间",
+    "runs.trajectory_source": "来源",
     "runs.inspect_evidence": "查看证据与诊断详情",
     "runs.loop": "Loop",
     "runs.runtime_config": "运行时配置",
@@ -509,7 +525,9 @@ const I18N = {
     "runs.live": "最近实时运行",
     "runs.live_empty": "还没有实时运行快照。",
     "runs.live_status": "实时状态",
-    "runs.no_live_status": "还没有锁屏/悬浮状态。",
+    "runs.no_live_status": "当前没有语音悬浮事件。",
+    "runs.lock_screen_ready": "Phosh 锁屏运行中",
+    "runs.lock_screen_idle_hint": "当前没有语音悬浮事件；开始语音交互后，本轮状态会显示在这里。",
     "runs.earcons": "提示音事件",
     "runs.no_earcons": "没有提示音事件。",
     "runs.display_status": "显示状态",
@@ -863,6 +881,9 @@ class VoiceHarnessPanel extends HTMLElement {
     this._result = null;
     this._settingsSaved = "";
     this._replayStatus = "";
+    this._trajectoryQuery = "";
+    this._selectedTrajectory = null;
+    this._trajectoryExpandedRunId = "";
     this._draftLocale = this._locale();
     this._draftTouched = false;
     /** @type {ScenarioDraft} */
@@ -1093,6 +1114,20 @@ class VoiceHarnessPanel extends HTMLElement {
       this._load();
       return;
     }
+    if (button.dataset.trajectoryIndex !== undefined) {
+      this._selectedTrajectory = {
+        runId: button.dataset.trajectoryRun || "",
+        index: Number(button.dataset.trajectoryIndex || 0),
+      };
+      this._trajectoryExpandedRunId = button.dataset.trajectoryRun || "";
+      this._render();
+      return;
+    }
+    if (button.dataset.action === "close-trajectory-inspector") {
+      this._selectedTrajectory = null;
+      this._render();
+      return;
+    }
     if (button.dataset.replayRun) {
       this._replayRun(button.dataset.replayRun, button.dataset.entryId || "");
       return;
@@ -1149,6 +1184,15 @@ class VoiceHarnessPanel extends HTMLElement {
   }
 
   _onInput(event) {
+    if (event.target.dataset.trajectorySearch !== undefined) {
+      const query = String(event.target.value || "").trim().toLocaleLowerCase();
+      this._trajectoryQuery = query;
+      const ledger = event.target.closest(".trajectoryLedger");
+      ledger?.querySelectorAll("[data-trajectory-row]").forEach((row) => {
+        row.hidden = Boolean(query) && !String(row.dataset.searchText || "").includes(query);
+      });
+      return;
+    }
     const field = event.target.dataset.field;
     if (!field) {
       return;
@@ -1350,7 +1394,21 @@ class VoiceHarnessPanel extends HTMLElement {
   _liveStatusBanner(entry) {
     const event = entry.feedback?.latest_display;
     if (!event) {
-      return `<div class="empty mini">${escapeHtml(this._t("runs.no_live_status"))}</div>`;
+      const nativeUi = this._data?.satellite?.diagnostic_snapshot?.native_ui || {};
+      const lockScreenEnabled = nativeUi.enabled === true;
+      if (!lockScreenEnabled) {
+        return `<div class="empty mini">${escapeHtml(this._t("runs.no_live_status"))}</div>`;
+      }
+      return `
+        <div class="liveStatus idle">
+          <ha-icon icon="mdi:cellphone-lock"></ha-icon>
+          <div>
+            <strong>${escapeHtml(this._t("runs.lock_screen_ready"))}</strong>
+            <span>${escapeHtml(this._t("runs.lock_screen_idle_hint"))}</span>
+          </div>
+          <span class="chip ok">ready</span>
+        </div>
+      `;
     }
     return `
       <div class="liveStatus ${escapeHtml(event.state || "")}">
@@ -2316,7 +2374,7 @@ class VoiceHarnessPanel extends HTMLElement {
     const causalChain = record.causal_chain || {};
     const loopName = record.loop?.name || record.loop_name || `${route.kind || "auto"}-turn-loop`;
     return `
-      <details class="traceCard">
+      <details class="traceCard" ${this._trajectoryExpandedRunId === String(record.run_id || record.id || "") ? "open" : ""}>
         <summary>
           <div class="runIdentity">
             <div class="runEyebrow">
@@ -2524,6 +2582,7 @@ class VoiceHarnessPanel extends HTMLElement {
             start: Number(event.offset_ms ?? event.t_ms ?? derivedStart),
             duration: Number(event.duration_ms || 0),
             status: event.status || "ok",
+            payload: event.payload || event.attrs || {},
           };
         })
       : timeline.map((event) => ({
@@ -2532,40 +2591,54 @@ class VoiceHarnessPanel extends HTMLElement {
           start: Number(event.start_ms ?? event.t_ms ?? 0),
           duration: Number(event.duration_ms || 0),
           status: event.status || "ok",
+          payload: event.attrs || {},
         }));
     if (!events.length) return "";
+    const runId = String(record.run_id || record.id || "");
+    const selectedIndex = this._selectedTrajectory?.runId === runId ? this._selectedTrajectory.index : -1;
+    const classify = (event) => {
+      const key = `${event.source}/${event.label}`.toLowerCase();
+      if (/tool|service|search|entity|weather/.test(key)) return "tool";
+      if (/tts|audio|playback|speech|earcon/.test(key)) return "output";
+      if (/gateway|route|model|reason|loop|prompt|llm/.test(key)) return "model";
+      return "input";
+    };
+    const summarize = (event) => {
+      const payload = event.payload || {};
+      const keys = ["text", "transcript", "route", "decision", "reason", "service", "entity_id", "trigger", "name"];
+      return keys.filter((key) => payload[key] !== undefined && payload[key] !== null && payload[key] !== "")
+        .slice(0, 2)
+        .map((key) => `${key}=${typeof payload[key] === "object" ? JSON.stringify(payload[key]) : payload[key]}`)
+        .join(" · ") || event.source;
+    };
+    events.forEach((event) => {
+      event.kind = classify(event);
+      event.content = summarize(event);
+    });
     const end = Math.max(1, ...events.map((event) => event.start + Math.max(event.duration, 1)));
     const chainTone = causalChain.complete && causalChain.ordered ? "ok" : "warning";
+    const selected = events[selectedIndex] || null;
+    const lanes = [["input", "Input"], ["model", "Gateway"], ["tool", "Tools"], ["output", "Output"]];
     return `
       <section class="trajectoryLedger">
-        <div class="trajectoryHead">
-          <div>
-            <h3>${escapeHtml(this._t("runs.trajectory"))}</h3>
-            <span>${escapeHtml(this._t("runs.trajectory_hint"))}</span>
-          </div>
+        <div class="trajectoryToolbar">
+          <strong>${escapeHtml(this._t("runs.trajectory"))}</strong>
+          <label class="trajectorySearch"><ha-icon icon="mdi:magnify"></ha-icon><input data-trajectory-search value="${escapeHtml(this._trajectoryQuery)}" placeholder="${escapeHtml(this._t("runs.trajectory_search"))}" aria-label="${escapeHtml(this._t("runs.trajectory_search"))}"></label>
           <span class="chip ${chainTone}">${escapeHtml(causalChain.complete ? "causal chain complete" : "causal chain incomplete")}</span>
         </div>
-        <div class="trajectoryScale" aria-hidden="true">
-          <span>0 ms</span><span>${Math.round(end / 2)} ms</span><span>${Math.round(end)} ms</span>
+        <div class="trajectoryOverview" aria-label="${escapeHtml(this._t("runs.trajectory_hint"))}">
+          ${lanes.map(([kind, label]) => `<span class="trajectoryLaneLabel">${label}</span><div class="trajectoryLane">${events.map((event, index) => event.kind === kind ? `<i class="${kind} ${event.status === "error" ? "bad" : ""} ${index === selectedIndex ? "selected" : ""}" style="left:${Math.min(99, Math.max(0, (event.start / end) * 100)).toFixed(2)}%;width:${Math.max(0.6, Math.min(100, (Math.max(event.duration, end * 0.006) / end) * 100)).toFixed(2)}%"></i>` : "").join("")}</div>`).join("")}
+          <span class="trajectoryOverviewStart">0 ms</span><span class="trajectoryOverviewEnd">${Math.round(end)} ms</span>
         </div>
-        <div class="trajectoryRows">
-          ${events.map((event, index) => {
-            const left = Math.min(98, Math.max(0, (event.start / end) * 100));
-            const width = Math.max(1.2, Math.min(100 - left, (Math.max(event.duration, end * 0.012) / end) * 100));
-            return `
-              <div class="trajectoryRow ${event.status === "error" ? "bad" : ""}">
-                <span class="trajectoryIndex">${String(index + 1).padStart(2, "0")}</span>
-                <div class="trajectoryEvent">
-                  <strong>${escapeHtml(event.label)}</strong>
-                  <span>${escapeHtml(event.source)}</span>
-                </div>
-                <div class="trajectoryTrack">
-                  <i style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%"></i>
-                </div>
-                <span class="trajectoryTime">${event.start} ms${event.duration ? ` · ${event.duration} ms` : ""}</span>
-              </div>
-            `;
-          }).join("")}
+        <div class="trajectorySplit ${selected ? "withInspector" : ""}">
+          <div class="trajectoryTable">
+            <div class="trajectoryTableHead"><span>${escapeHtml(this._t("runs.trajectory_event"))}</span><span>${escapeHtml(this._t("runs.trajectory_content"))}</span><span>Time</span></div>
+            <div class="trajectoryRows">${events.map((event, index) => {
+              const searchText = `${event.label} ${event.source} ${event.content}`.toLocaleLowerCase();
+              return `<button class="trajectoryRow ${event.status === "error" ? "bad" : ""} ${index === selectedIndex ? "selected" : ""}" data-trajectory-row data-trajectory-run="${escapeHtml(runId)}" data-trajectory-index="${index}" data-search-text="${escapeHtml(searchText)}" ${this._trajectoryQuery && !searchText.includes(this._trajectoryQuery) ? "hidden" : ""}><span class="trajectoryEvent"><span class="trajectoryIndex">${String(index + 1).padStart(2, "0")}</span><span class="trajectoryKind ${event.kind}">${escapeHtml(event.kind)}</span><strong>${escapeHtml(event.label)}</strong></span><span class="trajectoryContent">${escapeHtml(event.content)}</span><span class="trajectoryTime">${event.start} ms${event.duration ? ` · ${event.duration} ms` : ""}</span></button>`;
+            }).join("")}</div>
+          </div>
+          ${selected ? `<aside class="trajectoryInspector"><header><div><span class="trajectoryKind ${selected.kind}">${escapeHtml(selected.kind)}</span><strong>${escapeHtml(selected.label)}</strong></div><button class="iconButton" data-action="close-trajectory-inspector" aria-label="Close"><ha-icon icon="mdi:close"></ha-icon></button></header><div class="trajectoryInspectorBody"><span class="trajectoryInspectorLabel">${escapeHtml(this._t("runs.trajectory_inspector"))}</span><dl><div><dt>Status</dt><dd>${escapeHtml(selected.status)}</dd></div><div><dt>${escapeHtml(this._t("runs.trajectory_started"))}</dt><dd>${selected.start} ms</dd></div><div><dt>${escapeHtml(this._t("runs.trajectory_duration"))}</dt><dd>${selected.duration} ms</dd></div><div><dt>${escapeHtml(this._t("runs.trajectory_source"))}</dt><dd>${escapeHtml(selected.source)}</dd></div></dl><pre>${escapeHtml(JSON.stringify(selected.payload || {}, null, 2))}</pre></div></aside>` : ""}
         </div>
       </section>
     `;
@@ -4472,6 +4545,26 @@ const styles = `
     gap: 4px;
   }
 
+  .liveStatus.idle {
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr) auto;
+    align-items: center;
+    background: color-mix(in srgb, var(--success-color) 6%, var(--card-background-color));
+    border-color: color-mix(in srgb, var(--success-color) 26%, var(--divider-color));
+  }
+
+  .liveStatus.idle > ha-icon {
+    width: 20px;
+    height: 20px;
+    color: var(--success-color);
+  }
+
+  .liveStatus.idle > div {
+    min-width: 0;
+    display: grid;
+    gap: 3px;
+  }
+
   .liveStatus span {
     min-width: 0;
     color: var(--secondary-text-color);
@@ -4628,42 +4721,91 @@ const styles = `
     background: var(--primary-background-color);
   }
 
-  .trajectoryHead {
-    min-height: 52px;
-    padding: 10px 12px;
+  .trajectoryToolbar {
+    min-height: 34px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 8px;
     border-bottom: 1px solid var(--divider-color);
     background: var(--card-background-color);
   }
 
-  .trajectoryScale {
+  .trajectoryToolbar > strong { margin-right: auto; font-size: 12px; }
+
+  .trajectorySearch {
+    width: min(190px, 28vw);
+    height: 24px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 6px;
+    border: 1px solid var(--divider-color);
+    border-radius: 4px;
+    background: var(--primary-background-color);
+  }
+
+  .trajectorySearch ha-icon { --mdc-icon-size: 14px; color: var(--secondary-text-color); }
+  .trajectorySearch input { min-width: 0; width: 100%; border: 0; outline: 0; background: transparent; color: var(--primary-text-color); font: inherit; font-size: 11px; }
+
+  .trajectoryOverview {
+    position: relative;
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    padding: 5px 112px 5px 178px;
+    grid-template-columns: 58px minmax(0, 1fr);
+    gap: 2px 8px;
+    padding: 6px 10px 15px;
+    border-bottom: 1px solid var(--divider-color);
+    background: color-mix(in srgb, var(--card-background-color) 75%, var(--primary-background-color));
+  }
+
+  .trajectoryLaneLabel {
+    text-align: right;
     color: var(--secondary-text-color);
     font-family: var(--code-font-family, Menlo, Consolas, monospace);
     font-size: 10px;
   }
 
-  .trajectoryScale span:nth-child(2) { text-align: center; }
-  .trajectoryScale span:last-child { text-align: right; }
+  .trajectoryLane { position: relative; height: 9px; border-left: 1px solid var(--divider-color); background: repeating-linear-gradient(90deg, transparent 0, transparent 24.8%, color-mix(in srgb, var(--divider-color) 45%, transparent) 25%); }
+  .trajectoryLane i { position: absolute; top: 1px; height: 7px; min-width: 2px; border-radius: 1px; background: #5687d8; }
+  .trajectoryLane i.model { background: #8b6bd6; }
+  .trajectoryLane i.tool { background: #d69a3d; }
+  .trajectoryLane i.output { background: #49a57b; }
+  .trajectoryLane i.bad { background: var(--error-color); }
+  .trajectoryLane i.selected { outline: 2px solid var(--primary-text-color); outline-offset: 1px; z-index: 1; }
+  .trajectoryOverviewStart, .trajectoryOverviewEnd { position: absolute; bottom: 2px; color: var(--secondary-text-color); font-family: var(--code-font-family, Menlo, Consolas, monospace); font-size: 9px; }
+  .trajectoryOverviewStart { left: 76px; }
+  .trajectoryOverviewEnd { right: 10px; }
+
+  .trajectorySplit { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .trajectorySplit.withInspector { grid-template-columns: minmax(0, 1fr) minmax(245px, 34%); }
+  .trajectoryTable { min-width: 0; }
+  .trajectoryTableHead, .trajectoryRow { display: grid; grid-template-columns: minmax(180px, .9fr) minmax(130px, 1.4fr) 105px; align-items: center; }
+  .trajectoryTableHead { min-height: 27px; padding: 0 9px; border-bottom: 1px solid var(--divider-color); color: var(--secondary-text-color); font-size: 10px; font-weight: 650; text-transform: uppercase; letter-spacing: .04em; }
+  .trajectoryTableHead span:last-child { text-align: right; }
 
   .trajectoryRows {
     display: grid;
   }
 
   .trajectoryRow {
-    min-height: 36px;
-    display: grid;
-    grid-template-columns: 28px 132px minmax(120px, 1fr) 96px;
-    align-items: center;
-    gap: 8px;
-    padding: 0 10px;
-    border-top: 1px solid color-mix(in srgb, var(--divider-color) 70%, transparent);
+    width: 100%;
+    min-height: 32px;
+    padding: 0 9px;
+    border: 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--divider-color) 70%, transparent);
+    border-radius: 0;
+    background: transparent;
+    color: var(--primary-text-color);
+    text-align: left;
+    font: inherit;
+    cursor: pointer;
   }
 
-  .trajectoryRow:hover {
+  .trajectoryRow:hover, .trajectoryRow.selected {
     background: color-mix(in srgb, var(--primary-color) 6%, transparent);
   }
+
+  .trajectoryRow.selected { box-shadow: inset 3px 0 var(--primary-color); }
 
   .trajectoryIndex,
   .trajectoryTime {
@@ -4674,38 +4816,33 @@ const styles = `
 
   .trajectoryTime { text-align: right; }
 
-  .trajectoryEvent {
+  .trajectoryEvent, .trajectoryContent {
     min-width: 0;
-    display: grid;
-    gap: 1px;
-  }
-
-  .trajectoryEvent strong,
-  .trajectoryEvent span {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .trajectoryEvent strong { font-size: 11px; }
-  .trajectoryEvent span { color: var(--secondary-text-color); font-size: 10px; }
+  .trajectoryEvent { display: flex; align-items: center; gap: 6px; }
+  .trajectoryEvent strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 11px; }
+  .trajectoryContent { padding-right: 10px; color: var(--secondary-text-color); font-family: var(--code-font-family, Menlo, Consolas, monospace); font-size: 10px; }
+  .trajectoryKind { flex: 0 0 auto; padding: 1px 4px; border-radius: 3px; background: color-mix(in srgb, #5687d8 16%, transparent); color: #5687d8; font-family: var(--code-font-family, Menlo, Consolas, monospace); font-size: 9px; text-transform: uppercase; }
+  .trajectoryKind.model { background: color-mix(in srgb, #8b6bd6 16%, transparent); color: #8b6bd6; }
+  .trajectoryKind.tool { background: color-mix(in srgb, #d69a3d 18%, transparent); color: #b47719; }
+  .trajectoryKind.output { background: color-mix(in srgb, #49a57b 18%, transparent); color: #378361; }
+  .trajectoryRow.bad .trajectoryEvent strong { color: var(--error-color); }
 
-  .trajectoryTrack {
-    position: relative;
-    height: 5px;
-    border-radius: 2px;
-    background: color-mix(in srgb, var(--divider-color) 55%, transparent);
-  }
-
-  .trajectoryTrack i {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    border-radius: 2px;
-    background: var(--primary-color);
-  }
-
-  .trajectoryRow.bad .trajectoryTrack i { background: var(--error-color); }
+  .trajectoryInspector { min-width: 0; border-left: 1px solid var(--divider-color); background: var(--card-background-color); }
+  .trajectoryInspector > header { min-height: 37px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 8px 0 10px; border-bottom: 1px solid var(--divider-color); }
+  .trajectoryInspector > header > div { min-width: 0; display: flex; align-items: center; gap: 7px; }
+  .trajectoryInspector > header strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+  .trajectoryInspectorBody { padding: 10px; }
+  .trajectoryInspectorLabel { color: var(--secondary-text-color); font-size: 10px; font-weight: 650; text-transform: uppercase; letter-spacing: .04em; }
+  .trajectoryInspector dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 10px 0; }
+  .trajectoryInspector dl div { min-width: 0; }
+  .trajectoryInspector dt { color: var(--secondary-text-color); font-size: 9px; }
+  .trajectoryInspector dd { margin: 2px 0 0; overflow: hidden; text-overflow: ellipsis; font-family: var(--code-font-family, Menlo, Consolas, monospace); font-size: 10px; white-space: nowrap; }
+  .trajectoryInspector pre { max-height: 210px; margin: 0; padding: 8px; overflow: auto; border: 1px solid var(--divider-color); border-radius: 4px; background: var(--primary-background-color); font-size: 10px; line-height: 1.45; white-space: pre-wrap; }
 
   .diagnosticDrawer,
   .runtimeConfigDrawer {
@@ -5291,14 +5428,8 @@ const styles = `
       border-right: 0;
     }
 
-    .trajectoryScale {
-      padding-left: 138px;
-      padding-right: 88px;
-    }
-
-    .trajectoryRow {
-      grid-template-columns: 24px 90px minmax(96px, 1fr) 72px;
-    }
+    .trajectorySplit.withInspector { grid-template-columns: minmax(0, 1fr) minmax(220px, 40%); }
+    .trajectoryTableHead, .trajectoryRow { grid-template-columns: minmax(150px, .9fr) minmax(100px, 1fr) 86px; }
 
     .traceReadiness {
       grid-template-columns: 32px minmax(0, 1fr);
@@ -5360,7 +5491,7 @@ const styles = `
     }
 
     .runCommandBar,
-    .trajectoryHead {
+    .trajectoryToolbar {
       align-items: stretch;
       flex-direction: column;
     }
@@ -5382,13 +5513,12 @@ const styles = `
       border-bottom: 0;
     }
 
-    .trajectoryScale { display: none; }
-
-    .trajectoryRow {
-      grid-template-columns: 24px minmax(0, 1fr) 72px;
-    }
-
-    .trajectoryTrack { display: none; }
+    .trajectoryToolbar { padding: 8px; }
+    .trajectorySearch { width: auto; }
+    .trajectorySplit.withInspector { grid-template-columns: 1fr; }
+    .trajectoryInspector { border-top: 1px solid var(--divider-color); border-left: 0; }
+    .trajectoryTableHead, .trajectoryRow { grid-template-columns: minmax(0, 1fr) 72px; }
+    .trajectoryTableHead span:nth-child(2), .trajectoryContent { display: none; }
 
     .traceReadiness {
       grid-template-columns: 1fr;

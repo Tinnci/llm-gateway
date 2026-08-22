@@ -63,6 +63,8 @@ async def test_panel_static_module_is_served(hass, hass_client):
     body = await response.text()
     assert "customElements.define" in body
     assert "voice-harness-panel" in body
+    assert "Phosh lock screen is running" in body
+    assert "Phosh 锁屏运行中" in body
 
 
 async def test_harness_status_api(hass, hass_client):
