@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 from homeassistant.util import ulid
@@ -12,17 +13,32 @@ RUN_LIMIT = 40
 STALE_RUNNING_MS = 10 * 60 * 1000
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class VoiceRunEvent:
-    """One timestamped pipeline event."""
+    """One immutable event in a correlated voice-turn stream."""
 
+    event_id: str
+    turn_id: str
+    sequence: int
     stage: str
     t_ms: int
+    occurred_at: str
+    caused_by: str = ""
     status: str = "ok"
     attrs: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {
+            "event_id": self.event_id,
+            "turn_id": self.turn_id,
+            "event_type": f"gateway.{self.stage.replace('_', '.')}",
+            "source": "llm-gateway",
+            "source_sequence": self.sequence,
+            "occurred_at": self.occurred_at,
+            "monotonic_ms": self.t_ms,
+            "caused_by": self.caused_by,
+            "privacy": "trace_safe",
+            "payload": {"status": self.status, **self.attrs},
             "stage": self.stage,
             "t_ms": self.t_ms,
             "status": self.status,
@@ -36,6 +52,7 @@ class VoiceRun:
 
     id: str
     created_at: float
+    started_monotonic: float
     conversation_id: str
     user_text: str
     status: str = "running"
@@ -80,6 +97,7 @@ class VoiceRunRecorder:
         run = VoiceRun(
             id=run_id,
             created_at=time.time(),
+            started_monotonic=time.monotonic(),
             conversation_id=conversation_id or "",
             user_text=user_text,
         )
@@ -101,9 +119,15 @@ class VoiceRunRecorder:
         run = self._runs.get(run_id)
         if run is None:
             return None
+        previous = run.events[-1] if run.events else None
         event = VoiceRunEvent(
+            event_id=ulid.ulid_now(),
+            turn_id=run_id,
+            sequence=len(run.events),
             stage=stage,
-            t_ms=round((time.time() - run.created_at) * 1000),
+            t_ms=max(0, round((time.monotonic() - run.started_monotonic) * 1000)),
+            occurred_at=datetime.now(UTC).isoformat(),
+            caused_by=previous.event_id if previous else "",
             status=status,
             attrs=dict(attrs or {}),
         )
@@ -170,8 +194,13 @@ class VoiceRunRecorder:
             run.latency_ms = elapsed_ms
             run.events.append(
                 VoiceRunEvent(
+                    event_id=ulid.ulid_now(),
+                    turn_id=run.id,
+                    sequence=len(run.events),
                     stage="stale_expired",
                     t_ms=elapsed_ms,
+                    occurred_at=datetime.now(UTC).isoformat(),
+                    caused_by=run.events[-1].event_id if run.events else "",
                     status="stale",
                     attrs={
                         "max_running_ms": STALE_RUNNING_MS,

@@ -1,5 +1,7 @@
 """Tests for recent voice run timelines."""
 
+from datetime import datetime
+
 from custom_components.llm_gateway.voice_runs import VoiceRunRecorder
 
 
@@ -28,6 +30,17 @@ def test_voice_run_recorder_records_timeline() -> None:
         "route_selected",
         "complete",
     ]
+    assert [event["source_sequence"] for event in timeline] == [0, 1, 2]
+    assert all(event["turn_id"] == run_id for event in timeline)
+    assert timeline[0]["caused_by"] == ""
+    assert timeline[1]["caused_by"] == timeline[0]["event_id"]
+    assert timeline[2]["caused_by"] == timeline[1]["event_id"]
+    assert timeline[1]["event_type"] == "gateway.route.selected"
+    assert timeline[1]["source"] == "llm-gateway"
+    assert timeline[1]["privacy"] == "trace_safe"
+    assert timeline[1]["payload"] == {"status": "ok", "route": "fast"}
+    assert datetime.fromisoformat(timeline[1]["occurred_at"]).tzinfo is not None
+    assert timeline[1]["monotonic_ms"] == timeline[1]["t_ms"]
 
 
 def test_voice_run_recorder_reports_running_stage() -> None:
