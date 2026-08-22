@@ -103,7 +103,9 @@ async def test_harness_config_api_get_redacts_secrets(
     entry = data["entries"][0]
     assert entry["base_url"] == DEFAULT_BASE_URL
     assert entry["has_api_key"] is True
+    assert entry["api_key_hint"] == "\u2022\u2022\u2022\u2022"
     assert "api_key" not in entry
+    assert entry["revision"]
     assert entry["options"]["has_tavily_api_key"] is True
     assert "tavily_api_key" not in entry["options"]
     profiles = entry["options"]["provider_profiles"]
@@ -183,6 +185,70 @@ async def test_harness_config_api_rejects_invalid_connection(
     assert data["code"] == "invalid_auth"
     assert mock_config_entry.data[CONF_BASE_URL] == DEFAULT_BASE_URL
     assert mock_config_entry.data[CONF_API_KEY] == "test-key"
+
+
+async def test_harness_config_api_revision_fencing(
+    hass, hass_client, aioclient_mock, mock_config_entry
+):
+    """A stale revision is rejected with 409 and nothing is written."""
+    assert await async_setup_component(hass, "http", {})
+    aioclient_mock.get(
+        "https://example.test/v1/models",
+        json={"data": [{"id": "m1"}]},
+    )
+    mock_config_entry.add_to_hass(hass)
+    await async_setup_panel(hass)
+    client = await hass_client()
+
+    payload = {
+        "entry_id": mock_config_entry.entry_id,
+        "data": {
+            "base_url": "https://example.test/v1",
+            "api_key": "new-key",
+        },
+    }
+    first = await client.post("/api/llm_gateway/harness/config", json=payload)
+    assert first.status == 200
+    first_data = await first.json()
+    revision = first_data["entry"]["revision"]
+    assert revision
+
+    stale = await client.post(
+        "/api/llm_gateway/harness/config",
+        json={**payload, "revision": "2020-01-01T00:00:00+00:00"},
+    )
+    assert stale.status == 409
+    stale_data = await stale.json()
+    assert stale_data["code"] == "revision_conflict"
+
+    fresh = await client.post(
+        "/api/llm_gateway/harness/config",
+        json={**payload, "revision": revision},
+    )
+    assert fresh.status == 200
+
+
+async def test_harness_config_models_endpoint(
+    hass, hass_client, aioclient_mock, mock_config_entry
+):
+    """The models endpoint returns live ids using stored credentials."""
+    assert await async_setup_component(hass, "http", {})
+    aioclient_mock.get(
+        f"{DEFAULT_BASE_URL}/models",
+        json={"data": [{"id": "z-model"}, {"id": "a-model"}]},
+    )
+    mock_config_entry.add_to_hass(hass)
+    await async_setup_panel(hass)
+    client = await hass_client()
+
+    response = await client.post(
+        "/api/llm_gateway/harness/config/models",
+        json={"entry_id": mock_config_entry.entry_id},
+    )
+
+    assert response.status == 200
+    data = await response.json()
+    assert data["models"] == ["a-model", "z-model"]
 
 
 async def test_harness_status_api(hass, hass_client):

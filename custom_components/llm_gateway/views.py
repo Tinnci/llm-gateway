@@ -417,6 +417,7 @@ def async_register_views(hass: HomeAssistant) -> None:
     hass.http.register_view(HarnessOptionsView)
     hass.http.register_view(HarnessConfigView)
     hass.http.register_view(HarnessConfigTestView)
+    hass.http.register_view(HarnessConfigModelsView)
     hass.http.register_view(HarnessFactsView)
 
 
@@ -675,6 +676,27 @@ class HarnessOptionsView(HomeAssistantView):
         return self.json({"entry": _entry_status(hass, entry)})
 
 
+def _entry_revision(entry: ConfigEntry) -> str:
+    """Return a fencing token derived from the last entry modification."""
+    modified = getattr(entry, "modified_at", None)
+    if modified is None:
+        return ""
+    return modified.isoformat()
+
+
+_MASK_MIN_SECRET_LENGTH = 12
+
+
+def _masked_secret(value: object) -> str:
+    """Return a short, non-reversible hint for a stored secret."""
+    text = str(value or "")
+    if not text:
+        return ""
+    if len(text) < _MASK_MIN_SECRET_LENGTH:
+        return "\u2022\u2022\u2022\u2022"
+    return f"\u2022\u2022\u2022\u2022{text[-4:]}"
+
+
 def _config_status(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
     """Return a redacted, panel-safe snapshot of one config entry."""
     options = entry.options
@@ -682,8 +704,10 @@ def _config_status(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
         "entry_id": entry.entry_id,
         "title": entry.title,
         "state": getattr(entry.state, "value", str(entry.state)),
+        "revision": _entry_revision(entry),
         "base_url": entry.data.get(CONF_BASE_URL),
         "has_api_key": bool(entry.data.get(CONF_API_KEY)),
+        "api_key_hint": _masked_secret(entry.data.get(CONF_API_KEY)),
         "options": redact_options(options),
         "model_candidates": _model_candidates(options, entry),
         "llm_hass_apis": [
@@ -732,6 +756,14 @@ class HarnessConfigView(HomeAssistantView):
                 "entry_not_found",
             )
 
+        expected_revision = payload.get("revision")
+        if expected_revision and expected_revision != _entry_revision(entry):
+            return self.json_message(
+                "Configuration changed elsewhere; reload and retry",
+                HTTPStatus.CONFLICT,
+                "revision_conflict",
+            )
+
         data_payload = payload.get("data")
         options_payload = payload.get("options")
         new_data = dict(entry.data)
@@ -754,20 +786,12 @@ class HarnessConfigView(HomeAssistantView):
             if base_url != new_data.get(CONF_BASE_URL) or api_key != new_data.get(
                 CONF_API_KEY
             ):
-                client = LLMGatewayClient(
-                    async_get_clientsession(hass), base_url, api_key
-                )
-                try:
-                    await client.async_list_models()
-                except LLMGatewayAuthError:
+                _, error_code = await _fetch_provider_models(hass, base_url, api_key)
+                if error_code:
                     return self.json_message(
-                        "Invalid API key", HTTPStatus.BAD_REQUEST, "invalid_auth"
-                    )
-                except LLMGatewayError:
-                    return self.json_message(
-                        "Cannot reach the model provider",
+                        _PROBE_ERROR_MESSAGES[error_code],
                         HTTPStatus.BAD_REQUEST,
-                        "cannot_connect",
+                        error_code,
                     )
             new_data[CONF_BASE_URL] = base_url
             if api_key != new_data.get(CONF_API_KEY):
@@ -832,20 +856,55 @@ class HarnessConfigTestView(HomeAssistantView):
         except ValueError as err:
             return self.json_message(str(err), HTTPStatus.BAD_REQUEST, "invalid_data")
 
-        client = LLMGatewayClient(async_get_clientsession(hass), base_url, api_key)
-        try:
-            await client.async_list_models()
-        except LLMGatewayAuthError:
+        _, error_code = await _fetch_provider_models(hass, base_url, api_key)
+        if error_code:
             return self.json_message(
-                "Invalid API key", HTTPStatus.BAD_REQUEST, "invalid_auth"
-            )
-        except LLMGatewayError:
-            return self.json_message(
-                "Cannot reach the model provider",
-                HTTPStatus.BAD_REQUEST,
-                "cannot_connect",
+                _PROBE_ERROR_MESSAGES[error_code], HTTPStatus.BAD_REQUEST, error_code
             )
         return self.json({"ok": True})
+
+
+class HarnessConfigModelsView(HomeAssistantView):
+    """Fetch live model ids from the provider for the panel pickers."""
+
+    name = f"api:{DOMAIN}:harness:config_models"
+    url = f"{API_BASE}/harness/config/models"
+
+    @require_admin
+    async def post(self, request: web.Request) -> web.Response:
+        """Return the model ids advertised by the configured endpoint."""
+        try:
+            payload = await request.json()
+        except ValueError:
+            return self.json_message(
+                "Invalid JSON body", HTTPStatus.BAD_REQUEST, "invalid_json"
+            )
+        if not isinstance(payload, dict):
+            return self.json_message(
+                "JSON body must be an object",
+                HTTPStatus.BAD_REQUEST,
+                "invalid_payload",
+            )
+
+        hass: HomeAssistant = request.app["hass"]
+        entry = _select_entry(hass, payload.get("entry_id"))
+        current = dict(entry.data) if entry else {}
+        data_payload = payload.get("data")
+        if not isinstance(data_payload, dict):
+            data_payload = {}
+
+        try:
+            base_url = _config_base_url(data_payload, current)
+            api_key = _config_api_key(data_payload, current)
+        except ValueError as err:
+            return self.json_message(str(err), HTTPStatus.BAD_REQUEST, "invalid_data")
+
+        models, error_code = await _fetch_provider_models(hass, base_url, api_key)
+        if error_code:
+            return self.json_message(
+                _PROBE_ERROR_MESSAGES[error_code], HTTPStatus.BAD_REQUEST, error_code
+            )
+        return self.json({"models": models or []})
 
 
 class HarnessFactsView(HomeAssistantView):
@@ -1312,6 +1371,27 @@ def _validate_editable_options(payload: dict[str, Any]) -> dict[str, Any]:  # no
             updates[CONF_PROVIDER_PROFILES] = ""
 
     return updates
+
+
+_PROBE_ERROR_MESSAGES = {
+    "invalid_auth": "Invalid API key",
+    "cannot_connect": "Cannot reach the model provider",
+}
+
+
+async def _fetch_provider_models(
+    hass: HomeAssistant,
+    base_url: str,
+    api_key: str,
+) -> tuple[list[str] | None, str | None]:
+    """Probe the provider; return (models, error_code) with exactly one set."""
+    client = LLMGatewayClient(async_get_clientsession(hass), base_url, api_key)
+    try:
+        return await client.async_list_models(), None
+    except LLMGatewayAuthError:
+        return None, "invalid_auth"
+    except LLMGatewayError:
+        return None, "cannot_connect"
 
 
 def _config_base_url(data_payload: dict[str, Any], current: dict[str, Any]) -> str:

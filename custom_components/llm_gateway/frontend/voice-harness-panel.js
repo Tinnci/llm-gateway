@@ -285,6 +285,8 @@ const I18N = {
     "config.connection_failed": "Connection failed: {message}",
     "config.models": "Models",
     "config.refresh_models": "Refresh candidates from /v1/models",
+    "config.models_refreshed": "Loaded {count} models from the provider.",
+    "config.revision_conflict": "Configuration was changed elsewhere. Latest values loaded — review and save again.",
     "config.routing_budgets": "Routing and budgets",
     "config.sampling": "Sampling",
     "config.extra_body": "Extra body (JSON)",
@@ -709,6 +711,8 @@ const I18N = {
     "config.connection_failed": "连接失败：{message}",
     "config.models": "模型",
     "config.refresh_models": "从 /v1/models 刷新候选",
+    "config.models_refreshed": "已从服务商获取 {count} 个模型。",
+    "config.revision_conflict": "配置已在其他地方被修改，已重新加载最新值，请确认后再次保存。",
     "config.routing_budgets": "路由与预算",
     "config.sampling": "采样参数",
     "config.extra_body": "额外请求体（JSON）",
@@ -973,6 +977,8 @@ class VoiceHarnessPanel extends HTMLElement {
     /** @type {any} */
     this._configData = null;
     this._configSaved = "";
+    /** @type {Record<string, string[]>} */
+    this._liveModels = {};
     this._replayStatus = "";
     this._replayComparison = null;
     this._trajectoryQuery = "";
@@ -1213,7 +1219,19 @@ class VoiceHarnessPanel extends HTMLElement {
       body: payload ? JSON.stringify(payload) : undefined,
     });
     if (!response.ok) {
-      throw new Error(`${response.status} ${response.statusText}`);
+      let message = `${response.status} ${response.statusText}`;
+      let code = "";
+      try {
+        const body = await response.json();
+        if (body && typeof body === "object") {
+          message = String(body.message || message);
+          code = String(body.code || "");
+        }
+      } catch (_err) {
+        // Keep the status-text fallback.
+      }
+      const err = Object.assign(new Error(message), { code });
+      throw err;
     }
     return response.json();
   }
@@ -1284,6 +1302,13 @@ class VoiceHarnessPanel extends HTMLElement {
       const form = button.closest("form");
       if (form) {
         this._testConnection(form);
+      }
+      return;
+    }
+    if (button.dataset.action === "refresh-models") {
+      const form = button.closest("form");
+      if (form) {
+        this._refreshModels(form);
       }
       return;
     }
@@ -1508,7 +1533,15 @@ class VoiceHarnessPanel extends HTMLElement {
       }
     }
 
-    this._saveConfig({ entry_id: entryId, data: dataPayload, options });
+    const cfgEntry = this._configData?.entries?.find(
+      (item) => item.entry_id === entryId,
+    );
+    this._saveConfig({
+      entry_id: entryId,
+      revision: cfgEntry?.revision || "",
+      data: dataPayload,
+      options,
+    });
   }
 
   async _saveConfig(payload) {
@@ -1532,6 +1565,13 @@ class VoiceHarnessPanel extends HTMLElement {
       }
       this._configSaved = this._t("config.saved");
     } catch (err) {
+      if (err.code === "revision_conflict") {
+        this._error = this._t("config.revision_conflict");
+        // Drop the stale fence and pull the winning revision + values.
+        this._busy = false;
+        await this._loadConfig();
+        return;
+      }
       this._error = err.message || String(err);
     } finally {
       this._busy = false;
@@ -1567,6 +1607,82 @@ class VoiceHarnessPanel extends HTMLElement {
         resultEl.textContent = this._t("config.connection_failed", {
           message: err.message || String(err),
         });
+      }
+    }
+  }
+
+  /** @param {HTMLFormElement} form */
+  async _refreshModels(form) {
+    const entryId = form.dataset.entryId || "";
+    const data = new FormData(form);
+    const statusEl = form.querySelector("[data-models-status]");
+    /** @type {HTMLButtonElement | null} */
+    const button = form.querySelector('[data-action="refresh-models"]');
+    if (button) {
+      button.disabled = true;
+    }
+    try {
+      const result = await this._api(
+        "POST",
+        "llm_gateway/harness/config/models",
+        {
+          entry_id: entryId,
+          data: {
+            base_url: String(data.get("base_url") || "").trim(),
+            api_key: String(data.get("api_key") || "").trim(),
+          },
+        },
+      );
+      const models = Array.isArray(result.models) ? result.models : [];
+      this._liveModels[entryId] = models;
+      this._updateModelSelects(form, models);
+      if (statusEl) {
+        statusEl.textContent = this._t("config.models_refreshed", {
+          count: models.length,
+        });
+      }
+    } catch (err) {
+      if (statusEl) {
+        statusEl.textContent = this._t("config.connection_failed", {
+          message: err.message || String(err),
+        });
+      }
+    } finally {
+      if (button) {
+        button.disabled = false;
+      }
+    }
+  }
+
+  /**
+   * Swap in freshly fetched model ids without re-rendering the form,
+   * preserving whatever the user already selected or typed.
+   */
+  _updateModelSelects(form, models) {
+    const live = (models || []).filter(Boolean);
+    for (const tier of ["fast", "mid", "deep"]) {
+      const select = form.querySelector(`select[data-model-select="${tier}"]`);
+      if (!select) {
+        continue;
+      }
+      const customInput = form.querySelector(`input[data-model-custom="${tier}"]`);
+      const selected = select.value === "__custom__"
+        ? String(customInput?.value || "").trim()
+        : select.value;
+      const useCustom = Boolean(selected) && !live.includes(selected);
+      const pickerOptions = Array.from(new Set([
+        ...live,
+        ...(selected && !useCustom ? [selected] : []),
+      ]));
+      select.innerHTML = [
+        ...pickerOptions.map((model) => `
+          <option value="${escapeHtml(model)}"${model === selected ? " selected" : ""}>${escapeHtml(model)}</option>
+        `),
+        `<option value="__custom__"${useCustom ? " selected" : ""}>${escapeHtml(this._t("settings.model_custom"))}</option>`,
+      ].join("");
+      if (customInput) {
+        customInput.value = useCustom ? selected : "";
+        customInput.hidden = !useCustom;
       }
     }
   }
@@ -2035,9 +2151,13 @@ class VoiceHarnessPanel extends HTMLElement {
 
   _configForm(entry, cfg) {
     const options = cfg.options || {};
-    const candidates = Array.isArray(cfg.model_candidates)
+    const liveCandidates = this._liveModels[entry.entry_id];
+    const baseCandidates = Array.isArray(cfg.model_candidates)
       ? cfg.model_candidates
       : (this._data?.editable?.models || []);
+    const candidates = Array.isArray(liveCandidates)
+      ? Array.from(new Set([...baseCandidates, ...liveCandidates.filter(Boolean)]))
+      : baseCandidates;
     const llmHassApis = Array.isArray(cfg.llm_hass_apis) ? cfg.llm_hass_apis : [];
     const currentHassApis = Array.isArray(options.llm_hass_api)
       ? options.llm_hass_api
@@ -2071,6 +2191,7 @@ class VoiceHarnessPanel extends HTMLElement {
           <label>
             <span>${escapeHtml(this._t("config.api_key"))}</span>
             <input name="api_key" type="password" placeholder="${cfg.has_api_key ? escapeHtml(this._t("config.api_key_hint")) : ""}" autocomplete="off" maxlength="512">
+              ${cfg.api_key_hint ? `<small>${escapeHtml(cfg.api_key_hint)}</small>` : ""}
           </label>
           <button type="button" class="secondary" data-action="test-connection">
             <ha-icon icon="mdi:lan-connect"></ha-icon>
@@ -2081,6 +2202,13 @@ class VoiceHarnessPanel extends HTMLElement {
 
         <fieldset>
           <legend>${escapeHtml(this._t("config.models"))}</legend>
+          <div class="modelsToolbar">
+            <button type="button" class="secondary" data-action="refresh-models">
+              <ha-icon icon="mdi:refresh"></ha-icon>
+              <span>${escapeHtml(this._t("config.refresh_models"))}</span>
+            </button>
+            <div class="meta" data-models-status></div>
+          </div>
           ${["fast", "mid", "deep"].map((tier) => {
             const current = options[`${tier}_model`] || "";
             const known = Array.from(new Set((candidates || []).filter(Boolean)));
@@ -4903,6 +5031,17 @@ const styles = `
     display: flex;
     align-items: center;
     gap: 10px;
+  }
+
+  .modelsToolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 4px 0 10px;
+  }
+
+  .modelsToolbar [data-models-status] {
+    min-height: 18px;
   }
 
   .checkRow input {
