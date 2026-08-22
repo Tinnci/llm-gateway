@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 
 SUMMARY_TEXT_LIMIT = 1200
 RAW_TEXT_LIMIT = 12000
+EXTERNAL_EVENT_CORRELATION_WINDOW_SECONDS = 30
 TRACE_ENCODING = "json+zlib+base64"
 _SECRET_MARKERS = ("api_key", "apikey", "authorization", "password", "secret", "token")
 _NON_BLOCKING_STAGES = {
@@ -561,11 +562,24 @@ def _event_stream(
 
     asr = diagnostic_snapshot.get("asr")
     endpoint = asr.get("endpoint") if isinstance(asr, dict) else None
-    if isinstance(endpoint, dict) and endpoint.get("endpoint_detected") is True:
+    first_local = events[0] if events else {}
+    endpoint_at = (
+        str(endpoint.get("observed_at") or generated_at)
+        if isinstance(endpoint, dict)
+        else ""
+    )
+    if (
+        isinstance(endpoint, dict)
+        and endpoint.get("endpoint_detected") is True
+        and _events_within_correlation_window(
+            endpoint_at,
+            first_local.get("occurred_at"),
+        )
+    ):
         evidence = _external_event(
             turn_id=turn_id,
             event_type="asr.endpoint.detected",
-            occurred_at=generated_at,
+            occurred_at=endpoint_at,
             payload=endpoint,
         )
         events.insert(0, evidence)
@@ -582,18 +596,47 @@ def _event_stream(
             ),
             None,
         )
-        events.append(
-            _external_event(
-                turn_id=turn_id,
-                event_type="playback.interrupt.observed",
-                occurred_at=generated_at,
-                payload=interrupt,
-                caused_by=str(requested.get("event_id") or "")
-                if isinstance(requested, dict)
-                else "",
-            )
+        requested_payload = (
+            requested.get("payload") if isinstance(requested, dict) else {}
         )
+        requested_payload = (
+            requested_payload if isinstance(requested_payload, dict) else {}
+        )
+        request_id = str(requested_payload.get("request_id") or "")
+        observed_id = str(interrupt.get("request_id") or "")
+        triggered_at = str(interrupt.get("triggered_at") or generated_at)
+        if (
+            request_id
+            and observed_id == request_id
+            and _events_within_correlation_window(
+                triggered_at,
+                requested.get("occurred_at") if isinstance(requested, dict) else "",
+            )
+        ):
+            events.append(
+                _external_event(
+                    turn_id=turn_id,
+                    event_type="playback.interrupt.observed",
+                    occurred_at=triggered_at,
+                    payload=interrupt,
+                    caused_by=str(requested.get("event_id") or ""),
+                )
+            )
     return events
+
+
+def _events_within_correlation_window(left: object, right: object) -> bool:
+    """Require two producer timestamps to describe the same short voice turn."""
+    try:
+        left_at = datetime.fromisoformat(str(left))
+        right_at = datetime.fromisoformat(str(right))
+    except ValueError:
+        return False
+    if left_at.tzinfo is None or right_at.tzinfo is None:
+        return False
+    return abs((left_at - right_at).total_seconds()) <= (
+        EXTERNAL_EVENT_CORRELATION_WINDOW_SECONDS
+    )
 
 
 def _external_event(
@@ -615,7 +658,7 @@ def _external_event(
         "monotonic_ms": None,
         "caused_by": caused_by,
         "privacy": "trace_safe",
-        "correlation": "snapshot_time_window",
+        "correlation": ("producer_request_id" if caused_by else "snapshot_time_window"),
         "payload": _bound_mapping(payload, limit=1200),
     }
 
@@ -659,11 +702,7 @@ def _causal_chain_summary(event_stream: list[dict[str, Any]]) -> dict[str, Any]:
         "required_event_types": list(required),
         "missing_event_types": missing,
         "barge_in_stop_latency_ms": _optional_nonnegative_int(latency),
-        "evidence_mode": (
-            "snapshot_time_window"
-            if observed.get("correlation") == "snapshot_time_window"
-            else "none"
-        ),
+        "evidence_mode": str(observed.get("correlation") or "none"),
     }
 
 

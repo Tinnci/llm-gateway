@@ -2105,6 +2105,7 @@ class LLMGatewayConversationEntity(
         service_name = "kukui_voice_barge_in"
         attrs = {
             "service": f"{service_domain}.{service_name}",
+            "request_id": run_id,
             "previous_turn_id": previous_turn_id,
             "new_turn_id": run_id,
         }
@@ -2123,6 +2124,7 @@ class LLMGatewayConversationEntity(
                 service_name,
                 {
                     "reason": "superseded_by_new_turn",
+                    "request_id": run_id,
                     "previous_turn_id": previous_turn_id,
                     "new_turn_id": run_id,
                 },

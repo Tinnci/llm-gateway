@@ -30,6 +30,17 @@ def test_satellite_diagnostic_snapshot_reads_recorder_safe_projection(hass) -> N
                 },
             ],
             "full_snapshot_endpoint": ("http://127.0.0.1:10710/diagnostic-snapshot"),
+            "asr_endpoint": {
+                "state": "complete",
+                "endpoint_detected": True,
+                "request_id": "asr-42",
+                "observed_at": "2026-07-12T01:55:18+00:00",
+            },
+            "playback_interrupt": {
+                "phase": "interrupted",
+                "request_id": "turn-42",
+                "barge_in_stop_latency_ms": 38,
+            },
         },
     )
 
@@ -44,6 +55,8 @@ def test_satellite_diagnostic_snapshot_reads_recorder_safe_projection(hass) -> N
     assert snapshot["first_failing_check"]["blocking_dependents"] == [
         "acoustic.barge_in.measured"
     ]
+    assert snapshot["asr"]["endpoint"]["request_id"] == "asr-42"
+    assert snapshot["playback_interrupt"]["request_id"] == "turn-42"
 
 
 def test_first_failing_check_ignores_blocked_checks() -> None:

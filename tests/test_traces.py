@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from custom_components.llm_gateway.const import (
     CONF_DIAGNOSTIC_TRACES,
     CONF_TRACE_INCLUDE_RAW_MESSAGES,
@@ -170,28 +172,28 @@ async def test_trace_store_attaches_satellite_diagnostic_snapshot(hass):
 
 
 async def test_trace_store_projects_endpoint_and_interrupt_evidence(hass):
+    observed_at = datetime.now(UTC).isoformat()
     hass.states.async_set(
         "sensor.kukui_diagnostic_snapshot",
         "ok",
         {
-            "snapshot": {
-                "schema_version": 1,
-                "generated_at": "2026-08-22T08:00:00+00:00",
-                "asr": {
-                    "endpoint": {
-                        "endpoint_detected": True,
-                        "source": "doubao-asr",
-                        "endpoint_latency_ms": 930,
-                    }
-                },
-                "playback_interrupt": {
-                    "phase": "interrupted",
-                    "source": "kukui-display-agent",
-                    "request_id": "interrupt-1",
-                    "barge_in_stop_latency_ms": 42,
-                },
-                "checks": [],
-            }
+            "schema_version": 1,
+            "generated_at": observed_at,
+            "non_ok_checks": [],
+            "asr_endpoint": {
+                "endpoint_detected": True,
+                "source": "doubao-asr",
+                "request_id": "asr-1",
+                "observed_at": observed_at,
+                "endpoint_latency_ms": 930,
+            },
+            "playback_interrupt": {
+                "phase": "interrupted",
+                "source": "kukui-display-agent",
+                "request_id": "interrupt-1",
+                "triggered_at": observed_at,
+                "barge_in_stop_latency_ms": 42,
+            },
         },
     )
     recorder = VoiceRunRecorder()
@@ -243,8 +245,53 @@ async def test_trace_store_projects_endpoint_and_interrupt_evidence(hass):
         ],
         "missing_event_types": [],
         "barge_in_stop_latency_ms": 42,
-        "evidence_mode": "snapshot_time_window",
+        "evidence_mode": "producer_request_id",
     }
+
+
+async def test_trace_store_rejects_unmatched_playback_interrupt_evidence(hass):
+    observed_at = datetime.now(UTC).isoformat()
+    hass.states.async_set(
+        "sensor.kukui_diagnostic_snapshot",
+        "ok",
+        {
+            "generated_at": observed_at,
+            "non_ok_checks": [],
+            "playback_interrupt": {
+                "phase": "interrupted",
+                "request_id": "another-turn",
+                "triggered_at": observed_at,
+                "barge_in_stop_latency_ms": 12,
+            },
+        },
+    )
+    recorder = VoiceRunRecorder()
+    turn_id = recorder.start(conversation_id="conv-2", user_text="停")
+    recorder.mark(turn_id, "turn_started")
+    recorder.mark(turn_id, "barge_in_requested", attrs={"request_id": turn_id})
+    store = TraceStore(hass, "entry-unmatched-interrupt")
+    await store.async_load()
+
+    await store.async_record_turn(
+        {CONF_DIAGNOSTIC_TRACES: True},
+        TraceTurn(
+            conversation_id="conv-2",
+            user_text="停",
+            assistant_text="已停止。",
+            route={"kind": "local_control"},
+            latency_ms=20,
+            status="complete",
+            raw_payload={},
+            run_id=turn_id,
+            timeline=recorder.finish(turn_id, status="complete"),
+        ),
+    )
+
+    record = store.snapshot()["records"][0]
+    assert "playback.interrupt.observed" not in {
+        event["event_type"] for event in record["event_stream"]
+    }
+    assert record["causal_chain"]["complete"] is False
 
 
 async def test_trace_store_keeps_blocked_diagnostics_distinct(hass):

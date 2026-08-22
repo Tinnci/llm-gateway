@@ -20,6 +20,8 @@ def satellite_diagnostic_snapshot(hass: HomeAssistant) -> dict[str, Any]:
         return snapshot_with_first_failing_check(snapshot)
     compact_checks = state.attributes.get("non_ok_checks")
     if isinstance(compact_checks, list):
+        asr_endpoint = state.attributes.get("asr_endpoint")
+        playback_interrupt = state.attributes.get("playback_interrupt")
         return snapshot_with_first_failing_check(
             {
                 "schema_version": state.attributes.get("schema_version"),
@@ -35,6 +37,12 @@ def satellite_diagnostic_snapshot(hass: HomeAssistant) -> dict[str, Any]:
                 "checks": [
                     check for check in compact_checks if isinstance(check, dict)
                 ],
+                "asr": {
+                    "endpoint": asr_endpoint if isinstance(asr_endpoint, dict) else {}
+                },
+                "playback_interrupt": (
+                    playback_interrupt if isinstance(playback_interrupt, dict) else {}
+                ),
                 "full_snapshot_endpoint": state.attributes.get(
                     "full_snapshot_endpoint"
                 ),

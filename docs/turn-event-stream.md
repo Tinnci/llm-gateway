@@ -27,11 +27,13 @@ source process and must not be compared across devices.
 
 Gateway creates `turn_id` when Home Assistant delivers the final transcript.
 Upstream ASR evidence that predates that boundary is correlated by its provider
-session id and the closest compatible UTC interval. TTS and satellite playback
-adapters should propagate `turn_id` when their integration boundary supports
-it; until then, their bounded traces are correlated by entity/source identity
-and UTC interval. A correlation is evidence, not proof of strict global event
-ordering.
+request id and a bounded 30-second UTC interval. The satellite playback adapter
+receives the Gateway `turn_id` as its `request_id`; the observed stop is only
+joined to a request when that producer identity matches and its timestamp falls
+inside the same interval. TTS adapters should propagate `turn_id` when their
+integration seam supports it. A time-window correlation is evidence rather than
+proof of strict global ordering; a producer request-id match is stronger but
+still does not make clocks comparable for latency calculations.
 
 `DiagnosticSnapshot` continues to describe current composed-system health. The
 turn event stream describes what happened during one interaction; neither is a
