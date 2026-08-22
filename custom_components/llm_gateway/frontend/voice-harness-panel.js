@@ -191,6 +191,7 @@ const I18N = {
     "runs.active_stage": "Active stage",
     "runs.running_duration": "Running duration",
     "runs.completion": "Completion",
+    "runs.usage": "Token usage",
     "runs.search_gate_reason": "Gate",
     "runs.search_queries": "Queries",
     "runs.search_providers": "Providers",
@@ -625,6 +626,7 @@ const I18N = {
     "runs.active_stage": "活跃阶段",
     "runs.running_duration": "运行时长",
     "runs.completion": "完成状态",
+    "runs.usage": "Token 用量",
     "runs.search_gate_reason": "搜索门控",
     "runs.search_queries": "查询",
     "runs.search_providers": "Provider",
@@ -3396,6 +3398,12 @@ class VoiceHarnessPanel extends HTMLElement {
               completion.last_active_stage ? `${this._t("runs.active_stage")}: ${completion.last_active_stage}` : "",
               completion.running_duration_ms ? `${this._t("runs.running_duration")}: ${Number(completion.running_duration_ms)} ms` : "",
             ])}
+            ${Object.keys(record.usage || {}).length ? this._detailItem(
+              this._t("runs.usage"),
+              Object.entries(record.usage).map(
+                ([key, value]) => `${key}: ${Number(value).toLocaleString()}`,
+              ),
+            ) : ""}
             ${this._detailItem(this._t("runs.final_speech"), [
               speech.final || record.final_speech_text || record.assistant_text || "",
               `${Number(record.latency_ms || 0)} ms`,

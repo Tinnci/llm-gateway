@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from dataclasses import asdict, dataclass
 from http import HTTPStatus
@@ -20,6 +21,16 @@ PROBE_SYSTEM_PROMPT = "You are a concise voice assistant."
 PROBE_USER_PROMPT = "用一句简短的话介绍你自己。"
 PROBE_MAX_TOKENS = 32
 PROBE_TIMEOUT_S = 25
+
+
+@dataclass(slots=True)
+class ModelCatalogFetch:
+    """One provider /models exchange, validator-aware for caching."""
+
+    models: list[str]
+    etag: str | None = None
+    last_modified: str | None = None
+    not_modified: bool = False
 
 
 @dataclass(slots=True)
@@ -51,6 +62,19 @@ class LLMGatewayConnectionError(LLMGatewayError):
     """Could not reach the endpoint."""
 
 
+class LLMGatewayQuotaExhaustedError(LLMGatewayError):
+    """Terminal provider-side quota/balance exhaustion (never retryable)."""
+
+
+class LLMGatewayCatalogNotModifiedError(LLMGatewayError):
+    """Model catalog revalidation answered 304 Not Modified."""
+
+    def __init__(self, *, etag: str | None, last_modified: str | None) -> None:
+        super().__init__("Catalog not modified")
+        self.etag = etag
+        self.last_modified = last_modified
+
+
 class LLMGatewayHTTPError(LLMGatewayError):
     """Endpoint returned an HTTP error status."""
 
@@ -59,6 +83,24 @@ class LLMGatewayHTTPError(LLMGatewayError):
         self.status = status
         self.body = body
         super().__init__(f"Endpoint returned {status}: {body[:300]}")
+
+
+# Terminal wording means the account itself is out of budget — retrying can
+# never succeed and only burns time. Transient rate limits (plain 429 without
+# this wording) deliberately stay LLMGatewayHTTPError.
+_QUOTA_EXHAUSTED_RE = re.compile(
+    r"\binsufficient[\s_-]+(?:quota|balance|credits?)\b"
+    r"|\b(?:quota|usage[\s_-]+limit)[\s_-]+(?:exceeded|exhausted|reached)\b"
+    r"|\bexceed(?:ed|s)?[\s_-]+(?:(?:your|the)[\s_-]+)?(?:current[\s_-]+)?quota\b"
+    r"|\b(?:balance|credits?)[\s_-]+(?:exhausted|depleted)\b"
+    r"|\bout[\s_-]+of[\s_-]+(?:credits?|budget)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_quota_exhausted(detail: str) -> bool:
+    """Return True for provider text identifying an exhausted account quota."""
+    return bool(_QUOTA_EXHAUSTED_RE.search(detail or ""))
 
 
 class LLMGatewayClient:
@@ -79,14 +121,17 @@ class LLMGatewayClient:
             "Content-Type": "application/json",
         }
 
-    async def _request(
+    async def _request(  # noqa: PLR0913 - explicit keyword flags beat a params blob
         self,
         method: str,
         path: str,
         *,
         json_payload: dict[str, Any] | None,
         timeout_s: int,
-    ) -> dict[str, Any]:
+        extra_headers: dict[str, str] | None = None,
+        allow_not_modified: bool = False,
+        return_headers: bool = False,
+    ) -> dict[str, Any] | tuple[dict[str, Any], str | None, str | None]:
         url = f"{self._base_url}/{path.lstrip('/')}"
         started = time.monotonic()
         timeout_s = max(1, int(timeout_s))
@@ -104,10 +149,13 @@ class LLMGatewayClient:
         )
         try:
             async with asyncio.timeout(timeout_s):
+                request_headers = dict(self._headers)
+                if extra_headers:
+                    request_headers.update(extra_headers)
                 async with self._session.request(
                     method,
                     url,
-                    headers=self._headers,
+                    headers=request_headers,
                     json=json_payload,
                     timeout=aiohttp.ClientTimeout(total=timeout_s),
                 ) as resp:
@@ -125,9 +173,23 @@ class LLMGatewayClient:
                         raise LLMGatewayAuthError(
                             f"Authentication failed ({resp.status}); check the API key"
                         )
+                    etag = resp.headers.get("ETag")
+                    last_modified = resp.headers.get("Last-Modified")
+                    if allow_not_modified and resp.status == HTTPStatus.NOT_MODIFIED:
+                        raise LLMGatewayCatalogNotModifiedError(
+                            etag=etag or last_modified,
+                            last_modified=last_modified,
+                        )
                     if resp.status >= HTTPStatus.BAD_REQUEST:
+                        if _is_quota_exhausted(body):
+                            raise LLMGatewayQuotaExhaustedError(
+                                f"Provider quota or balance exhausted ({resp.status})"
+                            )
                         raise LLMGatewayHTTPError(resp.status, body)
-                    return _parse_json(body)
+                    data = _parse_json(body)
+                    if return_headers:
+                        return data, etag, last_modified
+                    return data
         except TimeoutError as err:
             LOGGER.warning(
                 "Gateway request timed out method=%s path=%s elapsed_s=%.3f "
@@ -151,11 +213,44 @@ class LLMGatewayClient:
 
     async def async_list_models(self) -> list[str]:
         """Return the model ids the endpoint advertises (sorted)."""
-        data = await self._request(
-            "GET", "models", json_payload=None, timeout_s=TIMEOUT_MODELS
-        )
+        fetch = await self.async_list_models_conditional()
+        return fetch.models
+
+    async def async_list_models_conditional(
+        self,
+        *,
+        etag: str | None = None,
+        last_modified: str | None = None,
+    ) -> ModelCatalogFetch:
+        """Fetch the catalog with conditional validators for caching."""
+        headers: dict[str, str] = {}
+        if etag:
+            headers["If-None-Match"] = etag
+        if last_modified:
+            headers["If-Modified-Since"] = last_modified
+        try:
+            data, etag_out, last_modified_out = await self._request(
+                "GET",
+                "models",
+                json_payload=None,
+                timeout_s=TIMEOUT_MODELS,
+                extra_headers=headers or None,
+                allow_not_modified=bool(headers),
+                return_headers=True,
+            )
+        except LLMGatewayCatalogNotModifiedError as err:
+            return ModelCatalogFetch(
+                models=[],
+                etag=err.etag,
+                last_modified=err.last_modified,
+                not_modified=True,
+            )
         models = [m["id"] for m in data.get("data", []) if m.get("id")]
-        return sorted(models)
+        return ModelCatalogFetch(
+            models=sorted(models),
+            etag=etag_out,
+            last_modified=last_modified_out,
+        )
 
     async def async_probe_latency(
         self,
@@ -227,7 +322,7 @@ class LLMGatewayClient:
         temperature: float,
         top_p: float,
     ) -> dict[str, Any]:
-        """Run a (non-streaming) chat completion and return the assistant message."""
+        """Run a non-streaming chat completion; return (message, usage)."""
         payload: dict[str, Any] = {
             "model": model,
             "messages": messages,
@@ -264,10 +359,11 @@ class LLMGatewayClient:
             timeout_s=timeout_s,
         )
         try:
-            return data["choices"][0]["message"]
+            message = data["choices"][0]["message"]
         except (KeyError, IndexError, TypeError) as err:
             LOGGER.debug("Unexpected completion payload: %s", data)
             raise LLMGatewayError("Malformed response from endpoint") from err
+        return message, _parse_usage(data)
 
 
 def _parse_json(body: str) -> dict[str, Any]:
@@ -285,6 +381,41 @@ def _delta_text(chunk: dict[str, Any]) -> str:
         return ""
     content = delta.get("content") if isinstance(delta, dict) else None
     return str(content) if content else ""
+
+
+def _parse_usage(data: dict[str, Any]) -> dict[str, int] | None:
+    """Extract provider-neutral token usage from a completion response.
+
+    Normalizes OpenAI (`prompt_tokens` + `prompt_tokens_details.cached_tokens`)
+    and DeepSeek (`prompt_cache_hit_tokens`) shapes into four buckets; returns
+    None when the provider reports nothing usable.
+    """
+    raw = data.get("usage")
+    if not isinstance(raw, dict):
+        return None
+
+    def _int(value: object) -> int | None:
+        return value if isinstance(value, int) and value >= 0 else None
+
+    prompt = _int(raw.get("prompt_tokens"))
+    completion = _int(raw.get("completion_tokens"))
+    details = raw.get("prompt_tokens_details")
+    cached = (
+        _int(details.get("cached_tokens")) if isinstance(details, dict) else None
+    ) or _int(raw.get("prompt_cache_hit_tokens"))
+    total = _int(raw.get("total_tokens"))
+    if total is None and (prompt is not None or completion is not None):
+        total = (prompt or 0) + (completion or 0)
+    usage: dict[str, int] = {}
+    if prompt is not None:
+        usage["input_tokens"] = prompt
+    if completion is not None:
+        usage["output_tokens"] = completion
+    if total is not None:
+        usage["total_tokens"] = total
+    if cached is not None:
+        usage["cached_input_tokens"] = cached
+    return usage or None
 
 
 async def _consume_probe_stream(

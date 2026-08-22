@@ -142,6 +142,7 @@ class TraceStore:
             "route_decision": _route_decision_summary(turn.route, timeline_spans),
             "latency_ms": turn.latency_ms,
             "status": turn.status,
+            "usage": _bound_value(_usage_summary(turn.raw_payload), limit=200, depth=1),
             "completion": _completion_summary(
                 turn.status, turn.latency_ms, timeline_spans
             ),
@@ -503,6 +504,21 @@ def _first_response_text(
         ),
         240,
     )
+
+
+def _usage_summary(raw_payload: dict[str, Any]) -> dict[str, int]:
+    """Return the provider-reported token usage attached to this turn."""
+    route = raw_payload.get("route")
+    provider = route.get("provider") if isinstance(route, dict) else None
+    usage = provider.get("usage") if isinstance(provider, dict) else None
+    if not isinstance(usage, dict):
+        return {}
+    clean = {
+        str(key): int(value)
+        for key, value in usage.items()
+        if isinstance(key, str) and isinstance(value, int)
+    }
+    return dict(sorted(clean.items()))
 
 
 def _completion_summary(

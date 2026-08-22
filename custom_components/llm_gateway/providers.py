@@ -90,6 +90,7 @@ class ChatFallbackResult:
     message: dict[str, Any]
     provider: dict[str, Any]
     attempts: list[dict[str, Any]]
+    usage: dict[str, Any] | None = None
 
 
 class ProviderSelector:
@@ -251,7 +252,7 @@ async def async_chat_completion_with_fallback(  # noqa: PLR0913
             else None
         )
         try:
-            message = await client.async_chat_completion(
+            message, usage = await client.async_chat_completion(
                 model=candidate_route.model,
                 messages=messages,
                 tools=tools,
@@ -317,14 +318,21 @@ async def async_chat_completion_with_fallback(  # noqa: PLR0913
                 candidate_route.kind,
                 len(attempts),
             )
+        # Usage is attached to the provider facts so it flows into route_trace
+        # -> raw_payload -> TraceStore without any extra plumbing: persist the
+        # fact once, derive every view later.
+        provider_info: dict[str, Any] = {
+            "name": provider_name,
+            "model": candidate_route.model,
+            "fallback_used": index > 0,
+            "fallback_reason": type(last_error).__name__ if index else "",
+        }
+        if usage:
+            provider_info["usage"] = usage
         return ChatFallbackResult(
             message=message,
-            provider={
-                "name": provider_name,
-                "model": candidate_route.model,
-                "fallback_used": index > 0,
-                "fallback_reason": type(last_error).__name__ if index else "",
-            },
+            usage=usage,
+            provider=provider_info,
             attempts=[attempt.as_dict() for attempt in attempts],
         )
 

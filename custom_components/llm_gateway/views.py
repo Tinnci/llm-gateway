@@ -22,6 +22,7 @@ from .api import (
     LLMGatewayAuthError,
     LLMGatewayClient,
     LLMGatewayError,
+    LLMGatewayQuotaExhaustedError,
 )
 from .config_editor import (
     OPTIONAL_SECRET_FIELDS,
@@ -87,6 +88,7 @@ from .feedback import QUIET_HOURS_END, QUIET_HOURS_START
 from .first_response_audio import first_response_audio_status
 from .harness import evaluate_scenario
 from .memory import FactWrite
+from .model_catalog import model_catalog_for
 from .policy import should_allow_search
 from .providers import normalize_provider_profiles_json, provider_profiles_from_options
 from .replay import ReplayError, ReplayOverrides, async_replay_turn
@@ -872,12 +874,37 @@ class HarnessConfigModelsView(HomeAssistantView):
             return error
         base_url, api_key = creds or ("", "")
 
-        models, error_code = await _fetch_provider_models(hass, base_url, api_key)
-        if error_code:
-            return self.json_message(
-                _PROBE_ERROR_MESSAGES[error_code], HTTPStatus.BAD_REQUEST, error_code
+        client = LLMGatewayClient(async_get_clientsession(hass), base_url, api_key)
+        try:
+            lookup = await model_catalog_for(hass).async_get(
+                client=client,
+                base_url=base_url,
             )
-        return self.json({"models": models or []})
+        except LLMGatewayAuthError:
+            return self.json_message(
+                _PROBE_ERROR_MESSAGES["invalid_auth"],
+                HTTPStatus.BAD_REQUEST,
+                "invalid_auth",
+            )
+        except LLMGatewayQuotaExhaustedError:
+            return self.json_message(
+                _PROBE_ERROR_MESSAGES["quota_exhausted"],
+                HTTPStatus.BAD_REQUEST,
+                "quota_exhausted",
+            )
+        except LLMGatewayError:
+            return self.json_message(
+                _PROBE_ERROR_MESSAGES["cannot_connect"],
+                HTTPStatus.BAD_REQUEST,
+                "cannot_connect",
+            )
+        return self.json(
+            {
+                "models": lookup.models,
+                "source": lookup.source,
+                "stale": lookup.stale,
+            }
+        )
 
 
 _MAX_LATENCY_MODELS = 8
@@ -939,6 +966,8 @@ class HarnessConfigLatencyView(HomeAssistantView):
                     )
                 except LLMGatewayAuthError:
                     return LatencySample(model=model, ok=False, error="invalid_auth")
+                except LLMGatewayQuotaExhaustedError:
+                    return LatencySample(model=model, ok=False, error="quota_exhausted")
                 except LLMGatewayError:
                     return LatencySample(model=model, ok=False, error="cannot_connect")
 
@@ -1413,6 +1442,7 @@ def _validate_editable_options(payload: dict[str, Any]) -> dict[str, Any]:  # no
 _PROBE_ERROR_MESSAGES = {
     "invalid_auth": "Invalid API key",
     "cannot_connect": "Cannot reach the model provider",
+    "quota_exhausted": "Provider quota or balance exhausted",
 }
 
 
@@ -1427,6 +1457,8 @@ async def _fetch_provider_models(
         return await client.async_list_models(), None
     except LLMGatewayAuthError:
         return None, "invalid_auth"
+    except LLMGatewayQuotaExhaustedError:
+        return None, "quota_exhausted"
     except LLMGatewayError:
         return None, "cannot_connect"
 
