@@ -27,6 +27,7 @@ from .capabilities import (
 from .const import (
     CONF_TEMPERATURE,
     CONF_TOP_P,
+    CONF_TRACE_INCLUDE_RAW_MESSAGES,
     DEEP_TASK_ACK_SPEECH,
     DOMAIN,
     GATEWAY_ERROR_SPEECH,
@@ -36,6 +37,13 @@ from .const import (
     RECOMMENDED_TOP_P,
     TOOL_LOOP_ERROR_SPEECH,
     TOOL_LOOP_GUARD_SPEECH,
+)
+from .context import (
+    ExistingContextContributor,
+    MemoryContextContributor,
+    StaticContextContributor,
+    TurnContextComposer,
+    TurnContextRequest,
 )
 from .dialogue import (
     DialogueFrameStack,
@@ -654,7 +662,6 @@ class LLMGatewayConversationEntity(
             )
             runtime.turn_controller.finish(turn_token)
             return err.as_conversation_result()
-        _insert_system_once(chat_log.content, VOICE_RESPONSE_CONTRACT, index=1)
         self._mark_run(runtime, run_id, "llm_data")
         pending_key = user_input.conversation_id or self.entry.entry_id
         frame_stack = self._dialogue_frames.setdefault(
@@ -1084,7 +1091,16 @@ class LLMGatewayConversationEntity(
                 "timeout_s": route.timeout_s,
             },
         )
-        self._inject_memory_context(chat_log, runtime, user_input.conversation_id)
+        await self._async_compose_turn_context(
+            chat_log,
+            runtime,
+            TurnContextRequest(
+                conversation_id=user_input.conversation_id,
+                route_kind=route.kind,
+                task_type=route_decision.task_type,
+            ),
+            run_id,
+        )
 
         if route.async_deep_task:
             messages = _content_to_messages(chat_log.content)
@@ -2009,16 +2025,43 @@ class LLMGatewayConversationEntity(
             return
         self._mark_run(runtime, run_id, "barge_in_requested", attrs=attrs)
 
-    def _inject_memory_context(
+    async def _async_compose_turn_context(
         self,
         chat_log: conversation.ChatLog,
         runtime: LLMGatewayRuntimeData,
-        conversation_id: str | None,
+        request: TurnContextRequest,
+        run_id: str,
     ) -> None:
-        """Append compact local memory into the model context."""
-        memory_context = runtime.memory.build_context(conversation_id)
-        if memory_context:
-            _insert_system_once(chat_log.content, memory_context, index=1)
+        """Compose and inject bounded context for a model-backed turn."""
+        messages = _content_to_messages(chat_log.content)
+        existing_system = [
+            str(message.get("content") or "")
+            for message in messages
+            if message.get("role") == "system"
+        ]
+        composition = await TurnContextComposer().async_compose(
+            request,
+            (
+                ExistingContextContributor(existing_system),
+                StaticContextContributor(
+                    "voice_response_contract",
+                    VOICE_RESPONSE_CONTRACT,
+                ),
+                MemoryContextContributor(runtime.memory),
+            ),
+        )
+        for item in reversed(composition.injected):
+            _insert_system_once(chat_log.content, item.content, index=1)
+        self._mark_run(
+            runtime,
+            run_id,
+            "context_composed",
+            attrs=composition.trace_attrs(
+                include_content=bool(
+                    self.entry.options.get(CONF_TRACE_INCLUDE_RAW_MESSAGES, False)
+                )
+            ),
+        )
 
     async def _async_run_chat_log(  # noqa: C901, PLR0911, PLR0912, PLR0913, PLR0915, PLR0917
         self,
