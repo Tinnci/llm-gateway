@@ -12,12 +12,39 @@ export type ReplayDiffSection = {
   parts: ReplayDiffPart[];
 };
 
+export type ReplayPair = {
+  source: RecordValue;
+  fork: RecordValue;
+  sourceId: string;
+  forkId: string;
+};
+
 type RecordValue = Record<string, unknown>;
 
 function object(value: unknown): RecordValue {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as RecordValue)
     : {};
+}
+
+function runId(record: RecordValue): string {
+  return String(record.run_id || record.id || "");
+}
+
+export function resolveReplayPair(
+  records: RecordValue[],
+  selected?: { sourceId?: string; forkId?: string } | null,
+): ReplayPair | null {
+  const forks = records.filter((record) => object(record.lineage).mode === "dry_run");
+  const fork = selected?.forkId
+    ? forks.find((record) => runId(record) === selected.forkId)
+    : forks[0];
+  if (!fork) return null;
+  const lineage = object(fork.lineage);
+  const sourceId = String(selected?.sourceId || lineage.replay_of || "");
+  const source = records.find((record) => runId(record) === sourceId);
+  if (!source) return null;
+  return { source, fork, sourceId, forkId: runId(fork) };
 }
 
 function stable(value: unknown): string {

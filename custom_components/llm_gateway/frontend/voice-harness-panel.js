@@ -18,7 +18,7 @@ import {
   iconButton,
   tabButton,
 } from "./voice-harness-ui.js";
-import { replayDiffSections } from "./voice-harness-replay-diff.js";
+import { replayDiffSections, resolveReplayPair } from "./voice-harness-replay-diff.js";
 import {
   escapeHtml,
   firstResponseAdapter,
@@ -978,7 +978,6 @@ class VoiceHarnessPanel extends HTMLElement {
           this._replayComparison = {
             sourceId: String(runId),
             forkId: String(result.record.run_id || result.record.id || ""),
-            sections: replayDiffSections(source, result.record),
           };
         }
       }
@@ -2272,11 +2271,9 @@ class VoiceHarnessPanel extends HTMLElement {
   }
 
   _replayDiffInspector(records) {
-    const comparison = this._replayComparison;
-    if (!comparison) return "";
-    const source = records.find((record) => String(record.run_id || record.id || "") === comparison.sourceId);
-    const fork = records.find((record) => String(record.run_id || record.id || "") === comparison.forkId);
-    if (!source || !fork) return "";
+    const pair = resolveReplayPair(records, this._replayComparison);
+    if (!pair) return "";
+    const sections = replayDiffSections(pair.source, pair.fork);
     const labels = {
       route: this._t("runs.route"),
       actions: this._t("runs.proposed_actions"),
@@ -2284,9 +2281,9 @@ class VoiceHarnessPanel extends HTMLElement {
       events: this._t("runs.trajectory"),
     };
     return `<section class="replayDiffInspector">
-      <header><div><span class="runCommandLabel">Replay / Fork</span><strong>Diff Inspector</strong></div><span class="chip ${comparison.sections.some((section) => section.changed) ? "warning" : "ok"}">${comparison.sections.filter((section) => section.changed).length} changed</span></header>
-      <div class="replayDiffLineage"><span>${escapeHtml(comparison.sourceId)}</span><ha-icon icon="mdi:source-fork"></ha-icon><span>${escapeHtml(comparison.forkId)}</span></div>
-      <div class="replayDiffSections">${comparison.sections.map((section) => `<details class="replayDiffSection" ${section.changed ? "open" : ""}><summary><strong>${escapeHtml(labels[section.id] || section.id)}</strong><span class="chip ${section.changed ? "warning" : "muted"}">${section.changed ? "changed" : "unchanged"}</span></summary><pre>${section.parts.map((part) => `<span class="${part.added ? "added" : part.removed ? "removed" : "same"}">${escapeHtml(part.value)}</span>`).join("")}</pre></details>`).join("")}</div>
+      <header><div><span class="runCommandLabel">Replay / Fork</span><strong>Diff Inspector</strong></div><span class="chip ${sections.some((section) => section.changed) ? "warning" : "ok"}">${sections.filter((section) => section.changed).length} changed</span></header>
+      <div class="replayDiffLineage"><span>${escapeHtml(pair.sourceId)}</span><ha-icon icon="mdi:source-fork"></ha-icon><span>${escapeHtml(pair.forkId)}</span></div>
+      <div class="replayDiffSections">${sections.map((section) => `<details class="replayDiffSection" ${section.changed ? "open" : ""}><summary><strong>${escapeHtml(labels[section.id] || section.id)}</strong><span class="chip ${section.changed ? "warning" : "muted"}">${section.changed ? "changed" : "unchanged"}</span></summary><pre>${section.parts.map((part) => `<span class="${part.added ? "added" : part.removed ? "removed" : "same"}">${escapeHtml(part.value)}</span>`).join("")}</pre></details>`).join("")}</div>
     </section>`;
   }
 

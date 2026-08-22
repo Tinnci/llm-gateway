@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { replayDiffSections } from "../../custom_components/llm_gateway/frontend/voice-harness-replay-diff";
+import { replayDiffSections, resolveReplayPair } from "../../custom_components/llm_gateway/frontend/voice-harness-replay-diff";
 
 test("compares route, actions, speech, and event trajectory", () => {
   const sections = replayDiffSections(
@@ -32,4 +32,13 @@ test("compares route, actions, speech, and event trajectory", () => {
 test("partial records produce stable unchanged sections", () => {
   const sections = replayDiffSections({}, {});
   expect(sections.every((section) => !section.changed)).toBe(true);
+});
+
+test("restores the latest persisted replay lineage", () => {
+  const source = { run_id: "source" };
+  const olderFork = { run_id: "fork-1", lineage: { mode: "dry_run", replay_of: "source" } };
+  const latestFork = { run_id: "fork-2", lineage: { mode: "dry_run", replay_of: "source" } };
+  expect(resolveReplayPair([latestFork, olderFork, source])?.forkId).toBe("fork-2");
+  expect(resolveReplayPair([latestFork, olderFork, source], { sourceId: "source", forkId: "fork-1" })?.forkId).toBe("fork-1");
+  expect(resolveReplayPair([latestFork])).toBeNull();
 });
