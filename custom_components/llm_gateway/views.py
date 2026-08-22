@@ -8,6 +8,7 @@ from http import HTTPStatus
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from aiohttp import web
 from homeassistant.components.http.decorators import require_admin
 from homeassistant.const import CONF_API_KEY, CONF_LLM_HASS_API, CONF_PROMPT
 from homeassistant.helpers import llm
@@ -95,7 +96,6 @@ from .search import search_providers_from_options
 from .voice_text import markdown_to_spoken_text
 
 if TYPE_CHECKING:
-    from aiohttp import web
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
 
@@ -695,6 +695,17 @@ def _entry_revision(entry: ConfigEntry) -> str:
 _MASK_MIN_SECRET_LENGTH = 12
 
 
+def _entry_meta(entry: ConfigEntry) -> dict[str, Any]:
+    """Shared redacted header fields for every entry snapshot."""
+    return {
+        "entry_id": entry.entry_id,
+        "title": entry.title,
+        "state": getattr(entry.state, "value", str(entry.state)),
+        "base_url": entry.data.get(CONF_BASE_URL),
+        "has_api_key": bool(entry.data.get(CONF_API_KEY)),
+    }
+
+
 def _masked_secret(value: object) -> str:
     """Return a short, non-reversible hint for a stored secret."""
     text = str(value or "")
@@ -709,12 +720,8 @@ def _config_status(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
     """Return a redacted, panel-safe snapshot of one config entry."""
     options = entry.options
     return {
-        "entry_id": entry.entry_id,
-        "title": entry.title,
-        "state": getattr(entry.state, "value", str(entry.state)),
+        **_entry_meta(entry),
         "revision": _entry_revision(entry),
-        "base_url": entry.data.get(CONF_BASE_URL),
-        "has_api_key": bool(entry.data.get(CONF_API_KEY)),
         "api_key_hint": _masked_secret(entry.data.get(CONF_API_KEY)),
         "options": redact_options(options),
         "model_candidates": _model_candidates(options, entry),
@@ -741,19 +748,9 @@ class HarnessConfigView(HomeAssistantView):
     @require_admin
     async def post(self, request: web.Request) -> web.Response:  # noqa: PLR0911, PLR0912
         """Validate and apply a full configuration update."""
-        try:
-            payload = await request.json()
-        except ValueError:
-            return self.json_message(
-                "Invalid JSON body", HTTPStatus.BAD_REQUEST, "invalid_json"
-            )
-
-        if not isinstance(payload, dict):
-            return self.json_message(
-                "JSON body must be an object",
-                HTTPStatus.BAD_REQUEST,
-                "invalid_payload",
-            )
+        payload = await _read_json_object(request)
+        if isinstance(payload, web.Response):
+            return payload
 
         hass: HomeAssistant = request.app["hass"]
         entry = _select_entry(hass, payload.get("entry_id"))
@@ -838,31 +835,15 @@ class HarnessConfigTestView(HomeAssistantView):
     @require_admin
     async def post(self, request: web.Request) -> web.Response:
         """Handle connection tests from the panel config form."""
-        try:
-            payload = await request.json()
-        except ValueError:
-            return self.json_message(
-                "Invalid JSON body", HTTPStatus.BAD_REQUEST, "invalid_json"
-            )
-        if not isinstance(payload, dict):
-            return self.json_message(
-                "JSON body must be an object",
-                HTTPStatus.BAD_REQUEST,
-                "invalid_payload",
-            )
+        payload = await _read_json_object(request)
+        if isinstance(payload, web.Response):
+            return payload
 
         hass: HomeAssistant = request.app["hass"]
-        entry = _select_entry(hass, payload.get("entry_id"))
-        current = dict(entry.data) if entry else {}
-        data_payload = payload.get("data")
-        if not isinstance(data_payload, dict):
-            data_payload = {}
-
-        try:
-            base_url = _config_base_url(data_payload, current)
-            api_key = _config_api_key(data_payload, current)
-        except ValueError as err:
-            return self.json_message(str(err), HTTPStatus.BAD_REQUEST, "invalid_data")
+        creds, error = await _resolve_probe_creds(hass, payload)
+        if error:
+            return error
+        base_url, api_key = creds or ("", "")
 
         _, error_code = await _fetch_provider_models(hass, base_url, api_key)
         if error_code:
@@ -881,31 +862,15 @@ class HarnessConfigModelsView(HomeAssistantView):
     @require_admin
     async def post(self, request: web.Request) -> web.Response:
         """Return the model ids advertised by the configured endpoint."""
-        try:
-            payload = await request.json()
-        except ValueError:
-            return self.json_message(
-                "Invalid JSON body", HTTPStatus.BAD_REQUEST, "invalid_json"
-            )
-        if not isinstance(payload, dict):
-            return self.json_message(
-                "JSON body must be an object",
-                HTTPStatus.BAD_REQUEST,
-                "invalid_payload",
-            )
+        payload = await _read_json_object(request)
+        if isinstance(payload, web.Response):
+            return payload
 
         hass: HomeAssistant = request.app["hass"]
-        entry = _select_entry(hass, payload.get("entry_id"))
-        current = dict(entry.data) if entry else {}
-        data_payload = payload.get("data")
-        if not isinstance(data_payload, dict):
-            data_payload = {}
-
-        try:
-            base_url = _config_base_url(data_payload, current)
-            api_key = _config_api_key(data_payload, current)
-        except ValueError as err:
-            return self.json_message(str(err), HTTPStatus.BAD_REQUEST, "invalid_data")
+        creds, error = await _resolve_probe_creds(hass, payload)
+        if error:
+            return error
+        base_url, api_key = creds or ("", "")
 
         models, error_code = await _fetch_provider_models(hass, base_url, api_key)
         if error_code:
@@ -928,18 +893,9 @@ class HarnessConfigLatencyView(HomeAssistantView):
     @require_admin
     async def post(self, request: web.Request) -> web.Response:
         """Probe the requested models concurrently and report samples."""
-        try:
-            payload = await request.json()
-        except ValueError:
-            return self.json_message(
-                "Invalid JSON body", HTTPStatus.BAD_REQUEST, "invalid_json"
-            )
-        if not isinstance(payload, dict):
-            return self.json_message(
-                "JSON body must be an object",
-                HTTPStatus.BAD_REQUEST,
-                "invalid_payload",
-            )
+        payload = await _read_json_object(request)
+        if isinstance(payload, web.Response):
+            return payload
 
         models_raw = payload.get("models")
         if not isinstance(models_raw, list) or not models_raw:
@@ -961,16 +917,10 @@ class HarnessConfigLatencyView(HomeAssistantView):
             )
 
         hass: HomeAssistant = request.app["hass"]
-        entry = _select_entry(hass, payload.get("entry_id"))
-        current = dict(entry.data) if entry else {}
-        data_payload = payload.get("data")
-        if not isinstance(data_payload, dict):
-            data_payload = {}
-        try:
-            base_url = _config_base_url(data_payload, current)
-            api_key = _config_api_key(data_payload, current)
-        except ValueError as err:
-            return self.json_message(str(err), HTTPStatus.BAD_REQUEST, "invalid_data")
+        creds, error = await _resolve_probe_creds(hass, payload)
+        if error:
+            return error
+        base_url, api_key = creds or ("", "")
 
         max_tokens_raw = payload.get("max_tokens", PROBE_MAX_TOKENS)
         try:
@@ -1067,13 +1017,11 @@ def _bounded_query_int(value: object, *, default: int, maximum: int) -> int:
 def _entry_status(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
     runtime = getattr(entry, "runtime_data", None)
     feedback = getattr(runtime, "feedback", None) if runtime else None
-    state = getattr(entry, "state", None)
+    runtime = getattr(entry, "runtime_data", None)
+    feedback = getattr(runtime, "feedback", None) if runtime else None
     options = entry.options
     return {
-        "entry_id": entry.entry_id,
-        "title": entry.title,
-        "state": getattr(state, "value", str(state)),
-        "base_url": entry.data.get("base_url"),
+        **_entry_meta(entry),
         "options": _options_status(options),
         "first_response_audio": first_response_audio_status(hass, options),
         "feedback_policy": _feedback_policy_status(),
@@ -1483,6 +1431,48 @@ async def _fetch_provider_models(
         return None, "cannot_connect"
 
 
+def _error_response(message: str, status: HTTPStatus, code: str) -> web.Response:
+    """Build the same JSON error shape HomeAssistantView.json_message uses."""
+    return web.json_response({"message": message, "code": code}, status=status)
+
+
+async def _read_json_object(request: web.Request) -> dict[str, Any] | web.Response:
+    """Parse a request body that must be a JSON object."""
+    try:
+        payload = await request.json()
+    except ValueError:
+        return _error_response(
+            "Invalid JSON body", HTTPStatus.BAD_REQUEST, "invalid_json"
+        )
+    if not isinstance(payload, dict):
+        return _error_response(
+            "JSON body must be an object", HTTPStatus.BAD_REQUEST, "invalid_payload"
+        )
+    return payload
+
+
+async def _resolve_probe_creds(
+    hass: HomeAssistant,
+    payload: dict[str, Any],
+) -> tuple[tuple[str, str] | None, web.Response | None]:
+    """Resolve (base_url, api_key) for probe-style endpoints.
+
+    Uses the stored entry credentials unless the panel explicitly supplies
+    overrides (the config form lets users test values before saving).
+    """
+    entry = _select_entry(hass, payload.get("entry_id"))
+    current = dict(entry.data) if entry else {}
+    data_payload = payload.get("data")
+    if not isinstance(data_payload, dict):
+        data_payload = {}
+    try:
+        base_url = _config_base_url(data_payload, current)
+        api_key = _config_api_key(data_payload, current)
+    except ValueError as err:
+        return None, _error_response(str(err), HTTPStatus.BAD_REQUEST, "invalid_data")
+    return (base_url, api_key), None
+
+
 def _config_base_url(data_payload: dict[str, Any], current: dict[str, Any]) -> str:
     """Return a non-empty base URL from a config update payload."""
     base_url = str(
@@ -1666,7 +1656,7 @@ def _model_provider_status(entry: ConfigEntry) -> dict[str, Any]:
     options = entry.options
     primary = {
         "name": "primary",
-        "base_url": entry.data.get("base_url"),
+        "base_url": entry.data.get(CONF_BASE_URL),
         "models": _options_status(options)["models"],
         "has_api_key": True,
     }

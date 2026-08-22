@@ -985,12 +985,17 @@ class VoiceHarnessPanel extends HTMLElement {
     this._latency = {};
     /** @type {Record<string, string[]>} */
     this._pickerOptions = {};
+    /** @type {Record<string, Map<string, {id: string, primary: string, secondary: string}>>} */
+    this._pickerRows = {};
+    /** @type {Record<string, {kind: string, label: string, name: string}>} */
+    this._pickerMeta = {};
     /** @type {Record<string, string>} */
     this._pickerQueries = {};
     /** @type {Record<string, boolean>} */
     this._pickerCustom = {};
+    /** Per-entry mutual exclusion for form actions (keyed by entryId). */
     /** @type {Record<string, boolean>} */
-    this._latencyBusy = {};
+    this._actionBusy = {};
     this._openPicker = "";
     this._replayStatus = "";
     this._replayComparison = null;
@@ -1364,11 +1369,11 @@ class VoiceHarnessPanel extends HTMLElement {
       return;
     }
     if (button.dataset.pickerProbe) {
-      const sep = button.dataset.pickerProbe.indexOf("|");
-      this._testOneLatency(
-        button.dataset.pickerProbe.slice(0, sep),
-        button.dataset.pickerProbe.slice(sep + 1),
-      );
+      const raw = button.dataset.pickerProbe;
+      const key = raw.slice(0, raw.indexOf("|"));
+      if ((this._pickerMeta[key]?.kind || "model") === "model") {
+        this._testOneLatency(key, raw.slice(raw.indexOf("|") + 1));
+      }
       return;
     }
     const loadSampleId = button.dataset.loadSample;
@@ -1627,77 +1632,97 @@ class VoiceHarnessPanel extends HTMLElement {
   }
 
   /** @param {HTMLFormElement} form */
-  async _testConnection(form) {
-    const data = new FormData(form);
-    const resultEl = form.querySelector("[data-test-result]");
-    if (resultEl) {
-      resultEl.textContent = this._t("config.testing_connection");
+  /**
+   * Single implementation of the "form action button + status line"
+   * pattern: captures FormData, disables the trigger button for the
+   * request duration, enforces per-entry mutual exclusion and writes
+   * localized status/error text into the slot element.
+   *
+   * spec: { path, payload, slot?, action?, busyKey?, running?, done? }
+   */
+  async _runFormAction(form, spec) {
+    if (spec.busyKey) {
+      if (this._actionBusy[spec.busyKey]) {
+        return null;
+      }
+      this._actionBusy[spec.busyKey] = true;
+    }
+    const slot = spec.slot ? form.querySelector(spec.slot) : null;
+    const button = spec.action
+      ? form.querySelector(`[data-action="${spec.action}"]`)
+      : null;
+    if (button instanceof HTMLButtonElement) {
+      button.disabled = true;
+    }
+    if (slot instanceof HTMLElement && spec.running) {
+      slot.textContent = this._t(spec.running);
     }
     try {
-      await this._api(
-        "POST",
-        "llm_gateway/harness/config/test-connection",
-        {
-          entry_id: form.dataset.entryId || "",
-          data: {
-            base_url: String(data.get("base_url") || "").trim(),
-            api_key: String(data.get("api_key") || "").trim(),
-          },
-        },
-      );
-      if (resultEl) {
-        resultEl.textContent = this._t("config.connection_ok");
+      const result = await this._api("POST", spec.path, spec.payload);
+      if (slot instanceof HTMLElement && spec.done) {
+        slot.textContent = this._t(spec.done.key, spec.done.params?.(result) || {});
       }
+      return result;
     } catch (err) {
-      if (resultEl) {
-        resultEl.textContent = this._t("config.connection_failed", {
+      if (slot instanceof HTMLElement) {
+        slot.textContent = this._t("config.connection_failed", {
           message: err.message || String(err),
         });
+      }
+      return null;
+    } finally {
+      if (button instanceof HTMLButtonElement) {
+        button.disabled = false;
+      }
+      if (spec.busyKey) {
+        this._actionBusy[spec.busyKey] = false;
       }
     }
   }
 
+  /** Connection credentials as typed into the config form. */
+  _formCreds(form) {
+    const data = new FormData(form);
+    return {
+      base_url: String(data.get("base_url") || "").trim(),
+      api_key: String(data.get("api_key") || "").trim(),
+    };
+  }
+
+  async _testConnection(form) {
+    await this._runFormAction(form, {
+      slot: "[data-test-result]",
+      path: "llm_gateway/harness/config/test-connection",
+      running: "config.testing_connection",
+      done: { key: "config.connection_ok" },
+      payload: {
+        entry_id: form.dataset.entryId || "",
+        data: this._formCreds(form),
+      },
+    });
+  }
+
   /** @param {HTMLFormElement} form */
   async _refreshModels(form) {
-    const entryId = form.dataset.entryId || "";
-    const data = new FormData(form);
-    const statusEl = form.querySelector("[data-models-status]");
-    /** @type {HTMLButtonElement | null} */
-    const button = form.querySelector('[data-action="refresh-models"]');
-    if (button) {
-      button.disabled = true;
+    const result = await this._runFormAction(form, {
+      slot: "[data-models-status]",
+      action: "refresh-models",
+      path: "llm_gateway/harness/config/models",
+      done: {
+        key: "config.models_refreshed",
+        params: (data) => ({ count: (data.models || []).length }),
+      },
+      payload: {
+        entry_id: form.dataset.entryId || "",
+        data: this._formCreds(form),
+      },
+    });
+    if (!result) {
+      return;
     }
-    try {
-      const result = await this._api(
-        "POST",
-        "llm_gateway/harness/config/models",
-        {
-          entry_id: entryId,
-          data: {
-            base_url: String(data.get("base_url") || "").trim(),
-            api_key: String(data.get("api_key") || "").trim(),
-          },
-        },
-      );
-      const models = Array.isArray(result.models) ? result.models : [];
-      this._liveModels[entryId] = models;
-      this._updatePickersWithModels(form, models);
-      if (statusEl) {
-        statusEl.textContent = this._t("config.models_refreshed", {
-          count: models.length,
-        });
-      }
-    } catch (err) {
-      if (statusEl) {
-        statusEl.textContent = this._t("config.connection_failed", {
-          message: err.message || String(err),
-        });
-      }
-    } finally {
-      if (button) {
-        button.disabled = false;
-      }
-    }
+    const models = Array.isArray(result.models) ? result.models : [];
+    this._liveModels[form.dataset.entryId || ""] = models;
+    this._updatePickersWithModels(form, models);
   }
 
   /**
@@ -1709,10 +1734,20 @@ class VoiceHarnessPanel extends HTMLElement {
     const live = (models || []).filter(Boolean);
     for (const tier of ["fast", "mid", "deep"]) {
       const key = `${entryId}:${tier}`;
-      this._pickerOptions[key] = Array.from(new Set([
-        ...(this._pickerOptions[key] || []),
-        ...live,
-      ]));
+      const options = this._pickerOptions[key] || [];
+      const rows = this._pickerRows[key] || new Map();
+      let changed = false;
+      for (const id of live) {
+        if (!rows.has(id)) {
+          rows.set(id, { id, primary: id, secondary: "" });
+          changed = true;
+        }
+      }
+      if (!changed && options.length === rows.size) {
+        continue;
+      }
+      this._pickerRows[key] = rows;
+      this._pickerOptions[key] = Array.from(rows.keys());
       this._renderPicker(key);
     }
   }
@@ -1725,18 +1760,76 @@ class VoiceHarnessPanel extends HTMLElement {
    * open menus, typed queries and focus survive unrelated re-renders.
    * ------------------------------------------------------------------ */
 
+  /**
+   * Generic searchable picker. One interaction layer, two kinds:
+   *  - "model": rows show the model id plus a latency badge and an
+   *    inline probe button (voice TTFT testing).
+   *  - "entity": rows show friendly name + entity id and match both;
+   *    no probe. Free text stays possible via the custom row.
+   *
+   * Per-key state (options/queries/meta) lives on the panel keyed by
+   * `${entryId}:${scope}` so surgical re-renders never lose context.
+   */
   _modelPickerField(entryId, tier, value, candidates) {
     const key = `${entryId}:${tier}`;
-    const known = Array.from(new Set((candidates || []).filter(Boolean)));
-    if (value && !known.includes(value)) {
-      known.unshift(value);
+    return this._searchPickerField({
+      key,
+      kind: "model",
+      name: `${tier}_model`,
+      label: this._t("settings.model", { tier: this._tierLabel(tier) }),
+      value,
+      options: (candidates || []).filter(Boolean),
+    });
+  }
+
+  _entityPickerField(entryId, name, value, candidates) {
+    const key = `${entryId}:${name}`;
+    const rows = (candidates || []).map((item) => (
+      typeof item === "string"
+        ? { id: item, primary: item, secondary: "" }
+        : {
+          id: String(item.entity_id || ""),
+          primary: String(item.friendly_name || item.entity_id || ""),
+          secondary: String(item.entity_id || ""),
+        }
+    )).filter((row) => row.id);
+    return this._searchPickerField({
+      key,
+      kind: "entity",
+      name,
+      label: this._t(name === "first_response_tts_entity"
+        ? "settings.first_response_tts_entity"
+        : "settings.first_response_media_player"),
+      value,
+      options: rows,
+    });
+  }
+
+  _searchPickerField({ key, kind, name, label, value, options }) {
+    const ids = [];
+    const rows = new Map();
+    for (const option of options) {
+      const id = typeof option === "string" ? option : option.id;
+      if (!id || rows.has(id)) {
+        continue;
+      }
+      ids.push(id);
+      rows.set(id, typeof option === "string"
+        ? { primary: option, secondary: "" }
+        : option);
     }
-    this._pickerOptions[key] = known;
+    if (value && !rows.has(value)) {
+      ids.unshift(value);
+      rows.set(value, { primary: value, secondary: "" });
+    }
+    this._pickerOptions[key] = ids;
+    this._pickerRows[key] = rows;
+    this._pickerMeta[key] = { kind, label, name };
     const open = this._openPicker === key;
     return `
       <div class="modelPicker" data-picker-key="${escapeHtml(key)}">
-        <input type="hidden" name="${tier}_model" value="${escapeHtml(value)}">
-        <span class="pickerLabel">${escapeHtml(this._t("settings.model", { tier: this._tierLabel(tier) }))}</span>
+        <input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}">
+        <span class="pickerLabel">${escapeHtml(label)}</span>
         <button
           type="button"
           class="pickerToggle${open ? " open" : ""}"
@@ -1744,8 +1837,8 @@ class VoiceHarnessPanel extends HTMLElement {
           aria-haspopup="listbox"
           aria-expanded="${open}"
         >
-          <span class="pickerValue">${escapeHtml(value || this._t("config.picker_placeholder"))}</span>
-          ${value ? this._latencyBadge(entryId, value, true) : ""}
+          <span class="pickerValue">${escapeHtml(this._pickerDisplay(key, value) || this._t("config.picker_placeholder"))}</span>
+          ${kind === "model" && value ? this._latencyBadge(this._entryIdOf(key), value, true) : ""}
           <ha-icon icon="mdi:chevron-down"></ha-icon>
         </button>
         ${this._pickerCustom[key] ? `
@@ -1778,31 +1871,61 @@ class VoiceHarnessPanel extends HTMLElement {
     `;
   }
 
+  _entryIdOf(key) {
+    return key.slice(0, key.lastIndexOf(":"));
+  }
+
+  _pickerDisplay(key, value) {
+    const row = this._pickerRows[key]?.get(value);
+    return row ? (row.primary || value) : value;
+  }
+
   _pickerListHtml(key, value) {
-    const entryId = key.slice(0, key.lastIndexOf(":"));
+    const kind = this._pickerMeta[key]?.kind || "model";
     const query = (this._pickerQueries[key] || "").trim().toLocaleLowerCase();
-    const all = this._pickerOptions[key] || [];
-    const items = query
-      ? all.filter((model) => model.toLocaleLowerCase().includes(query))
-      : all;
-    const rows = items.map((model) => `
-      <div class="pickerItem${model === value ? " selected" : ""}" role="option" aria-selected="${model === value}">
-        <button type="button" class="pickerPick" data-picker-pick="${escapeHtml(key)}|${escapeHtml(model)}">
-          <span class="pickerName">${escapeHtml(model)}</span>
-          ${this._latencyBadge(entryId, model)}
-        </button>
-        <button
-          type="button"
-          class="pickerProbe"
-          data-picker-probe="${escapeHtml(key)}|${escapeHtml(model)}"
-          title="${escapeHtml(this._t("config.test_latency"))}"
-        >
-          <ha-icon icon="mdi:speedometer"></ha-icon>
-        </button>
-      </div>
-    `).join("");
+    const rows = this._pickerRows[key] || new Map();
+    const matches = (row) => {
+      if (!query) {
+        return true;
+      }
+      const haystack = `${row.id} ${row.primary || ""} ${row.secondary || ""}`;
+      return haystack.toLocaleLowerCase().includes(query);
+    };
+    const items = Array.from(rows.values()).filter(matches);
+    const itemHtml = items.map((row) => {
+      const selected = row.id === value;
+      const probe = kind === "model"
+        ? `
+          <button
+            type="button"
+            class="pickerProbe"
+            data-picker-probe="${escapeHtml(key)}|${escapeHtml(row.id)}"
+            title="${escapeHtml(this._t("config.test_latency"))}"
+          >
+            <ha-icon icon="mdi:speedometer"></ha-icon>
+          </button>
+        `
+        : "";
+      const body = kind === "entity" && row.secondary && row.secondary !== row.primary
+        ? `
+          <span class="pickerRowText">
+            <span class="pickerRowMain">${escapeHtml(row.primary)}</span>
+            <span class="pickerRowSub">${escapeHtml(row.secondary)}</span>
+          </span>
+        `
+        : `<span class="pickerName">${escapeHtml(row.primary)}</span>`;
+      return `
+        <div class="pickerItem${selected ? " selected" : ""}" role="option" aria-selected="${selected}">
+          <button type="button" class="pickerPick" data-picker-pick="${escapeHtml(key)}|${escapeHtml(row.id)}">
+            ${body}
+            ${kind === "model" ? this._latencyBadge(this._entryIdOf(key), row.id) : ""}
+          </button>
+          ${probe}
+        </div>
+      `;
+    }).join("");
     return `
-      ${rows || `<div class="pickerEmpty">${escapeHtml(this._t("config.picker_empty"))}</div>`}
+      ${itemHtml || `<div class="pickerEmpty">${escapeHtml(this._t("config.picker_empty"))}</div>`}
       <button type="button" class="pickerCustomAction" data-picker-custom-row="${escapeHtml(key)}">
         <ha-icon icon="mdi:pencil-outline"></ha-icon>
         <span>${escapeHtml(this._t("config.picker_custom"))}</span>
@@ -1817,15 +1940,16 @@ class VoiceHarnessPanel extends HTMLElement {
     }
     const hidden = container.querySelector('input[type="hidden"]');
     const value = hidden instanceof HTMLInputElement ? hidden.value : "";
-    const entryId = key.slice(0, key.lastIndexOf(":"));
-    const tier = key.slice(key.lastIndexOf(":") + 1);
+    const meta = this._pickerMeta[key] || { kind: "model", label: key, name: key };
     const tpl = document.createElement("template");
-    tpl.innerHTML = this._modelPickerField(
-      entryId,
-      tier,
+    tpl.innerHTML = this._searchPickerField({
+      key,
+      kind: meta.kind,
+      name: meta.name,
+      label: meta.label,
       value,
-      this._pickerOptions[key],
-    ).trim();
+      options: Array.from(this._pickerRows[key]?.values() || []),
+    }).trim();
     container.replaceWith(tpl.content.firstElementChild);
   }
 
@@ -1851,6 +1975,9 @@ class VoiceHarnessPanel extends HTMLElement {
     const options = this._pickerOptions[key] || [];
     if (model && !options.includes(model)) {
       this._pickerOptions[key] = [model, ...options];
+      const rows = this._pickerRows[key] || new Map();
+      rows.set(model, { id: model, primary: model, secondary: "" });
+      this._pickerRows[key] = rows;
     }
     this._pickerCustom[key] = false;
     this._pickerQueries[key] = "";
@@ -1899,7 +2026,7 @@ class VoiceHarnessPanel extends HTMLElement {
     if (!models.length) {
       return;
     }
-    await this._probeLatency(form, entryId, models);
+    await this._testLatencyModels(form, entryId, models);
   }
 
   async _testOneLatency(key, model) {
@@ -1908,61 +2035,40 @@ class VoiceHarnessPanel extends HTMLElement {
       `form[data-form="config"][data-entry-id="${entryId}"]`,
     );
     if (form) {
-      await this._probeLatency(form, entryId, [model]);
+      await this._testLatencyModels(form, entryId, [model]);
     }
   }
 
-  async _probeLatency(form, entryId, models) {
-    if (this._latencyBusy[entryId]) {
+  async _testLatencyModels(form, entryId, models) {
+    const result = await this._runFormAction(form, {
+      slot: "[data-latency-status]",
+      action: "latency-test",
+      busyKey: entryId,
+      path: "llm_gateway/harness/config/latency",
+      running: "config.latency_running",
+      payload: {
+        entry_id: entryId,
+        data: this._formCreds(form),
+        models,
+      },
+    });
+    if (!result) {
       return;
     }
-    this._latencyBusy[entryId] = true;
-    const statusEl = form.querySelector("[data-latency-status]");
-    const button = form.querySelector('[data-action="latency-test"]');
-    if (button) {
-      button.disabled = true;
-    }
-    if (statusEl) {
-      statusEl.textContent = this._t("config.latency_running");
-    }
-    const data = new FormData(form);
-    try {
-      const result = await this._api(
-        "POST",
-        "llm_gateway/harness/config/latency",
-        {
-          entry_id: entryId,
-          data: {
-            base_url: String(data.get("base_url") || "").trim(),
-            api_key: String(data.get("api_key") || "").trim(),
-          },
-          models,
-        },
-      );
-      this._storeLatency(entryId, result.results || []);
-      const okSamples = (result.results || [])
-        .filter((sample) => sample && sample.ok)
-        .sort((a, b) => a.ttft_ms - b.ttft_ms);
-      if (statusEl) {
-        statusEl.textContent = okSamples.length
-          ? this._t("config.latency_done", {
-            count: models.length,
-            model: okSamples[0].model,
-            ttft: (okSamples[0].ttft_ms / 1000).toFixed(2),
-          })
-          : this._t("config.latency_failed_all");
-      }
-    } catch (err) {
-      if (statusEl) {
-        statusEl.textContent = this._t("config.connection_failed", {
-          message: err.message || String(err),
-        });
-      }
-    } finally {
-      this._latencyBusy[entryId] = false;
-      if (button) {
-        button.disabled = false;
-      }
+    const samples = Array.isArray(result.results) ? result.results : [];
+    this._storeLatency(entryId, samples);
+    const slot = form.querySelector("[data-latency-status]");
+    const okSamples = samples
+      .filter((sample) => sample && sample.ok)
+      .sort((a, b) => a.ttft_ms - b.ttft_ms);
+    if (slot instanceof HTMLElement) {
+      slot.textContent = okSamples.length
+        ? this._t("config.latency_done", {
+          count: models.length,
+          model: okSamples[0].model,
+          ttft: (okSamples[0].ttft_ms / 1000).toFixed(2),
+        })
+        : this._t("config.latency_failed_all");
     }
     for (const tier of ["fast", "mid", "deep"]) {
       this._renderPicker(`${entryId}:${tier}`);
@@ -2432,22 +2538,10 @@ class VoiceHarnessPanel extends HTMLElement {
             </datalist>
             ${this._audioRoutePanel(audioStatus, entry.feedback_policy || {})}
             <div class="settingsNote">${escapeHtml(this._t("settings.ha_fallback_notice"))}</div>
-            <div class="settingsTriples two">
-              <label>
-                <span>${escapeHtml(this._t("settings.first_response_tts_entity"))}</span>
-                <input name="first_response_tts_entity" value="${escapeHtml(options.first_response_tts_entity || "")}" list="tts-candidates-${formId}" autocomplete="off" maxlength="256">
-              </label>
-              <label>
-                <span>${escapeHtml(this._t("settings.first_response_media_player"))}</span>
-                <input name="first_response_media_player" value="${escapeHtml(options.first_response_media_player_entity || "")}" list="media-player-candidates-${formId}" autocomplete="off" maxlength="256">
-              </label>
+            <div class="settingsTriples two pickerPair">
+              ${this._entityPickerField(entry.entry_id, "first_response_tts_entity", options.first_response_tts_entity || "", ttsCandidates)}
+              ${this._entityPickerField(entry.entry_id, "first_response_media_player_entity", options.first_response_media_player_entity || "", mediaCandidates)}
             </div>
-            <datalist id="tts-candidates-${formId}">
-              ${ttsCandidates.map((item) => `<option value="${escapeHtml(item.entity_id || "")}"></option>`).join("")}
-            </datalist>
-            <datalist id="media-player-candidates-${formId}">
-              ${mediaCandidates.map((item) => `<option value="${escapeHtml(item.entity_id || "")}"></option>`).join("")}
-            </datalist>
             ${this._audioCandidatePanel(audioStatus)}
           </fieldset>
           <fieldset>
@@ -2476,15 +2570,6 @@ class VoiceHarnessPanel extends HTMLElement {
       <label>
         <span>${escapeHtml(label)}</span>
         <input name="${name}" type="number" min="${min}" max="${max}" step="${step}" value="${Number(value || 0)}" required>
-      </label>
-    `;
-  }
-
-  _configText(name, label, value) {
-    return `
-      <label>
-        <span>${escapeHtml(label)}</span>
-        <input name="${name}" value="${escapeHtml(value || "")}" autocomplete="off" maxlength="256">
       </label>
     `;
   }
@@ -5132,6 +5217,10 @@ const styles = `
     min-height: 18px;
   }
 
+  .pickerPair .modelPicker {
+    margin-bottom: 0;
+  }
+
   .modelPicker {
     position: relative;
     display: flex;
@@ -5173,13 +5262,17 @@ const styles = `
     white-space: nowrap;
   }
 
+  /* The menu floats over arbitrary content, so it must pin both its
+   * background and text color instead of inheriting — otherwise dark
+   * themes can render light-on-light or dark-on-dark. */
   .pickerMenu {
     position: absolute;
     z-index: 40;
     top: calc(100% - 20px);
     left: 0;
     right: 0;
-    background: var(--card-bg-color, #fff);
+    color: var(--primary-text-color, #1a1a1a);
+    background: var(--card-bg-color, var(--primary-background-color, #fff));
     border: 1px solid var(--divider-color, #b0b0b0);
     border-radius: 10px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
@@ -5232,8 +5325,29 @@ const styles = `
     text-align: left;
   }
 
-  .pickerName {
+  .pickerName,
+  .pickerRowText {
     flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    line-height: 1.3;
+    text-align: left;
+  }
+
+  .pickerName {
+    display: block;
+    overflow-wrap: anywhere;
+  }
+
+  .pickerRowMain {
+    font-size: 13px;
+    overflow-wrap: anywhere;
+  }
+
+  .pickerRowSub {
+    font-size: 11px;
+    opacity: 0.65;
     overflow-wrap: anywhere;
   }
 
@@ -5305,7 +5419,10 @@ const styles = `
     color: var(--success-color, #2e7d32);
   }
 
-  .latBadge.warn {
+  /* Canonical status tones across the panel: ok / warn(also spelled
+   * "warning" for parity with .chip) / bad. Keep new components on these. */
+  .latBadge.warn,
+  .latBadge.warning {
     background: rgba(255, 193, 7, 0.2);
     color: var(--warning-color, #8d6e00);
   }
