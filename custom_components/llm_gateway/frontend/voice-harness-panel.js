@@ -18,7 +18,8 @@ import {
   iconButton,
   tabButton,
 } from "./voice-harness-ui.js";
-import { replayDiffSections, resolveReplayPair } from "./voice-harness-replay-diff.js";
+import { resolveReplayPair } from "./voice-harness-replay-diff.js";
+import "./voice-harness-replay-inspector.js";
 import {
   escapeHtml,
   firstResponseAdapter,
@@ -1291,6 +1292,8 @@ class VoiceHarnessPanel extends HTMLElement {
 
   _render() {
     const entries = this._data?.entries || [];
+    this._renderedReplayPair = null;
+    this._renderedReplayLabels = null;
     this.shadowRoot.innerHTML = `
       <style>${styles}</style>
       <main class="shell">
@@ -1319,6 +1322,12 @@ class VoiceHarnessPanel extends HTMLElement {
         </section>
       </main>
     `;
+    /** @type {any} */
+    const inspector = this.shadowRoot.querySelector("voice-harness-replay-inspector");
+    if (inspector && this._renderedReplayPair) {
+      inspector.pair = this._renderedReplayPair;
+      inspector.labels = this._renderedReplayLabels;
+    }
   }
 
   _statusLine(entries) {
@@ -2273,18 +2282,15 @@ class VoiceHarnessPanel extends HTMLElement {
   _replayDiffInspector(records) {
     const pair = resolveReplayPair(records, this._replayComparison);
     if (!pair) return "";
-    const sections = replayDiffSections(pair.source, pair.fork);
     const labels = {
       route: this._t("runs.route"),
       actions: this._t("runs.proposed_actions"),
       speech: this._t("runs.final_speech"),
       events: this._t("runs.trajectory"),
     };
-    return `<section class="replayDiffInspector">
-      <header><div><span class="runCommandLabel">Replay / Fork</span><strong>Diff Inspector</strong></div><span class="chip ${sections.some((section) => section.changed) ? "warning" : "ok"}">${sections.filter((section) => section.changed).length} changed</span></header>
-      <div class="replayDiffLineage"><span>${escapeHtml(pair.sourceId)}</span><ha-icon icon="mdi:source-fork"></ha-icon><span>${escapeHtml(pair.forkId)}</span></div>
-      <div class="replayDiffSections">${sections.map((section) => `<details class="replayDiffSection" ${section.changed ? "open" : ""}><summary><strong>${escapeHtml(labels[section.id] || section.id)}</strong><span class="chip ${section.changed ? "warning" : "muted"}">${section.changed ? "changed" : "unchanged"}</span></summary><pre>${section.parts.map((part) => `<span class="${part.added ? "added" : part.removed ? "removed" : "same"}">${escapeHtml(part.value)}</span>`).join("")}</pre></details>`).join("")}</div>
-    </section>`;
+    this._renderedReplayPair = pair;
+    this._renderedReplayLabels = labels;
+    return `<voice-harness-replay-inspector></voice-harness-replay-inspector>`;
   }
 
   _traceReadinessPanel(trace, storage) {
@@ -4745,21 +4751,6 @@ const styles = `
     border-bottom: 1px solid var(--divider-color);
   }
 
-  .replayDiffInspector { margin: 14px 0; overflow: hidden; border: 1px solid var(--divider-color); border-radius: 8px; background: var(--card-background-color); }
-  .replayDiffInspector > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; padding: 0 12px; border-bottom: 1px solid var(--divider-color); }
-  .replayDiffInspector > header > div { display: grid; gap: 2px; }
-  .replayDiffLineage { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--divider-color); color: var(--secondary-text-color); font-family: var(--code-font-family, Menlo, Consolas, monospace); font-size: 10px; }
-  .replayDiffLineage span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .replayDiffLineage ha-icon { --mdc-icon-size: 15px; flex: 0 0 auto; color: var(--primary-color); }
-  .replayDiffSections { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .replayDiffSection { min-width: 0; border-right: 1px solid var(--divider-color); border-bottom: 1px solid var(--divider-color); }
-  .replayDiffSection:nth-child(2n) { border-right: 0; }
-  .replayDiffSection > summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 38px; padding: 0 10px; cursor: pointer; font-size: 11px; }
-  .replayDiffSection pre { max-height: 220px; margin: 0; padding: 8px 10px; overflow: auto; border-top: 1px solid var(--divider-color); background: var(--primary-background-color); font-size: 10px; line-height: 1.5; white-space: pre-wrap; }
-  .replayDiffSection pre span { display: block; margin: 0 -10px; padding: 0 10px; }
-  .replayDiffSection pre .added { background: color-mix(in srgb, var(--success-color, #43a047) 16%, transparent); color: var(--success-color, #2e7d32); }
-  .replayDiffSection pre .removed { background: color-mix(in srgb, var(--error-color) 13%, transparent); color: var(--error-color); text-decoration: line-through; }
-
   .trajectoryLedger {
     border: 1px solid var(--divider-color);
     border-radius: 8px;
@@ -5488,8 +5479,6 @@ const styles = `
   }
 
   @media (max-width: 560px) {
-    .replayDiffSections { grid-template-columns: 1fr; }
-    .replayDiffSection { border-right: 0; }
     .shell {
       padding: 12px;
     }
