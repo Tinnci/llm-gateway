@@ -64,6 +64,7 @@ from .grounding import (
     GroundingResult,
     initial_grounding_result,
 )
+from .history_policy import bound_model_messages, content_to_messages
 from .policy import should_force_search_in_voice_path, validate_tool_call
 from .providers import async_chat_completion_with_fallback
 from .resolution import (
@@ -197,41 +198,8 @@ def _format_tool(
     }
 
 
-def _content_to_messages(content: list[conversation.Content]) -> list[dict[str, Any]]:
-    """Convert HA chat-log content into OpenAI chat-completions messages."""
-    messages: list[dict[str, Any]] = []
-    for item in content:
-        if item.role == "system":
-            messages.append({"role": "system", "content": item.content})
-        elif item.role == "user":
-            messages.append({"role": "user", "content": item.content})
-        elif item.role == "assistant":
-            message: dict[str, Any] = {
-                "role": "assistant",
-                "content": item.content or "",
-            }
-            if item.tool_calls:
-                message["tool_calls"] = [
-                    {
-                        "id": call.id,
-                        "type": "function",
-                        "function": {
-                            "name": call.tool_name,
-                            "arguments": json_dumps(call.tool_args),
-                        },
-                    }
-                    for call in item.tool_calls
-                ]
-            messages.append(message)
-        elif item.role == "tool_result":
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": item.tool_call_id,
-                    "content": json_dumps(item.tool_result),
-                }
-            )
-    return messages
+_content_to_messages = content_to_messages
+"""Backwards-compatible alias; converter lives in history_policy."""
 
 
 def _parse_tool_calls(
@@ -1128,7 +1096,9 @@ class LLMGatewayConversationEntity(
         )
 
         if route.async_deep_task:
-            messages = _content_to_messages(chat_log.content)
+            messages, _elided = bound_model_messages(
+                content_to_messages(chat_log.content)
+            )
             task_id = runtime.deep_tasks.submit(
                 route=route,
                 messages=messages,
@@ -2156,7 +2126,16 @@ class LLMGatewayConversationEntity(
                 )
                 forced_final_contract_added = True
             effective_tools = None if force_final else tools
-            messages = _content_to_messages(chat_log.content)
+            messages, elided = bound_model_messages(
+                content_to_messages(chat_log.content)
+            )
+            if elided:
+                self._mark_run(
+                    runtime,
+                    run_id,
+                    "history_bounded",
+                    attrs={"elided": elided, "iteration": iteration},
+                )
             LOGGER.info(
                 "Conversation model turn iteration=%d route=%s model=%s "
                 "messages=%d tools=%d forced_final=%s",
