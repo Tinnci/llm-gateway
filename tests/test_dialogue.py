@@ -7,6 +7,7 @@ from custom_components.llm_gateway.dialogue import (
     DialogueFrame,
     DialogueFrameStack,
     dialogue_frame_from_route,
+    dialogue_pending_key,
     pending_task_from_route,
     resolve_dialogue_transaction,
     resolve_pending_task,
@@ -198,3 +199,12 @@ def _device_frame() -> DialogueFrame:
         ),
         last_prompt="你是说宜家 1055lm 那个灯吗？",
     )
+
+
+def test_dialogue_pending_key_isolation_chain():
+    """Conversation wins; device isolates keyless satellites; entry last."""
+    assert dialogue_pending_key("conv-1", "device-9", "entry") == "conv-1"
+    # Two satellites without conversation ids must not share one stack.
+    assert dialogue_pending_key("", "device-a", "entry") == "device-a"
+    assert dialogue_pending_key(None, "device-b", "entry") == "device-b"
+    assert dialogue_pending_key("", "", "entry") == "entry"

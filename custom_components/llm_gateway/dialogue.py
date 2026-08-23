@@ -613,6 +613,20 @@ def _commit_device_candidate(
     )
 
 
+def dialogue_pending_key(
+    conversation_id: str | None,
+    device_id: str | None,
+    entry_id: str,
+) -> str:
+    """Stable bucket for per-conversation dialogue frames.
+
+    Prefer the conversation; satellites that do not provide one still get
+    isolated per device instead of sharing a single entry-wide stack where
+    concurrent speech could cross-contaminate pending clarifications.
+    """
+    return conversation_id or device_id or entry_id
+
+
 def _candidate_index(value: str) -> int:
     if match := _ORDINAL_RE.search(value):
         token = match.group(1)

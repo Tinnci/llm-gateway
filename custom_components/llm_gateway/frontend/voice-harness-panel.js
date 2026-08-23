@@ -2936,7 +2936,7 @@ class VoiceHarnessPanel extends HTMLElement {
             `).join("")}
           </div>
         ` : ""}
-        ${this._jsonDetails(this._t("satellite.playback_interrupt_panel"), interrupt)}
+        ${this._jsonDetails(this._t("satellite.playback_interrupt_panel"), interrupt, "satellite:playback_interrupt")}
       </article>
     `;
   }
@@ -3017,7 +3017,7 @@ class VoiceHarnessPanel extends HTMLElement {
         ${this._jsonDetails(this._t("satellite.audio_graph_panel"), {
           graph,
           concurrency,
-        })}
+        }, "satellite:audio_graph_comparison")}
       </article>
     `;
   }
@@ -3091,7 +3091,7 @@ class VoiceHarnessPanel extends HTMLElement {
             </div>
           `).join("") || `<div class="empty mini">${escapeHtml(this._t("satellite.all_checks_ok"))}</div>`}
         </div>
-        ${this._jsonDetails(this._t("satellite.raw_snapshot"), snapshot)}
+        ${this._jsonDetails(this._t("satellite.raw_snapshot"), snapshot, "satellite:raw_snapshot")}
       </article>
     `;
   }
@@ -3443,7 +3443,7 @@ class VoiceHarnessPanel extends HTMLElement {
                 : `${Number(causalChain.barge_in_stop_latency_ms)} ms`,
             ])}
           </div>
-          ${this._firstResponsePanel(firstResponse, record.first_response_audio || {})}
+          ${this._firstResponsePanel(firstResponse, record.first_response_audio || {}, this._rid(record))}
           ${this._audioGraphPanel(record)}
           ${this._inventoryPanel(record)}
           <div class="traceText">
@@ -3469,7 +3469,7 @@ class VoiceHarnessPanel extends HTMLElement {
           ${this._earconEventsPanel(record)}
           ${this._displayStatusPanel(record)}
           ${this._errorsPanel(errors)}
-          ${this._toolEventsPanel(tools)}
+          ${this._toolEventsPanel(tools, this._rid(record))}
           ${this._groundingPanel(record)}
           ${this._evidencePanel(record)}
           ${attempts.length ? `
@@ -3498,7 +3498,7 @@ class VoiceHarnessPanel extends HTMLElement {
               `).join("")}
             </div>
           ` : ""}
-          ${record.raw_payload ? this._jsonDetails(this._t("runs.raw_payload"), record.raw_payload) : ""}
+          ${record.raw_payload ? this._jsonDetails(this._t("runs.raw_payload"), record.raw_payload, `record:${this._rid(record)}:raw_payload`) : ""}
             </div>
           </details>
         </div>
@@ -3627,7 +3627,7 @@ class VoiceHarnessPanel extends HTMLElement {
     `;
   }
 
-  _firstResponsePanel(decision, audio = {}) {
+  _firstResponsePanel(decision, audio = {}, rid = "") {
     const keys = [...Object.keys(decision || {}), ...Object.keys(audio || {})];
     if (!keys.length) {
       return "";
@@ -3664,8 +3664,8 @@ class VoiceHarnessPanel extends HTMLElement {
             audio.suppressed_reason || "",
           ])}
         </div>
-        ${this._jsonDetails(this._t("runs.first_response_detail"), decision)}
-        ${this._jsonDetails(this._t("runs.first_response_audio"), audio)}
+        ${this._jsonDetails(this._t("runs.first_response_detail"), decision, `record:${rid}:first_response_detail`)}
+        ${this._jsonDetails(this._t("runs.first_response_audio"), audio, `record:${rid}:first_response_audio`)}
       </div>
     `;
   }
@@ -3719,9 +3719,9 @@ class VoiceHarnessPanel extends HTMLElement {
             aec.residual_echo_likelihood ? `residual=${aec.residual_echo_likelihood}` : "",
           ])}
         </div>
-        ${this._jsonDetails(this._t("runs.audio_graph"), graph)}
-        ${this._jsonDetails(this._t("runs.earcon_diagnostics"), earcon)}
-        ${this._jsonDetails(this._t("runs.aec_diagnostics"), aec)}
+        ${this._jsonDetails(this._t("runs.audio_graph"), graph, `record:${this._rid(record)}:audio_graph`)}
+        ${this._jsonDetails(this._t("runs.earcon_diagnostics"), earcon, `record:${this._rid(record)}:earcon_diagnostics`)}
+        ${this._jsonDetails(this._t("runs.aec_diagnostics"), aec, `record:${this._rid(record)}:aec_diagnostics`)}
       </div>
     `;
   }
@@ -3773,7 +3773,7 @@ class VoiceHarnessPanel extends HTMLElement {
             </div>
           </details>
         ` : ""}
-        ${this._jsonDetails(this._t("runs.inventory"), attrs)}
+        ${this._jsonDetails(this._t("runs.inventory"), attrs, `record:${this._rid(record)}:inventory`)}
       </div>
     `;
   }
@@ -3815,7 +3815,7 @@ class VoiceHarnessPanel extends HTMLElement {
             path.duplicate_live_context_suppressed ? "duplicate_live_context_suppressed=true" : "",
           ])}
         </div>
-        ${this._jsonDetails(this._t("runs.weather_path"), path)}
+        ${this._jsonDetails(this._t("runs.weather_path"), path, `record:${this._rid(record)}:weather_path`)}
       </div>
     `;
   }
@@ -3846,7 +3846,7 @@ class VoiceHarnessPanel extends HTMLElement {
             `;
           }).join("")}
         </div>
-        ${this._jsonDetails(this._t("runs.tool_iterations"), iterations)}
+        ${this._jsonDetails(this._t("runs.tool_iterations"), iterations, `record:${this._rid(record)}:tool_iterations`)}
       </div>
     `;
   }
@@ -3871,7 +3871,7 @@ class VoiceHarnessPanel extends HTMLElement {
             </div>
           `).join("")}
         </div>
-        ${this._jsonDetails(this._t("runs.duplicate_suppressions"), suppressions)}
+        ${this._jsonDetails(this._t("runs.duplicate_suppressions"), suppressions, `record:${this._rid(record)}:duplicate_suppressions`)}
       </div>
     `;
   }
@@ -3898,7 +3898,7 @@ class VoiceHarnessPanel extends HTMLElement {
             `;
           }).join("")}
         </div>
-        ${this._jsonDetails(this._t("runs.critical_path"), path)}
+        ${this._jsonDetails(this._t("runs.critical_path"), path, `record:${this._rid(record)}:critical_path`)}
       </div>
     `;
   }
@@ -3959,7 +3959,7 @@ class VoiceHarnessPanel extends HTMLElement {
             `).join("")}
           </div>
         ` : ""}
-        ${this._jsonDetails(this._t("runs.search_debug"), debug)}
+        ${this._jsonDetails(this._t("runs.search_debug"), debug, `record:${this._rid(record)}:search_debug`)}
       </div>
     `;
   }
@@ -3987,7 +3987,7 @@ class VoiceHarnessPanel extends HTMLElement {
             `;
           }).join("")}
         </div>
-        ${this._jsonDetails(this._t("runs.actions"), actions)}
+        ${this._jsonDetails(this._t("runs.actions"), actions, `record:${this._rid(record)}:actions`)}
       </div>
     `;
   }
@@ -4010,7 +4010,7 @@ class VoiceHarnessPanel extends HTMLElement {
             </div>
           `).join("")}
         </div>
-        ${this._jsonDetails(this._t("runs.earcons"), earcons)}
+        ${this._jsonDetails(this._t("runs.earcons"), earcons, `record:${this._rid(record)}:earcons`)}
       </div>
     `;
   }
@@ -4035,7 +4035,7 @@ class VoiceHarnessPanel extends HTMLElement {
             </div>
           `).join("")}
         </div>
-        ${this._jsonDetails(this._t("runs.display_status"), events)}
+        ${this._jsonDetails(this._t("runs.display_status"), events, `record:${this._rid(record)}:display_status`)}
       </div>
     `;
   }
@@ -4060,7 +4060,7 @@ class VoiceHarnessPanel extends HTMLElement {
     `;
   }
 
-  _toolEventsPanel(tools) {
+  _toolEventsPanel(tools, rid = "") {
     if (!tools.length) {
       return "";
     }
@@ -4077,7 +4077,7 @@ class VoiceHarnessPanel extends HTMLElement {
             </div>
           `).join("")}
         </div>
-        ${this._jsonDetails(this._t("runs.tool_events"), tools)}
+        ${this._jsonDetails(this._t("runs.tool_events"), tools, `record:${rid}:tool_events`)}
       </div>
     `;
   }
@@ -4101,14 +4101,19 @@ class VoiceHarnessPanel extends HTMLElement {
             </div>
           `).join("")}
         </div>
-        ${this._jsonDetails(this._t("runs.evidence"), evidence)}
+        ${this._jsonDetails(this._t("runs.evidence"), evidence, `record:${this._rid(record)}:evidence`)}
       </div>
     `;
   }
 
-  _jsonDetails(label, value) {
+  /** Stable identity for a trace/run record across re-renders. */
+  _rid(record) {
+    return String(record?.run_id || record?.id || "");
+  }
+
+  _jsonDetails(label, value, key = "") {
     return `
-      <details class="jsonDetails">
+      <details class="jsonDetails" ${key ? `data-open-key="${escapeHtml(key)}"` : ""}>
         <summary>${escapeHtml(label)}</summary>
         <pre>${escapeHtml(JSON.stringify(value, null, 2))}</pre>
       </details>
@@ -4511,7 +4516,7 @@ class VoiceHarnessPanel extends HTMLElement {
             ${result.violations.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
           </ul>
         ` : ""}
-        ${this._jsonDetails(this._t("result.raw"), result)}
+        ${this._jsonDetails(this._t("result.raw"), result, "result:raw")}
       </article>
     `;
   }

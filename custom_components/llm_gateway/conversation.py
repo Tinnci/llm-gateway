@@ -47,6 +47,7 @@ from .context import (
 )
 from .dialogue import (
     DialogueFrameStack,
+    dialogue_pending_key,
     interaction_state_for_policy_block,
     resolve_dialogue_transaction,
 )
@@ -664,7 +665,11 @@ class LLMGatewayConversationEntity(
             runtime.turn_controller.finish(turn_token)
             return err.as_conversation_result()
         self._mark_run(runtime, run_id, "llm_data")
-        pending_key = user_input.conversation_id or self.entry.entry_id
+        pending_key = dialogue_pending_key(
+            user_input.conversation_id,
+            getattr(user_input, "device_id", "") or "",
+            self.entry.entry_id,
+        )
         frame_stack = self._dialogue_frames.setdefault(
             pending_key,
             DialogueFrameStack(),
