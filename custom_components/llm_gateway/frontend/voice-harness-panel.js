@@ -2100,6 +2100,11 @@ class VoiceHarnessPanel extends HTMLElement {
         .filter((card) => card instanceof HTMLDetailsElement && card.open)
         .map((card) => (card instanceof HTMLDetailsElement ? card.dataset.openKey : "") || ""),
     );
+    if (this._trajectoryExpandedRunId) {
+      // The trajectory-inspector button flow targets a card that was not
+      // necessarily open pre-render; keep it authoritative.
+      openKeys.add(`record:${this._trajectoryExpandedRunId}`);
+    }
     this.shadowRoot.innerHTML = `
       <style>${styles}</style>
       <main class="shell">
@@ -2203,7 +2208,7 @@ class VoiceHarnessPanel extends HTMLElement {
             </div>
             ${this._liveStatusBanner(entry)}
             ${this._renderTracePanel(entry)}
-            <details class="runtimeConfigDrawer">
+            <details class="runtimeConfigDrawer" data-open-key="${entry.entry_id}:runtime_config">
               <summary>
                 <span>${escapeHtml(this._t("runs.runtime_config"))}</span>
                 <span class="meta">${(entry.routes || []).length} routes</span>
@@ -2283,10 +2288,10 @@ class VoiceHarnessPanel extends HTMLElement {
     `;
   }
 
-  _audioCandidatePanel(audioStatus) {
+  _audioCandidatePanel(audioStatus, scopeKey = "global") {
     const candidates = audioStatus.candidates || {};
     return `
-      <details class="jsonBlock">
+      <details class="jsonBlock" data-open-key="${scopeKey}:audio_candidates">
         <summary>${escapeHtml(this._t("settings.audio_candidates"))}</summary>
         <div class="candidateGrid">
           ${this._audioCandidateList("Local services", candidates.local_services || [], "service")}
@@ -2556,7 +2561,7 @@ class VoiceHarnessPanel extends HTMLElement {
               ${this._entityPickerField(entry.entry_id, "first_response_tts_entity", options.first_response_tts_entity || "", ttsCandidates)}
               ${this._entityPickerField(entry.entry_id, "first_response_media_player_entity", options.first_response_media_player_entity || "", mediaCandidates)}
             </div>
-            ${this._audioCandidatePanel(audioStatus)}
+            ${this._audioCandidatePanel(audioStatus, entry.entry_id)}
           </fieldset>
           <fieldset>
             <legend>${escapeHtml(this._t("config.traces"))}</legend>
@@ -2779,7 +2784,7 @@ class VoiceHarnessPanel extends HTMLElement {
           ${rows.map(([key, state]) => this._satelliteStateRow(key, state)).join("")}
         </div>
         ${missing.length ? `
-          <details class="jsonDetails">
+          <details class="jsonDetails" data-open-key="satellite:missing_details">
             <summary>${escapeHtml(this._t("satellite.missing_details"))}</summary>
             <div class="missingList">
               ${missing.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}
@@ -3287,7 +3292,7 @@ class VoiceHarnessPanel extends HTMLElement {
     const lastStage = run.last_active_stage || (timeline.length ? timeline[timeline.length - 1].stage : "");
     const isRunning = run.status === "running";
     return `
-      <details class="traceCard">
+      <details class="traceCard" data-open-key="live:${run.id}">
         <summary>
           <div>
             <strong>${escapeHtml(this._formatTime(Number(run.created_at || 0) * 1000))}</strong>
@@ -3346,7 +3351,7 @@ class VoiceHarnessPanel extends HTMLElement {
     const causalChain = record.causal_chain || {};
     const loopName = record.loop?.name || record.loop_name || `${route.kind || "auto"}-turn-loop`;
     return `
-      <details class="traceCard" ${this._trajectoryExpandedRunId === String(record.run_id || record.id || "") ? "open" : ""}>
+      <details class="traceCard" data-open-key="record:${record.run_id || record.id}">
         <summary>
           <div class="runIdentity">
             <div class="runEyebrow">
@@ -3422,7 +3427,7 @@ class VoiceHarnessPanel extends HTMLElement {
             ])}
           </div>
           ${this._trajectoryPanel(record, timeline, causalChain)}
-          <details class="diagnosticDrawer">
+          <details class="diagnosticDrawer" data-open-key="drawer:${record.run_id || record.id}:diagnostics">
             <summary>
               <span>${escapeHtml(this._t("runs.inspect_evidence"))}</span>
               <span class="meta">${escapeHtml(this._t("runs.tools", { count: tools.length }))} · ${errors.length} ${escapeHtml(this._t("runs.errors").toLowerCase())}</span>
@@ -3754,7 +3759,7 @@ class VoiceHarnessPanel extends HTMLElement {
           ])}
         </div>
         ${entities.length ? `
-          <details class="jsonDetails">
+          <details class="jsonDetails" data-open-key="record:${record.run_id || record.id}:inventory_entities">
             <summary>${escapeHtml(this._t("runs.inventory_entities"))}</summary>
             <div class="attemptList compact">
               ${entities.map((entity) => `
