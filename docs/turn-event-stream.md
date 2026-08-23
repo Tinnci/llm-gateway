@@ -16,8 +16,10 @@ Each event includes:
 - `privacy`: payload handling classification;
 - `payload`: bounded trace-safe event data.
 
-The legacy `stage`, `t_ms`, `status`, and `attrs` fields remain available while
-existing Voice Harness projections migrate to the envelope.
+New events carry only the envelope fields above; consumers derive the former
+`stage` / `t_ms` / `status` / `attrs` view through the `event_stage()` and
+`event_payload()` projections in `voice_runs.py`, which also accept records
+persisted before the migration.
 
 Wall-clock timestamps from different devices are approximate and must not be
 used to calculate latency. Monotonic values are precise only within their
@@ -38,6 +40,20 @@ still does not make clocks comparable for latency calculations.
 `DiagnosticSnapshot` continues to describe current composed-system health. The
 turn event stream describes what happened during one interaction; neither is a
 replacement for the other.
+
+## Diagnostic drawer rendering
+
+The Voice Harness panel renders trace diagnostics through a keyed renderer
+registry (`voice-harness-diagnostic-tabs.js`). Tabs are registered once at
+module mount with `{ id, labelKey, order, render }`; the drawer iterates the
+registry, renders only sections whose body is non-empty, and remembers the
+selected tab per record by tab id. Adding a diagnostic section is one
+`registerDiagnosticTab()` call plus its render function — the drawer itself
+never changes, mirroring the kernel's capability-registry direction.
+Record fields no panel consumes fall through a generic raw-tab fallback, so a
+new backend diagnostic field is visible without any frontend change. Records
+persisted before `schema_version` existed are versioned as `0` on read and get
+`turn_summary` and `search_path` backfilled from their legacy fields.
 
 ## Dry-run replay and fork
 

@@ -19,6 +19,10 @@ import {
   tabButton,
 } from "./voice-harness-ui.js";
 import { resolveReplayPair } from "./voice-harness-replay-diff.js";
+import {
+  diagnosticTabRenderers,
+  registerDiagnosticTab,
+} from "./voice-harness-diagnostic-tabs.js";
 import "./voice-harness-replay-inspector.js";
 import {
   escapeHtml,
@@ -3527,38 +3531,26 @@ class VoiceHarnessPanel extends HTMLElement {
     causalChain,
   }) {
     const key = `drawer:${this._rid(record)}:diagnostics`;
-    const tabs = [
-      {
-        id: "overview",
-        label: this._t("runs.diag_overview"),
-        html: this._diagnosticOverviewTab(record, { firstResponse, route, provider, rawMeta, causalChain }),
-      },
-      {
-        id: "evidence",
-        label: this._t("runs.diag_evidence"),
-        html: this._diagnosticEvidenceTab(record),
-      },
-      {
-        id: "audio",
-        label: this._t("runs.diag_audio"),
-        html: this._diagnosticAudioTab(record),
-      },
-      {
-        id: "tools",
-        label: this._t("runs.diag_tools"),
-        html: this._diagnosticToolsTab({ record, tools, errors, attempts }),
-      },
-      {
-        id: "timeline",
-        label: this._t("runs.diag_timeline"),
-        html: this._diagnosticTimelineTab(timeline),
-      },
-      {
-        id: "raw",
-        label: this._t("runs.diag_raw"),
-        html: this._diagnosticRawTab(record),
-      },
-    ].filter((tab) => tab.html.trim().length > 0);
+    const ctx = {
+      timeline,
+      tools,
+      errors,
+      attempts,
+      firstResponse,
+      route,
+      provider,
+      rawMeta,
+      causalChain,
+    };
+    // Tabs come from the keyed renderer registry: a new diagnostic section is
+    // one registerDiagnosticTab() call at mount time, not a drawer edit.
+    const tabs = diagnosticTabRenderers()
+      .map((entry) => ({
+        id: entry.id,
+        label: this._t(entry.labelKey),
+        html: entry.render(this, record, ctx),
+      }))
+      .filter((tab) => tab.html.trim().length > 0);
     const active = tabs.some((tab) => tab.id === this._diagnosticTabs[key])
       ? this._diagnosticTabs[key]
       : (tabs[0]?.id || "");
@@ -7173,6 +7165,52 @@ const styles = `
     }
   }
 `;
+
+// Diagnostic drawer tabs are a keyed renderer registry: each entry below is
+// the whole mount-time story for one section. Adding a section means adding
+// an entry here (plus its renderer method) — the drawer itself never changes.
+const DIAGNOSTIC_TAB_ENTRIES = /** @type {const} */ ([
+  {
+    id: "overview",
+    labelKey: "runs.diag_overview",
+    order: 10,
+    render: (panel, record, ctx) => panel._diagnosticOverviewTab(record, ctx),
+  },
+  {
+    id: "evidence",
+    labelKey: "runs.diag_evidence",
+    order: 20,
+    render: (panel, record) => panel._diagnosticEvidenceTab(record),
+  },
+  {
+    id: "audio",
+    labelKey: "runs.diag_audio",
+    order: 30,
+    render: (panel, record) => panel._diagnosticAudioTab(record),
+  },
+  {
+    id: "tools",
+    labelKey: "runs.diag_tools",
+    order: 40,
+    render: (panel, record, ctx) =>
+      panel._diagnosticToolsTab({ record, ...ctx }),
+  },
+  {
+    id: "timeline",
+    labelKey: "runs.diag_timeline",
+    order: 50,
+    render: (panel, record, ctx) => panel._diagnosticTimelineTab(ctx.timeline),
+  },
+  {
+    id: "raw",
+    labelKey: "runs.diag_raw",
+    order: 60,
+    render: (panel, record) => panel._diagnosticRawTab(record),
+  },
+]);
+for (const entry of DIAGNOSTIC_TAB_ENTRIES) {
+  registerDiagnosticTab(entry);
+}
 
 try {
   if (!customElements.get("voice-harness-panel")) {
