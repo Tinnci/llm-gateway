@@ -2093,6 +2093,13 @@ class VoiceHarnessPanel extends HTMLElement {
     const entries = this._data?.entries || [];
     this._renderedReplayPair = null;
     this._renderedReplayLabels = null;
+    // Full innerHTML replacement would snap every collapsible card back to
+    // its template default; carry the user's expansion layout across.
+    const openKeys = new Set(
+      [...this.shadowRoot.querySelectorAll("details[data-open-key]")]
+        .filter((card) => card instanceof HTMLDetailsElement && card.open)
+        .map((card) => (card instanceof HTMLDetailsElement ? card.dataset.openKey : "") || ""),
+    );
     this.shadowRoot.innerHTML = `
       <style>${styles}</style>
       <main class="shell">
@@ -2126,6 +2133,11 @@ class VoiceHarnessPanel extends HTMLElement {
     if (inspector && this._renderedReplayPair) {
       inspector.pair = this._renderedReplayPair;
       inspector.labels = this._renderedReplayLabels;
+    }
+    for (const card of this.shadowRoot.querySelectorAll("details[data-open-key]")) {
+      if (card instanceof HTMLDetailsElement && openKeys.has(card.dataset.openKey || "")) {
+        card.open = true;
+      }
     }
   }
 
@@ -2371,7 +2383,7 @@ class VoiceHarnessPanel extends HTMLElement {
         </div>
         <p class="settingsNote">${escapeHtml(this._t("config.description"))}</p>
 
-        <details class="configCard" open>
+        <details class="configCard" open data-open-key="${entry.entry_id}:core">
           <summary>${escapeHtml(this._t("config.group_core"))}</summary>
 
           <fieldset>
@@ -2448,7 +2460,7 @@ class VoiceHarnessPanel extends HTMLElement {
           </fieldset>
         </details>
 
-        <details class="configCard">
+        <details class="configCard" data-open-key="${entry.entry_id}:ha_prompt">
           <summary>${escapeHtml(this._t("config.group_ha_prompt"))}</summary>
           <fieldset>
             <legend>${escapeHtml(this._t("config.ha_llm_api"))}</legend>
@@ -2466,7 +2478,7 @@ class VoiceHarnessPanel extends HTMLElement {
           </fieldset>
         </details>
 
-        <details class="configCard">
+        <details class="configCard" data-open-key="${entry.entry_id}:search_fallbacks">
           <summary>${escapeHtml(this._t("config.group_search_fallbacks"))}</summary>
           <fieldset>
             <legend>${escapeHtml(this._t("config.search"))}</legend>
@@ -2507,7 +2519,7 @@ class VoiceHarnessPanel extends HTMLElement {
           </fieldset>
         </details>
 
-        <details class="configCard">
+        <details class="configCard" data-open-key="${entry.entry_id}:audio_traces">
           <summary>${escapeHtml(this._t("config.group_audio_traces"))}</summary>
           <fieldset>
             <legend>${escapeHtml(this._t("config.first_response_audio"))}</legend>
