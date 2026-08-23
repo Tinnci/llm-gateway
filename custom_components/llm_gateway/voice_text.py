@@ -22,14 +22,30 @@ _CODE_HINT_RE = re.compile(
     flags=re.IGNORECASE,
 )
 _CODE_SYMBOL_RE = re.compile(r"(\{|\}|=>|==|!=|<=|>=|;|</|/>|\w+\([^)]*\))")
+# Structural protocol syntax only. A bare tool NAME in prose ("我可以使用
+# search_web 检索外部信息") is a legitimate answer to capability questions;
+# blocking on vocabulary produced false positives, so match syntax shapes
+# (tags, assignments, JSON keys/values) — the same discipline as harnesses
+# that keep tool calls in structured channels instead of policing wording.
 _TOOL_PROTOCOL_RE = re.compile(
-    r"(<\s*/?\s*tool[_-]?call\b|"
-    r"\bfunction\s*=|"
-    r"\barguments\s*=|"
-    r"\bsearch[_-]?web\b|"
-    r"\btool_calls?\b|"
-    r"\bHass(?:TurnOn|TurnOff|CallService)\b|"
-    r"\bGetLiveContext\b)",
+    r"(<\s*/?\s*tool[_-]?call\b"  # <tool_call> / </tool_call>
+    r"|<\s*/?\s*tool[_-]?response\b"  # <tool_response>
+    r"|\b(?:function|arguments)\b\s*\"?\s*[=:]"  # function= / "arguments":
+    r"|\"\s*tool_calls?\s*\"\s*:"  # "tool_calls": JSON key
+    r"|:\s*\"\s*(?:Hass(?:TurnOn|TurnOff|CallService)"
+    r"|GetLiveContext)\s*\")",  # HA action id as JSON value
+    re.IGNORECASE,
+)
+
+# Speakable stand-ins for internal identifiers that legitimately surface in
+# answers; substituted before validation so they neither trip nor sound raw.
+_SPOKEN_TOOL_NAMES = {
+    "search_web": "联网搜索",
+    "get_live_context": "实时状态查询",
+    "GetLiveContext": "实时状态查询",
+}
+_SPOKEN_TOOL_NAME_RE = re.compile(
+    r"\b(" + "|".join(map(re.escape, _SPOKEN_TOOL_NAMES)) + r")\b",
     re.IGNORECASE,
 )
 _REASONING_LEAK_RE = re.compile(
@@ -92,6 +108,13 @@ def enforce_output_contract(text: str | None) -> tuple[str, bool, str]:
     value = str(text or "").strip()
     if not value:
         return "", False, ""
+    value = _SPOKEN_TOOL_NAME_RE.sub(
+        lambda match: (
+            _SPOKEN_TOOL_NAMES.get(match.group(1))
+            or _SPOKEN_TOOL_NAMES[match.group(1).lower()]
+        ),
+        value,
+    )
     reasoning_leak = _looks_like_reasoning_leak(value)
     repetition_loop = _has_repetition_loop(value)
     if reasoning_leak and repetition_loop:

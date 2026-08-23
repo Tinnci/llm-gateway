@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from custom_components.llm_gateway.voice_text import (
     TOOL_PROTOCOL_FALLBACK,
     enforce_output_contract,
@@ -38,6 +40,59 @@ def test_markdown_to_spoken_text_reads_short_unlabelled_quote_blocks():
 def test_markdown_to_spoken_text_limits_sentences():
     spoken = markdown_to_spoken_text("第一句。第二句！第三句？", max_sentences=2)
     assert spoken == "第一句。第二句！"
+
+
+def test_captured_false_positive_now_passes_with_speakable_name():
+    """The exact production sentence that misfired on 2026-08-23."""
+    captured = (
+        "目前我可以使用 search_web 工具来获取外部信息，"
+        "例如查询可用的 AI 工具列表。通过该工具我可以检索最新的搜索结果。"
+    )
+
+    safe, modified, reason = enforce_output_contract(captured)
+
+    assert not modified
+    assert reason == ""
+    assert "search_web" not in safe
+    assert "联网搜索" in safe
+
+
+def test_bare_ha_action_names_outside_json_pass():
+    safe, modified, reason = enforce_output_contract(
+        "你可以说打开客厅灯，我会调用相应的服务来完成。"
+    )
+
+    assert not modified
+    assert reason == ""
+    assert safe.startswith("你可以说")
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        '<tool_call>{"name":"search_web","arguments":{"q":"x"}}</tool_call>',
+        '<tool_response>{"result":1}</tool_response>',
+        '看这个 {"name": "HassTurnOn"} 的写法',
+        '返回 {"tool_calls": []} 即可',
+        "function= main()",
+        '"arguments": {"query": "weather"}',
+    ],
+)
+def test_structural_protocol_still_blocked(payload):
+    safe, modified, reason = enforce_output_contract(payload)
+
+    assert modified
+    assert reason == "tool_protocol_leak"
+    assert safe == TOOL_PROTOCOL_FALLBACK
+
+
+def test_get_live_context_substituted_when_mentioned_in_prose():
+    safe, modified, _reason = enforce_output_contract(
+        "我可以调用 GetLiveContext 查状态。"
+    )
+
+    assert not modified
+    assert "实时状态查询" in safe
 
 
 def test_output_contract_blocks_tool_protocol_leaks():

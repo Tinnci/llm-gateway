@@ -19,6 +19,7 @@ from custom_components.llm_gateway.api import (
     LLMGatewayQuotaExhaustedError,
     ModelCatalogFetch,
     _parse_usage,
+    _strip_inline_tool_syntax,
 )
 from custom_components.llm_gateway.model_catalog import ModelCatalogCache
 
@@ -361,3 +362,44 @@ async def test_catalog_auth_error_propagates(hass):
 
     with pytest.raises(LLMGatewayAuthError):
         await catalog.async_get(client=stub, base_url=BASE, force=True)
+
+
+def test_strip_inline_tool_syntax_variants():
+    """Inline tool-call XML is removed; ordinary prose and plain words stay."""
+    assert (
+        _strip_inline_tool_syntax("正常回答，没有任何标记。")
+        == "正常回答，没有任何标记。"
+    )
+    dirty = '好的。<tool_call>{"name":"search_web"}</tool_call>以上便是结果。'
+    assert _strip_inline_tool_syntax(dirty) == "好的。以上便是结果。"
+    unclosed = '前缀 <tool_call>{"name":"x"}'
+    assert _strip_inline_tool_syntax(unclosed) == "前缀"
+    assert _strip_inline_tool_syntax("") == ""
+
+
+async def test_chat_completion_strips_inline_tool_syntax(hass, aioclient_mock):
+    """Content-channel leakage is cleaned before it reaches any consumer."""
+    aioclient_mock.post(
+        f"{BASE}/chat/completions",
+        json={
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": '答案。<tool_call>{"name":"x"}</tool_call>',
+                    }
+                }
+            ],
+            "usage": {"prompt_tokens": 3, "completion_tokens": 4},
+        },
+    )
+    client = LLMGatewayClient(async_get_clientsession(hass), BASE, "k")
+    message, usage = await client.async_chat_completion(
+        model="m",
+        messages=[{"role": "user", "content": "x"}],
+        max_tokens=8,
+        temperature=0.1,
+        top_p=0.9,
+    )
+    assert message["content"] == "答案。"
+    assert usage["total_tokens"] == 7

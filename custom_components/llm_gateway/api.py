@@ -363,6 +363,16 @@ class LLMGatewayClient:
         except (KeyError, IndexError, TypeError) as err:
             LOGGER.debug("Unexpected completion payload: %s", data)
             raise LLMGatewayError("Malformed response from endpoint") from err
+        content = message.get("content")
+        if isinstance(content, str) and content:
+            cleaned = _strip_inline_tool_syntax(content)
+            if cleaned != content:
+                LOGGER.warning(
+                    "Stripped inline tool-call syntax from content (%d -> %d chars)",
+                    len(content),
+                    len(cleaned),
+                )
+                message["content"] = cleaned
         return message, _parse_usage(data)
 
 
@@ -381,6 +391,23 @@ def _delta_text(chunk: dict[str, Any]) -> str:
         return ""
     content = delta.get("content") if isinstance(delta, dict) else None
     return str(content) if content else ""
+
+
+# Some models (notably small NIM deployments) occasionally emit tool-call
+# XML inside the CONTENT channel when confused about invocation. Strip it at
+# parse time so downstream consumers (validator/TTS) see clean prose — the
+# dsh/pi discipline: channels stay disjoint from the moment of parsing.
+_INLINE_TOOL_BLOCK_RE = re.compile(
+    r"<\s*tool[_-]?call\b[^>]*>.*?(?:<\s*/?\s*tool[_-]?call\b[^>]*>|$)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _strip_inline_tool_syntax(text: str) -> str:
+    """Remove inline <tool_call> blocks leaked into completion content."""
+    if "<" not in text or "tool" not in text.lower():
+        return text
+    return _INLINE_TOOL_BLOCK_RE.sub("", text).strip()
 
 
 def _parse_usage(data: dict[str, Any]) -> dict[str, int] | None:
