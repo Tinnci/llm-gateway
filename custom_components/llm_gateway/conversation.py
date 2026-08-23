@@ -80,11 +80,10 @@ from .router import (
 )
 from .search import (
     SEARCH_TOOL_NAME,
-    async_execute_search_tool,
-    available_search_tools,
     mark_external_tool_calls,
 )
 from .static_context import render_device_inventory, render_scalar_state_answer
+from .tools_registry import enabled_external_tools, find_external_tool
 from .traces import TraceTurn
 from .turn_loops import (
     ActionPlanLoop,
@@ -2063,9 +2062,14 @@ class LLMGatewayConversationEntity(
                 _format_tool(tool, chat_log.llm_api.custom_serializer)
                 for tool in chat_log.llm_api.tools
             ]
-        search_tools = available_search_tools(options)
-        if search_tools:
-            tools = [*(tools or []), *search_tools]
+        external_tools = enabled_external_tools(options)
+        if external_tools:
+            specs = [
+                spec
+                for declaration in external_tools
+                for spec in declaration.build_specs(options)
+            ]
+            tools = [*(tools or []), *specs]
         route_decision = decide_route(user_text)
         tools = _filter_visible_tools(tools, route_decision)
         self._mark_run(
@@ -2358,20 +2362,22 @@ class LLMGatewayConversationEntity(
             for tool_call in content.tool_calls or []:
                 if not tool_call.external:
                     continue
-                if tool_call.tool_name == SEARCH_TOOL_NAME:
-                    self._mark_run(
-                        runtime,
-                        run_id,
-                        "search_started",
-                        attrs={
-                            "name": tool_call.tool_name,
-                            "iteration": iteration,
-                            "query": str(tool_call.tool_args.get("query") or ""),
-                            "interaction_state": "searching",
-                            "spoken_hint": "我查一下。",
-                        },
-                    )
-                result = await async_execute_search_tool(
+                declaration = find_external_tool(tool_call.tool_name)
+                if declaration is None:
+                    continue
+                self._mark_run(
+                    runtime,
+                    run_id,
+                    "search_started",
+                    attrs={
+                        "name": tool_call.tool_name,
+                        "iteration": iteration,
+                        "query": str(tool_call.tool_args.get("query") or ""),
+                        "interaction_state": "searching",
+                        "spoken_hint": declaration.spoken_hint,
+                    },
+                )
+                result = await declaration.execute(
                     runtime.session,
                     options,
                     tool_call,
