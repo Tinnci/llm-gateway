@@ -567,6 +567,44 @@ class LLMGatewayConversationEntity(
         conversation.async_unset_agent(self.hass, self.entry)
         await super().async_will_remove_from_hass()
 
+    async def _speak(
+        self,
+        chat_log: conversation.ChatLog,
+        text: str | None,
+    ) -> None:
+        """Append one assistant speech turn, draining any tool-result queue."""
+        if not text:
+            return
+        async for _tool_result in chat_log.async_add_assistant_content(
+            conversation.AssistantContent(agent_id=self.entity_id, content=text)
+        ):
+            pass
+
+    def _turn_is_stale(
+        self,
+        runtime: LLMGatewayRuntimeData,
+        run_id: str,
+        turn_token: TurnToken,
+        *,
+        reason: str,
+        **attrs: Any,  # noqa: ANN401 - trace attrs are pass-through metadata
+    ) -> bool:
+        """Mark a cancelled run when the token no longer owns the turn."""
+        if runtime.turn_controller.is_current(turn_token):
+            return False
+        self._mark_run(
+            runtime,
+            run_id,
+            "backend_tasks_cancelled",
+            status="cancelled",
+            attrs={
+                "reason": reason,
+                **runtime.turn_controller.stale_attrs(turn_token),
+                **attrs,
+            },
+        )
+        return True
+
     async def _async_handle_message(  # noqa: C901, PLR0911, PLR0912, PLR0915
         self,
         user_input: conversation.ConversationInput,
@@ -682,13 +720,8 @@ class LLMGatewayConversationEntity(
                     "prompt": dialogue_transaction.prompt or "好的，已取消。",
                 },
             )
-            async for _tool_result in chat_log.async_add_assistant_content(
-                conversation.AssistantContent(
-                    agent_id=self.entity_id,
-                    content=dialogue_transaction.prompt or "好的，已取消。",
-                )
-            ):
-                pass
+            await self._speak(chat_log, dialogue_transaction.prompt or "好的，已取消。")
+
             return await self._async_finalize_turn(
                 user_input,
                 chat_log,
@@ -714,13 +747,8 @@ class LLMGatewayConversationEntity(
                     "tools_used_count": 0,
                 },
             )
-            async for _tool_result in chat_log.async_add_assistant_content(
-                conversation.AssistantContent(
-                    agent_id=self.entity_id,
-                    content=prompt,
-                )
-            ):
-                pass
+            await self._speak(chat_log, prompt)
+
             return await self._async_finalize_turn(
                 user_input,
                 chat_log,
@@ -778,13 +806,8 @@ class LLMGatewayConversationEntity(
                         "prompt": prompt,
                     },
                 )
-                async for _tool_result in chat_log.async_add_assistant_content(
-                    conversation.AssistantContent(
-                        agent_id=self.entity_id,
-                        content=prompt,
-                    )
-                ):
-                    pass
+                await self._speak(chat_log, prompt)
+
                 return await self._async_finalize_turn(
                     user_input,
                     chat_log,
@@ -808,13 +831,8 @@ class LLMGatewayConversationEntity(
         )
         if local_control_speech is not None:
             self._mark_run(runtime, run_id, "local_control")
-            async for _tool_result in chat_log.async_add_assistant_content(
-                conversation.AssistantContent(
-                    agent_id=self.entity_id,
-                    content=local_control_speech,
-                )
-            ):
-                pass
+            await self._speak(chat_log, local_control_speech)
+
             return await self._async_finalize_turn(
                 user_input,
                 chat_log,
@@ -922,13 +940,8 @@ class LLMGatewayConversationEntity(
                         "outcome": loop_result.status,
                     },
                 )
-                async for _tool_result in chat_log.async_add_assistant_content(
-                    conversation.AssistantContent(
-                        agent_id=self.entity_id,
-                        content=loop_result.speech,
-                    )
-                ):
-                    pass
+                await self._speak(chat_log, loop_result.speech)
+
                 return await self._async_finalize_turn(
                     user_input,
                     chat_log,
@@ -953,13 +966,8 @@ class LLMGatewayConversationEntity(
                     "llm_used": False,
                 },
             )
-            async for _tool_result in chat_log.async_add_assistant_content(
-                conversation.AssistantContent(
-                    agent_id=self.entity_id,
-                    content="这个操作我还不能本地执行，请换个说法。",
-                )
-            ):
-                pass
+            await self._speak(chat_log, "这个操作我还不能本地执行，请换个说法。")
+
             return await self._async_finalize_turn(
                 user_input,
                 chat_log,
@@ -985,13 +993,8 @@ class LLMGatewayConversationEntity(
                     "local_inventory_render",
                     attrs=inventory.trace_attrs(),
                 )
-                async for _tool_result in chat_log.async_add_assistant_content(
-                    conversation.AssistantContent(
-                        agent_id=self.entity_id,
-                        content=inventory.speech,
-                    )
-                ):
-                    pass
+                await self._speak(chat_log, inventory.speech)
+
                 return await self._async_finalize_turn(
                     user_input,
                     chat_log,
@@ -1015,13 +1018,8 @@ class LLMGatewayConversationEntity(
                 "local_stable_answer",
                 attrs={"source": "local_knowledge_cache"},
             )
-            async for _tool_result in chat_log.async_add_assistant_content(
-                conversation.AssistantContent(
-                    agent_id=self.entity_id,
-                    content=local_answer,
-                )
-            ):
-                pass
+            await self._speak(chat_log, local_answer)
+
             return await self._async_finalize_turn(
                 user_input,
                 chat_log,
@@ -1131,13 +1129,8 @@ class LLMGatewayConversationEntity(
                     "task_id": task_id,
                 }
             ]
-            async for _tool_result in chat_log.async_add_assistant_content(
-                conversation.AssistantContent(
-                    agent_id=self.entity_id,
-                    content=DEEP_TASK_ACK_SPEECH,
-                )
-            ):
-                pass
+            await self._speak(chat_log, DEEP_TASK_ACK_SPEECH)
+
         else:
             provider_runs = await self._async_run_chat_log(
                 chat_log,
@@ -1246,13 +1239,8 @@ class LLMGatewayConversationEntity(
                         "local_state_render",
                         attrs=local_state.trace_attrs(),
                     )
-                    async for _tool_result in chat_log.async_add_assistant_content(
-                        conversation.AssistantContent(
-                            agent_id=self.entity_id,
-                            content=local_state.speech,
-                        )
-                    ):
-                        pass
+                    await self._speak(chat_log, local_state.speech)
+
                     return await self._async_finalize_turn(
                         user_input,
                         chat_log,
@@ -1290,13 +1278,8 @@ class LLMGatewayConversationEntity(
                 "source": "GetLiveContext",
             },
         )
-        async for _tool_result in chat_log.async_add_assistant_content(
-            conversation.AssistantContent(
-                agent_id=self.entity_id,
-                content=fallback,
-            )
-        ):
-            pass
+        await self._speak(chat_log, fallback)
+
         return await self._async_finalize_turn(
             user_input,
             chat_log,
@@ -1378,13 +1361,8 @@ class LLMGatewayConversationEntity(
                 "tools_used": [],
             },
         )
-        async for _tool_result in chat_log.async_add_assistant_content(
-            conversation.AssistantContent(
-                agent_id=self.entity_id,
-                content=speech,
-            )
-        ):
-            pass
+        await self._speak(chat_log, speech)
+
         return await self._async_finalize_turn(
             user_input,
             chat_log,
@@ -1540,10 +1518,8 @@ class LLMGatewayConversationEntity(
                 "final_must_cover": final_must_cover,
             },
         )
-        async for _tool_result in chat_log.async_add_assistant_content(
-            conversation.AssistantContent(agent_id=self.entity_id, content=speech)
-        ):
-            pass
+        await self._speak(chat_log, speech)
+
         return await self._async_finalize_turn(
             user_input,
             chat_log,
@@ -2108,17 +2084,9 @@ class LLMGatewayConversationEntity(
         forced_final_contract_added = False
         tool_counts: dict[tuple[str, str], int] = {}
         for iteration in range(1, MAX_TOOL_ITERATIONS + 1):
-            if not runtime.turn_controller.is_current(turn_token):
-                self._mark_run(
-                    runtime,
-                    run_id,
-                    "backend_tasks_cancelled",
-                    status="cancelled",
-                    attrs={
-                        "reason": "stale_before_provider",
-                        **runtime.turn_controller.stale_attrs(turn_token),
-                    },
-                )
+            if self._turn_is_stale(
+                runtime, run_id, turn_token, reason="stale_before_provider"
+            ):
                 return provider_runs
             if force_final and not forced_final_contract_added:
                 chat_log.content.append(
@@ -2204,18 +2172,13 @@ class LLMGatewayConversationEntity(
                         "attempts": fallback_result.attempts,
                     }
                 )
-                if not runtime.turn_controller.is_current(turn_token):
-                    self._mark_run(
-                        runtime,
-                        run_id,
-                        "backend_tasks_cancelled",
-                        status="cancelled",
-                        attrs={
-                            "reason": "stale_after_provider",
-                            "iteration": iteration,
-                            **runtime.turn_controller.stale_attrs(turn_token),
-                        },
-                    )
+                if self._turn_is_stale(
+                    runtime,
+                    run_id,
+                    turn_token,
+                    reason="stale_after_provider",
+                    iteration=iteration,
+                ):
                     return provider_runs
             except LLMGatewayError as err:
                 LOGGER.error("Error talking to the gateway: %s", err)
@@ -2246,18 +2209,13 @@ class LLMGatewayConversationEntity(
                 or None,
             )
             if content.tool_calls:
-                if not runtime.turn_controller.is_current(turn_token):
-                    self._mark_run(
-                        runtime,
-                        run_id,
-                        "backend_tasks_cancelled",
-                        status="cancelled",
-                        attrs={
-                            "reason": "stale_before_tool_execution",
-                            "iteration": iteration,
-                            **runtime.turn_controller.stale_attrs(turn_token),
-                        },
-                    )
+                if self._turn_is_stale(
+                    runtime,
+                    run_id,
+                    turn_token,
+                    reason="stale_before_tool_execution",
+                    iteration=iteration,
+                ):
                     return provider_runs
                 if force_final:
                     for tool_call in content.tool_calls:
@@ -2272,13 +2230,11 @@ class LLMGatewayConversationEntity(
                                 "reason": "forced_final_tool_call",
                             },
                         )
-                    async for _tool_result in chat_log.async_add_assistant_content(
-                        conversation.AssistantContent(
-                            agent_id=self.entity_id,
-                            content=content.content or TOOL_LOOP_GUARD_SPEECH,
-                        )
-                    ):
-                        pass
+                    await self._speak(
+                        chat_log,
+                        content.content or TOOL_LOOP_GUARD_SPEECH,
+                    )
+
                     return provider_runs
 
                 LOGGER.info(
@@ -2315,13 +2271,8 @@ class LLMGatewayConversationEntity(
                             },
                         )
                     if content.content:
-                        async for _tool_result in chat_log.async_add_assistant_content(
-                            conversation.AssistantContent(
-                                agent_id=self.entity_id,
-                                content=content.content,
-                            )
-                        ):
-                            pass
+                        await self._speak(chat_log, content.content)
+
                         return provider_runs
                     force_final = True
                     self._mark_run(
@@ -2342,13 +2293,8 @@ class LLMGatewayConversationEntity(
                         status="error",
                         attrs={"iteration": iteration, **block_attrs},
                     )
-                    async for _tool_result in chat_log.async_add_assistant_content(
-                        conversation.AssistantContent(
-                            agent_id=self.entity_id,
-                            content=prompt,
-                        )
-                    ):
-                        pass
+                    await self._speak(chat_log, prompt)
+
                     return provider_runs
                 _record_tool_calls(content.tool_calls, tool_counts)
             async for tool_result in chat_log.async_add_assistant_content(content):
@@ -2386,13 +2332,8 @@ class LLMGatewayConversationEntity(
                             "local_state_render",
                             attrs=local_state.trace_attrs(),
                         )
-                        async for _tool_result in chat_log.async_add_assistant_content(
-                            conversation.AssistantContent(
-                                agent_id=self.entity_id,
-                                content=local_state.speech,
-                            )
-                        ):
-                            pass
+                        await self._speak(chat_log, local_state.speech)
+
                         return provider_runs
                     force_final = True
                     self._mark_run(
@@ -2405,20 +2346,13 @@ class LLMGatewayConversationEntity(
                         },
                     )
 
-            if content.tool_calls and not runtime.turn_controller.is_current(
-                turn_token
+            if content.tool_calls and self._turn_is_stale(
+                runtime,
+                run_id,
+                turn_token,
+                reason="stale_before_external_tool",
+                iteration=iteration,
             ):
-                self._mark_run(
-                    runtime,
-                    run_id,
-                    "backend_tasks_cancelled",
-                    status="cancelled",
-                    attrs={
-                        "reason": "stale_before_external_tool",
-                        "iteration": iteration,
-                        **runtime.turn_controller.stale_attrs(turn_token),
-                    },
-                )
                 return provider_runs
 
             for tool_call in content.tool_calls or []:
