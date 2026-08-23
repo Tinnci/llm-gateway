@@ -1954,21 +1954,29 @@ class LLMGatewayConversationEntity(
         event = runtime.voice_runs.mark(run_id, stage, status=status, attrs=attrs)
         if event is None:
             return
-        event_attrs = event.get("attrs") if isinstance(event.get("attrs"), dict) else {}
+        event_payload = event.get("payload")
+        event_payload = event_payload if isinstance(event_payload, dict) else {}
+        event_attrs = {
+            str(key): value
+            for key, value in event_payload.items()
+            if str(key) != "status"
+        }
+        event_t_ms = int(event.get("monotonic_ms") or 0)
+        event_status = str(event_payload.get("status") or status)
         if stage == "first_response" and (
             event_attrs.get("spoken_hint") or event_attrs.get("audio_suppressed_reason")
         ):
             runtime.first_response_player.schedule(
                 turn_id=run_id,
-                t_ms=int(event.get("t_ms") or 0),
+                t_ms=event_t_ms,
                 attrs=event_attrs,
                 marker=runtime.voice_runs.mark,
             )
         earcon, display = VoiceFeedbackPolicy(runtime.feedback).pipeline_event(
             turn_id=run_id,
             stage=stage,
-            t_ms=int(event.get("t_ms") or 0),
-            status=str(event.get("status") or status),
+            t_ms=event_t_ms,
+            status=event_status,
             attrs=event_attrs,
         )
         if earcon or display:

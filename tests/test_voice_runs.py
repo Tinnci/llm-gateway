@@ -2,7 +2,11 @@
 
 from datetime import datetime
 
-from custom_components.llm_gateway.voice_runs import VoiceRunRecorder
+from custom_components.llm_gateway.voice_runs import (
+    VoiceRunRecorder,
+    event_payload,
+    event_stage,
+)
 
 
 def test_voice_run_recorder_records_timeline() -> None:
@@ -25,7 +29,7 @@ def test_voice_run_recorder_records_timeline() -> None:
     assert snapshot[0]["route"] == "fast"
     assert snapshot[0]["last_active_stage"] == "complete"
     assert snapshot[0]["running_duration_ms"] == 42
-    assert [event["stage"] for event in timeline] == [
+    assert [event_stage(event) for event in timeline] == [
         "received",
         "route_selected",
         "complete",
@@ -40,7 +44,7 @@ def test_voice_run_recorder_records_timeline() -> None:
     assert timeline[1]["privacy"] == "trace_safe"
     assert timeline[1]["payload"] == {"status": "ok", "route": "fast"}
     assert datetime.fromisoformat(timeline[1]["occurred_at"]).tzinfo is not None
-    assert timeline[1]["monotonic_ms"] == timeline[1]["t_ms"]
+    assert isinstance(timeline[1]["monotonic_ms"], int)
 
 
 def test_voice_run_recorder_reports_running_stage() -> None:
@@ -94,7 +98,7 @@ def test_voice_run_recorder_expires_stale_running_runs(monkeypatch) -> None:
     assert run["last_active_stage"] == "stale_expired"
     assert run["last_active_status"] == "stale"
     assert run["running_duration_ms"] == 601000
-    assert run["events"][-1]["attrs"]["reason"] == (
+    assert event_payload(run["events"][-1])["reason"] == (
         "run_exceeded_observable_voice_budget"
     )
 

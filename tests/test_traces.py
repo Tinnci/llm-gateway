@@ -235,6 +235,7 @@ async def test_trace_store_projects_endpoint_and_interrupt_evidence(hass):
     assert observed["payload"]["barge_in_stop_latency_ms"] == 42
     chain = store.snapshot()["records"][0]["causal_chain"]
     assert chain == {
+        "applicable": True,
         "complete": True,
         "ordered": True,
         "required_event_types": [
@@ -1178,3 +1179,103 @@ async def test_trace_store_marks_non_search_home_control_run(hass):
     assert not record["debug_flags"]["search"]
     assert record["verifier_mode"] == "disabled"
     assert record["tools"][0]["name"] == "HassTurnOn"
+
+
+async def test_trace_causal_chain_is_not_applicable_without_interrupt_evidence(hass):
+    """Ordinary turns must not look broken by missing barge-in evidence."""
+    store = TraceStore(hass, "entry-chain-not-applicable")
+    await store.async_load()
+
+    await store.async_record_turn(
+        {CONF_DIAGNOSTIC_TRACES: True},
+        TraceTurn(
+            conversation_id="conv-plain",
+            user_text="现在的时间。",
+            assistant_text="状态：PM2.5 4.0 μg/m³。",
+            route={"kind": "local_live_context"},
+            latency_ms=322,
+            status="complete",
+            timeline=[
+                {"stage": "received", "t_ms": 0, "status": "ok", "attrs": {}},
+                {"stage": "route_decision", "t_ms": 216, "status": "ok", "attrs": {}},
+                {"stage": "complete", "t_ms": 323, "status": "ok", "attrs": {}},
+            ],
+            raw_payload={"messages": []},
+        ),
+    )
+
+    record = store.snapshot()["records"][0]
+    chain = record["causal_chain"]
+    assert chain["applicable"] is False
+    assert chain["complete"] is False
+    assert chain["missing_event_types"] == []
+
+
+async def test_trace_timeline_final_span_closes_with_turn_latency(hass):
+    store = TraceStore(hass, "entry-final-span")
+    await store.async_load()
+
+    await store.async_record_turn(
+        {CONF_DIAGNOSTIC_TRACES: True},
+        TraceTurn(
+            conversation_id="conv-final-span",
+            user_text="现在的时间。",
+            assistant_text="状态：PM2.5 4.0 μg/m³。",
+            route={"kind": "local_live_context"},
+            latency_ms=322,
+            status="complete",
+            timeline=[
+                {"stage": "received", "t_ms": 0, "status": "ok", "attrs": {}},
+                {"stage": "complete", "t_ms": 300, "status": "ok", "attrs": {}},
+            ],
+            raw_payload={"messages": []},
+        ),
+    )
+
+    spans = store.snapshot()["records"][0]["timeline_spans"]
+    assert spans[-1]["stage"] == "complete"
+    assert spans[-1]["duration_ms"] == 22
+
+
+async def test_trace_record_exposes_one_glance_turn_summary(hass):
+    store = TraceStore(hass, "entry-turn-summary")
+    await store.async_load()
+
+    await store.async_record_turn(
+        {CONF_DIAGNOSTIC_TRACES: True},
+        TraceTurn(
+            conversation_id="conv-summary",
+            user_text="卧室温度是多少？",
+            assistant_text="卧室现在 24 度。",
+            route={
+                "kind": "local_live_context",
+                "model": "live_context_renderer",
+                "route_decision": {
+                    "task_family": "home_state",
+                    "task_type": "indoor_environment_query",
+                    "matched_capability": "indoor_environment_query",
+                    "next_action": "call_tool_then_local_render",
+                },
+            },
+            latency_ms=88,
+            status="complete",
+            raw_payload={
+                "tool_events": [
+                    {
+                        "name": "GetLiveContext",
+                        "phase": "call",
+                        "status": "ok",
+                        "args": {"domain": "sensor"},
+                        "result": {"success": True},
+                    }
+                ]
+            },
+        ),
+    )
+
+    summary = store.snapshot()["records"][0]["turn_summary"]
+    assert summary["task_family"] == "home_state"
+    assert summary["task_type"] == "indoor_environment_query"
+    assert summary["route"] == "local_live_context"
+    assert summary["tools"] == ["GetLiveContext"]
+    assert summary["latency_ms"] == 88

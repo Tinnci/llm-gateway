@@ -27,6 +27,7 @@ from .satellite_diagnostics import (
     SATELLITE_DIAGNOSTIC_SNAPSHOT_ENTITY_ID,
     satellite_diagnostic_snapshot,
 )
+from .voice_runs import event_payload, event_stage
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -97,13 +98,25 @@ class TraceStore:
         verifier_mode = _verifier_mode(turn.raw_payload, grounding)
         errors = _error_summary(turn.raw_payload, tools, grounding, turn.timeline)
         record_id = turn.run_id or ulid.ulid_now()
-        timeline_spans = _timeline_spans(turn.timeline)
+        timeline_spans = _timeline_spans(turn.timeline, total_ms=turn.latency_ms)
         actions = _actions_summary(tools)
         earcons = _earcon_summary(turn.raw_payload)
         display_status = _display_status_summary(turn.raw_payload)
         first_response = _first_response_summary(turn.raw_payload, turn.timeline)
         first_response_audio = _first_response_audio_summary(turn.raw_payload)
         search_debug = _search_debug(tools, grounding, timeline_spans)
+        search_gate = _search_gate_summary(first_response, search_debug)
+        weather_context_path = _weather_context_path(
+            first_response,
+            tools,
+            timeline_spans,
+            search_debug,
+        )
+        search_path = _search_path_summary(
+            search_gate,
+            search_debug,
+            weather_context_path,
+        )
         diagnostic_snapshot = _diagnostic_snapshot_summary(
             satellite_diagnostic_snapshot(self._hass)
         )
@@ -114,6 +127,7 @@ class TraceStore:
         )
         causal_chain = _causal_chain_summary(event_stream)
         record = {
+            "schema_version": 1,
             "id": record_id,
             "run_id": record_id,
             "created_at": datetime.now(UTC).isoformat(),
@@ -140,6 +154,13 @@ class TraceStore:
                 "provider_attempts": turn.route.get("provider_attempts") or [],
             },
             "route_decision": _route_decision_summary(turn.route, timeline_spans),
+            "turn_summary": _turn_summary(
+                _route_decision_summary(turn.route, timeline_spans),
+                turn.route,
+                tools,
+                turn.status,
+                turn.latency_ms,
+            ),
             "latency_ms": turn.latency_ms,
             "status": turn.status,
             "usage": _bound_value(_usage_summary(turn.raw_payload), limit=200, depth=1),
@@ -175,14 +196,10 @@ class TraceStore:
                 actions,
             ),
             "errors": errors,
-            "search_gate": _search_gate_summary(first_response, search_debug),
+            "search_gate": search_gate,
             "search_debug": search_debug,
-            "weather_context_path": _weather_context_path(
-                first_response,
-                tools,
-                timeline_spans,
-                search_debug,
-            ),
+            "weather_context_path": weather_context_path,
+            "search_path": search_path,
             "audio_graph": _audio_graph_summary(
                 turn.raw_payload,
                 earcons,
@@ -263,6 +280,25 @@ class TraceStore:
 
 def _record_for_panel(record: dict[str, Any], *, include_raw: bool) -> dict[str, Any]:
     panel_record = {key: value for key, value in record.items() if key != "raw_payload"}
+    if "schema_version" not in panel_record:
+        # Records persisted before the trace schema was versioned get a
+        # synthetic 0 so the panel can degrade gracefully instead of assuming
+        # every field exists.
+        panel_record["schema_version"] = 0
+    if "turn_summary" not in panel_record:
+        panel_record["turn_summary"] = _turn_summary(
+            panel_record.get("route_decision") or {},
+            panel_record.get("route") or {},
+            panel_record.get("tools") or [],
+            str(panel_record.get("status") or "complete"),
+            int(panel_record.get("latency_ms") or 0),
+        )
+    if "search_path" not in panel_record:
+        panel_record["search_path"] = _search_path_summary(
+            panel_record.get("search_gate") or {},
+            panel_record.get("search_debug") or {},
+            panel_record.get("weather_context_path") or {},
+        )
     raw_payload = record.get("raw_payload")
     if isinstance(raw_payload, dict):
         panel_record["raw_payload_meta"] = {
@@ -459,11 +495,21 @@ def _first_response_summary(
     if isinstance(first_response, dict):
         return _bound_mapping(first_response, limit=600)
     for event in [*(raw_payload.get("timeline") or []), *timeline]:
-        if not isinstance(event, dict) or event.get("stage") != "first_response":
+        if not isinstance(event, dict) or event_stage(event) != "first_response":
             continue
-        attrs = event.get("attrs") if isinstance(event.get("attrs"), dict) else {}
-        summary = _bound_mapping(attrs, limit=600)
-        summary["triggered_ms"] = _safe_int(event.get("t_ms"))
+        summary = _bound_mapping(
+            {
+                str(key): value
+                for key, value in event_payload(event).items()
+                if str(key) != "status"
+            },
+            limit=600,
+        )
+        summary["triggered_ms"] = _safe_int(
+            event.get("monotonic_ms")
+            if event.get("monotonic_ms") is not None
+            else event.get("t_ms")
+        )
         return summary
     return {}
 
@@ -481,6 +527,33 @@ def _route_decision_summary(
             continue
         return _bound_mapping(span.get("attrs"), limit=1200)
     return {}
+
+
+def _turn_summary(
+    route_decision: dict[str, Any],
+    route: dict[str, Any],
+    tools: list[dict[str, Any]],
+    status: str,
+    latency_ms: int,
+) -> dict[str, Any]:
+    """Return the one-glance summary shown at the top of a trace card."""
+    tool_names = list(
+        dict.fromkeys(
+            str(tool.get("name") or "") for tool in tools if str(tool.get("name") or "")
+        )
+    )[:6]
+    return {
+        "task_family": str(route_decision.get("task_family") or ""),
+        "task_type": str(route_decision.get("task_type") or ""),
+        "matched_capability": str(route_decision.get("matched_capability") or ""),
+        "next_action": str(route_decision.get("next_action") or ""),
+        "route": str(route.get("kind") or ""),
+        "model": str(route.get("model") or ""),
+        "tools": tool_names,
+        "tool_count": len(tool_names),
+        "status": str(status or "complete"),
+        "latency_ms": max(0, int(latency_ms or 0)),
+    }
 
 
 def _first_response_audio_summary(raw_payload: dict[str, Any]) -> dict[str, Any]:
@@ -541,23 +614,52 @@ def _completion_summary(
     }
 
 
-def _timeline_spans(timeline: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _timeline_spans(
+    timeline: list[dict[str, Any]],
+    *,
+    total_ms: int | None = None,
+) -> list[dict[str, Any]]:
+    """Project raw timeline events into fixed-width diagnostic spans.
+
+    Duration is the gap to the next event. The final event has no successor,
+    so its span would always be 0 ms; when the caller supplies the measured
+    turn latency, the final span is closed with `total_ms - start_ms` instead.
+    """
     spans: list[dict[str, Any]] = []
     events = [event for event in timeline if isinstance(event, dict)]
     for index, event in enumerate(events):
-        start_ms = _safe_int(event.get("t_ms"))
-        next_ms = (
-            _safe_int(events[index + 1].get("t_ms"))
-            if index + 1 < len(events)
-            else start_ms
+        start_ms = _safe_int(
+            event.get("monotonic_ms")
+            if event.get("monotonic_ms") is not None
+            else event.get("t_ms")
         )
+        if index + 1 < len(events):
+            next_event = events[index + 1]
+            next_ms = _safe_int(
+                next_event.get("monotonic_ms")
+                if next_event.get("monotonic_ms") is not None
+                else next_event.get("t_ms")
+            )
+            duration_ms = max(0, next_ms - start_ms)
+        elif total_ms is not None:
+            duration_ms = max(0, int(total_ms) - start_ms)
+        else:
+            duration_ms = 0
+        payload = event_payload(event)
         spans.append(
             {
-                "stage": str(event.get("stage") or ""),
+                "stage": event_stage(event),
                 "start_ms": start_ms,
-                "duration_ms": max(0, next_ms - start_ms),
-                "status": str(event.get("status") or "ok"),
-                "attrs": _bound_mapping(event.get("attrs"), limit=800),
+                "duration_ms": duration_ms,
+                "status": str(payload.get("status") or "ok"),
+                "attrs": _bound_mapping(
+                    {
+                        str(key): value
+                        for key, value in payload.items()
+                        if str(key) != "status"
+                    },
+                    limit=800,
+                ),
             }
         )
     return spans
@@ -680,12 +782,24 @@ def _external_event(
 
 
 def _causal_chain_summary(event_stream: list[dict[str, Any]]) -> dict[str, Any]:
-    """Summarize whether a real endpoint-to-stop chain is present and ordered."""
+    """Summarize whether a real endpoint-to-stop chain is present and ordered.
+
+    The endpoint-to-stop chain only applies to turns that actually contain
+    barge-in/interrupt evidence. For ordinary turns (no interrupt requested or
+    observed) the chain is not applicable; returning ``incomplete`` for those
+    turns made every normal run look broken in the panel.
+    """
     required = (
         "asr.endpoint.detected",
         "gateway.turn.started",
         "playback.interrupt.requested",
         "playback.interrupt.observed",
+    )
+    interrupt_evidence_present = any(
+        event.get("event_type")
+        in {"playback.interrupt.requested", "playback.interrupt.observed"}
+        for event in event_stream
+        if isinstance(event, dict)
     )
     positions = {
         event_type: next(
@@ -713,10 +827,11 @@ def _causal_chain_summary(event_stream: list[dict[str, Any]]) -> dict[str, Any]:
     payload = payload if isinstance(payload, dict) else {}
     latency = payload.get("barge_in_stop_latency_ms", payload.get("stop_latency_ms"))
     return {
-        "complete": not missing and ordered,
+        "applicable": interrupt_evidence_present,
+        "complete": bool(interrupt_evidence_present and not missing and ordered),
         "ordered": ordered,
         "required_event_types": list(required),
-        "missing_event_types": missing,
+        "missing_event_types": missing if interrupt_evidence_present else [],
         "barge_in_stop_latency_ms": _optional_nonnegative_int(latency),
         "evidence_mode": str(observed.get("correlation") or "none"),
     }
@@ -1344,6 +1459,29 @@ def _weather_context_path(
     }
 
 
+def _search_path_summary(
+    gate: dict[str, Any],
+    debug: dict[str, Any],
+    weather: dict[str, Any],
+) -> dict[str, Any]:
+    """Return the unified search/weather routing path for one turn.
+
+    The three legacy views are kept as top-level record fields for API
+    compatibility; this summary is the single structure the panel renders.
+    """
+    return {
+        "active": bool(
+            weather.get("active")
+            or debug.get("searched")
+            or bool(debug.get("queries"))
+            or bool(debug.get("gate_reason"))
+        ),
+        "gate": _bound_mapping(gate, limit=600),
+        "weather": _bound_mapping(weather, limit=800),
+        "debug": _bound_mapping(debug, limit=1200),
+    }
+
+
 def _is_weather_task_type(task_type: str) -> bool:
     return task_type in {
         "weather_query",
@@ -1500,14 +1638,16 @@ def _error_summary(
             }
         )
     for event in timeline:
-        if not isinstance(event, dict) or event.get("status") != "error":
+        if not isinstance(event, dict):
             continue
-        attrs = event.get("attrs") if isinstance(event.get("attrs"), dict) else {}
+        payload = event_payload(event)
+        if str(payload.get("status") or "") != "error":
+            continue
         errors.append(
             {
                 "type": "timeline_error",
-                "stage": str(event.get("stage") or ""),
-                "message": _truncate(json.dumps(attrs, ensure_ascii=False), 240),
+                "stage": event_stage(event),
+                "message": _truncate(json.dumps(payload, ensure_ascii=False), 240),
             }
         )
     return errors[:12]

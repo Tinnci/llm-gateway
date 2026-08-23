@@ -117,7 +117,9 @@ const I18N = {
     "runs.replay": "Dry-run replay",
     "runs.replay_complete": "Replay fork created without live service calls.",
     "runs.proposed_actions": "Proposed actions",
+    "runs.turn_summary": "Turn summary",
     "runs.causal_chain": "Endpoint-to-stop chain",
+    "runs.not_applicable": "not applicable",
     "runs.trajectory": "Turn trajectory",
     "runs.trajectory_hint": "Ordered runtime events for this turn",
     "runs.trajectory_search": "Filter events",
@@ -128,6 +130,12 @@ const I18N = {
     "runs.trajectory_duration": "Duration",
     "runs.trajectory_source": "Source",
     "runs.inspect_evidence": "Inspect evidence and diagnostics",
+    "runs.diag_overview": "Overview",
+    "runs.diag_evidence": "Evidence",
+    "runs.diag_audio": "Audio / AEC",
+    "runs.diag_tools": "Tools / actions",
+    "runs.diag_timeline": "Timeline",
+    "runs.diag_raw": "Raw payload",
     "runs.loop": "Loop",
     "runs.runtime_config": "Runtime configuration",
     "runs.open_settings": "Open settings",
@@ -179,6 +187,7 @@ const I18N = {
     "runs.search_debug": "Search debug",
     "runs.no_search_debug": "No search debug data.",
     "runs.search_gate": "Search gate",
+    "runs.search_path": "Search / context path",
     "runs.inventory": "Inventory / static context",
     "runs.inventory_scope": "Scope",
     "runs.inventory_execution": "Execution",
@@ -552,7 +561,9 @@ const I18N = {
     "runs.replay": "无副作用重放",
     "runs.replay_complete": "已创建重放分支，未调用实时服务。",
     "runs.proposed_actions": "动作计划",
+    "runs.turn_summary": "本轮摘要",
     "runs.causal_chain": "端点到停止因果链",
+    "runs.not_applicable": "不适用",
     "runs.trajectory": "Turn 运行轨迹",
     "runs.trajectory_hint": "按时间排序的本轮运行事件",
     "runs.trajectory_search": "筛选事件",
@@ -563,6 +574,12 @@ const I18N = {
     "runs.trajectory_duration": "持续时间",
     "runs.trajectory_source": "来源",
     "runs.inspect_evidence": "查看证据与诊断详情",
+    "runs.diag_overview": "概览",
+    "runs.diag_evidence": "证据",
+    "runs.diag_audio": "音频 / AEC",
+    "runs.diag_tools": "工具 / 动作",
+    "runs.diag_timeline": "时间线",
+    "runs.diag_raw": "原始数据",
     "runs.loop": "Loop",
     "runs.runtime_config": "运行时配置",
     "runs.open_settings": "打开配置",
@@ -614,6 +631,7 @@ const I18N = {
     "runs.search_debug": "搜索调试",
     "runs.no_search_debug": "没有搜索调试数据。",
     "runs.search_gate": "搜索门控",
+    "runs.search_path": "搜索 / 上下文路径",
     "runs.inventory": "设备清单 / 静态上下文",
     "runs.inventory_scope": "范围",
     "runs.inventory_execution": "执行",
@@ -1004,6 +1022,8 @@ class VoiceHarnessPanel extends HTMLElement {
     this._trajectoryQuery = "";
     this._selectedTrajectory = null;
     this._trajectoryExpandedRunId = "";
+    /** @type {Record<string, string>} */
+    this._diagnosticTabs = {};
     this._draftLocale = this._locale();
     this._draftTouched = false;
     /** @type {ScenarioDraft} */
@@ -1253,6 +1273,11 @@ class VoiceHarnessPanel extends HTMLElement {
           this._loadConfig();
         }
       }
+      this._render();
+      return;
+    }
+    if (button.dataset.diagnosticTab && button.dataset.diagnosticKey) {
+      this._diagnosticTabs[button.dataset.diagnosticKey] = button.dataset.diagnosticTab;
       this._render();
       return;
     }
@@ -3289,7 +3314,7 @@ class VoiceHarnessPanel extends HTMLElement {
   _liveRunCard(run) {
     const timeline = Array.isArray(run.events) ? run.events : [];
     const duration = Number(run.running_duration_ms || 0);
-    const lastStage = run.last_active_stage || (timeline.length ? timeline[timeline.length - 1].stage : "");
+    const lastStage = run.last_active_stage || (timeline.length ? this._eventStage(timeline[timeline.length - 1]) : "");
     const isRunning = run.status === "running";
     return `
       <details class="traceCard" data-open-key="live:${run.id}">
@@ -3314,13 +3339,18 @@ class VoiceHarnessPanel extends HTMLElement {
             <span>${escapeHtml(this._t(isRunning ? "runs.running_duration" : "runs.completion"))}: ${duration} ms</span>
           </div>
           <div class="attemptList timelineList">
-            ${timeline.map((event) => `
-              <div class="attempt ${event.status === "error" ? "bad" : "ok"}">
-                <strong>${escapeHtml(event.stage || "")}</strong>
-                <span>${Number(event.t_ms || 0)} ms</span>
-                ${event.attrs ? `<span>${escapeHtml(JSON.stringify(event.attrs))}</span>` : ""}
-              </div>
-            `).join("")}
+            ${timeline.map((event) => {
+              const stage = this._eventStage(event);
+              const status = this._eventStatus(event);
+              const attrs = this._eventAttrs(event);
+              return `
+                <div class="attempt ${status === "error" ? "bad" : "ok"}">
+                  <strong>${escapeHtml(stage || "")}</strong>
+                  <span>${Number(event.monotonic_ms ?? event.t_ms ?? 0)} ms</span>
+                  ${Object.keys(attrs).length ? `<span class="meta" title="${escapeHtml(JSON.stringify(attrs))}">${escapeHtml(this._summarizeEventAttrs(attrs))}</span>` : ""}
+                </div>
+              `;
+            }).join("")}
           </div>
         </div>
       </details>
@@ -3335,11 +3365,11 @@ class VoiceHarnessPanel extends HTMLElement {
     const timeline = Array.isArray(record.timeline_spans) && record.timeline_spans.length
       ? record.timeline_spans
       : (Array.isArray(record.timeline) ? record.timeline.map((event) => ({
-          stage: event.stage,
-          start_ms: event.t_ms,
+          stage: this._eventStage(event),
+          start_ms: event.monotonic_ms ?? event.t_ms ?? 0,
           duration_ms: 0,
-          status: event.status,
-          attrs: event.attrs,
+          status: this._eventStatus(event),
+          attrs: this._eventAttrs(event),
         })) : []);
     const tools = Array.isArray(record.tools) ? record.tools : [];
     const errors = Array.isArray(record.errors) ? record.errors : [];
@@ -3391,6 +3421,7 @@ class VoiceHarnessPanel extends HTMLElement {
             ${this._runFlagChips(record)}
             ${record.verifier_mode && record.verifier_mode !== "disabled" ? `<span class="chip muted">${escapeHtml(this._t("runs.verifier_mode"))}: ${escapeHtml(this._verifierModeLabel(record.verifier_mode))}</span>` : ""}
           </div>
+          ${this._turnSummaryPanel(record)}
           <div class="turnOverview">
             ${this._detailItem(this._t("runs.input"), [
               input.text || record.user_text || "",
@@ -3427,80 +3458,17 @@ class VoiceHarnessPanel extends HTMLElement {
             ])}
           </div>
           ${this._trajectoryPanel(record, timeline, causalChain)}
-          <details class="diagnosticDrawer" data-open-key="drawer:${record.run_id || record.id}:diagnostics">
-            <summary>
-              <span>${escapeHtml(this._t("runs.inspect_evidence"))}</span>
-              <span class="meta">${escapeHtml(this._t("runs.tools", { count: tools.length }))} · ${errors.length} ${escapeHtml(this._t("runs.errors").toLowerCase())}</span>
-            </summary>
-            <div class="diagnosticContent">
-          <div class="detailGrid">
-            ${this._detailItem(this._t("runs.causal_chain"), [
-              causalChain.complete ? "complete" : "incomplete",
-              causalChain.ordered ? "ordered" : "not ordered",
-              (causalChain.missing_event_types || []).join(", "),
-              causalChain.barge_in_stop_latency_ms === null || causalChain.barge_in_stop_latency_ms === undefined
-                ? ""
-                : `${Number(causalChain.barge_in_stop_latency_ms)} ms`,
-            ])}
-          </div>
-          ${this._firstResponsePanel(firstResponse, record.first_response_audio || {}, this._rid(record))}
-          ${this._audioGraphPanel(record)}
-          ${this._inventoryPanel(record)}
-          <div class="traceText">
-            <strong>${escapeHtml(this._t("runs.user"))}</strong>
-            <p>${escapeHtml(record.user_text || "")}</p>
-            <strong>${escapeHtml(this._t("runs.assistant"))}</strong>
-            <p>${escapeHtml(record.assistant_text || "")}</p>
-          </div>
-          <div class="meterRow">
-            <span>${escapeHtml(this._routeLabel(route.kind))}</span>
-            <span>${escapeHtml(route.model || "")}</span>
-            ${provider.name ? `<span>${escapeHtml(this._t("runs.provider"))}: ${escapeHtml(provider.name)}${provider.fallback_used ? " ↳" : ""}</span>` : ""}
-            <span>${Number(record.latency_ms || 0)} ms</span>
-            <span>${escapeHtml(this._t("runs.tools", { count: (record.tools || []).length }))}</span>
-            ${rawMeta.compressed_bytes ? `<span>${rawMeta.compressed_bytes}/${rawMeta.uncompressed_bytes} B</span>` : ""}
-          </div>
-          ${this._weatherPathPanel(record)}
-          ${this._toolIterationsPanel(record)}
-          ${this._duplicateSuppressionsPanel(record)}
-          ${this._criticalPathPanel(record)}
-          ${this._searchDebugPanel(record)}
-          ${this._actionsPanel(record)}
-          ${this._earconEventsPanel(record)}
-          ${this._displayStatusPanel(record)}
-          ${this._errorsPanel(errors)}
-          ${this._toolEventsPanel(tools, this._rid(record))}
-          ${this._groundingPanel(record)}
-          ${this._evidencePanel(record)}
-          ${attempts.length ? `
-            <h3>${escapeHtml(this._t("runs.provider_attempts"))}</h3>
-            <div class="attemptList">
-              ${attempts.map((attempt) => `
-                <div class="attempt ${attempt.status === "complete" ? "ok" : "bad"}">
-                  <strong>${escapeHtml(attempt.provider || "")}</strong>
-                  <span>${escapeHtml(attempt.model || "")}</span>
-                  <span>${escapeHtml(attempt.status || "")} · ${Number(attempt.latency_ms || 0)} ms</span>
-                  ${attempt.error ? `<span>${escapeHtml(attempt.error)}</span>` : ""}
-                </div>
-              `).join("")}
-            </div>
-          ` : ""}
-          ${timeline.length ? `
-            <h3>${escapeHtml(this._t("runs.timeline"))}</h3>
-            <div class="attemptList timelineList">
-              ${timeline.map((event) => `
-                <div class="attempt ${event.status === "error" ? "bad" : "ok"}">
-                  <strong>${escapeHtml(event.stage || "")}</strong>
-                  <span>${Number(event.start_ms ?? event.t_ms ?? 0)} ms</span>
-                  <span>${Number(event.duration_ms || 0)} ms</span>
-                  ${event.attrs ? `<span>${escapeHtml(JSON.stringify(event.attrs))}</span>` : ""}
-                </div>
-              `).join("")}
-            </div>
-          ` : ""}
-          ${record.raw_payload ? this._jsonDetails(this._t("runs.raw_payload"), record.raw_payload, `record:${this._rid(record)}:raw_payload`) : ""}
-            </div>
-          </details>
+          ${this._diagnosticDrawer(record, {
+            timeline,
+            tools,
+            errors,
+            attempts,
+            firstResponse,
+            route,
+            provider,
+            rawMeta,
+            causalChain,
+          })}
         </div>
       </details>
     `;
@@ -3518,6 +3486,279 @@ class VoiceHarnessPanel extends HTMLElement {
         ? this._flagChip("E", true, flags.polluted_evidence_used ? "bad" : "warning", this._t("runs.polluted_evidence"))
         : "",
     ].filter(Boolean).join("");
+  }
+
+  _turnSummaryPanel(record) {
+    const summary = record.turn_summary || {};
+    const routeDecision = record.route_decision || {};
+    if (Object.keys(summary).length === 0 && Object.keys(routeDecision).length === 0) {
+      return "";
+    }
+    const parts = [
+      routeDecision.task_family || summary.task_family || "",
+      routeDecision.task_type || summary.task_type || "",
+      routeDecision.matched_capability || summary.matched_capability || "",
+    ].filter(Boolean);
+    return `
+      <div class="turnSummary">
+        <div class="turnSummaryHead">
+          <strong>${escapeHtml(this._t("runs.turn_summary"))}</strong>
+          ${parts.length ? `<span class="chip muted">${escapeHtml(parts.join(" · "))}</span>` : ""}
+          ${summary.tools?.length ? `<span class="chip muted">${escapeHtml(summary.tools.join(", "))}</span>` : ""}
+        </div>
+        <div class="meterRow">
+          <span>${escapeHtml(this._routeLabel(summary.route || ""))}</span>
+          ${summary.model ? `<span>${escapeHtml(summary.model)}</span>` : ""}
+          ${summary.next_action ? `<span>${escapeHtml(summary.next_action)}</span>` : ""}
+          <span>${Number(summary.latency_ms || record.latency_ms || 0)} ms</span>
+        </div>
+      </div>
+    `;
+  }
+  _diagnosticDrawer(record, {
+    timeline,
+    tools,
+    errors,
+    attempts,
+    firstResponse,
+    route,
+    provider,
+    rawMeta,
+    causalChain,
+  }) {
+    const key = `drawer:${this._rid(record)}:diagnostics`;
+    const tabs = [
+      {
+        id: "overview",
+        label: this._t("runs.diag_overview"),
+        html: this._diagnosticOverviewTab(record, { firstResponse, route, provider, rawMeta, causalChain }),
+      },
+      {
+        id: "evidence",
+        label: this._t("runs.diag_evidence"),
+        html: this._diagnosticEvidenceTab(record),
+      },
+      {
+        id: "audio",
+        label: this._t("runs.diag_audio"),
+        html: this._diagnosticAudioTab(record),
+      },
+      {
+        id: "tools",
+        label: this._t("runs.diag_tools"),
+        html: this._diagnosticToolsTab({ record, tools, errors, attempts }),
+      },
+      {
+        id: "timeline",
+        label: this._t("runs.diag_timeline"),
+        html: this._diagnosticTimelineTab(timeline),
+      },
+      {
+        id: "raw",
+        label: this._t("runs.diag_raw"),
+        html: this._diagnosticRawTab(record),
+      },
+    ].filter((tab) => tab.html.trim().length > 0);
+    const active = tabs.some((tab) => tab.id === this._diagnosticTabs[key])
+      ? this._diagnosticTabs[key]
+      : (tabs[0]?.id || "");
+    const activeTab = tabs.find((tab) => tab.id === active) || tabs[0] || null;
+    return `
+      <details class="diagnosticDrawer" data-open-key="${escapeHtml(key)}">
+        <summary>
+          <span>${escapeHtml(this._t("runs.inspect_evidence"))}</span>
+          <span class="meta">${escapeHtml(this._t("runs.tools", { count: tools.length }))} · ${errors.length} ${escapeHtml(this._t("runs.errors").toLowerCase())}${record.schema_version !== undefined ? ` · schema ${record.schema_version}` : ""}</span>
+        </summary>
+        <div class="diagnosticContent">
+          ${tabs.length ? `
+            <div class="diagnosticTabs" role="tablist" aria-label="${escapeHtml(this._t("runs.inspect_evidence"))}">
+              ${tabs.map((tab) => `
+                <button
+                  type="button"
+                  class="diagnosticTab ${tab.id === active ? "active" : ""}"
+                  data-diagnostic-tab="${escapeHtml(tab.id)}"
+                  data-diagnostic-key="${escapeHtml(key)}"
+                  role="tab"
+                  aria-selected="${tab.id === active ? "true" : "false"}"
+                >${escapeHtml(tab.label)}</button>
+              `).join("")}
+            </div>
+          ` : ""}
+          <div class="diagnosticTabBody" role="tabpanel">
+            ${activeTab ? activeTab.html : `<div class="empty">${escapeHtml(this._t("runs.no_evidence"))}</div>`}
+          </div>
+        </div>
+      </details>
+    `;
+  }
+
+  _diagnosticOverviewTab(record, { firstResponse, route, provider, rawMeta, causalChain }) {
+    const parts = [
+      this._causalChainPanel(causalChain),
+      this._firstResponsePanel(firstResponse, record.first_response_audio || {}, this._rid(record)),
+      this._searchPathPanel(record),
+      this._inventoryPanel(record),
+    ];
+    const text = `
+      <div class="traceText">
+        <strong>${escapeHtml(this._t("runs.user"))}</strong>
+        <p>${escapeHtml(record.user_text || "")}</p>
+        <strong>${escapeHtml(this._t("runs.assistant"))}</strong>
+        <p>${escapeHtml(record.assistant_text || "")}</p>
+      </div>
+      <div class="meterRow">
+        <span>${escapeHtml(this._routeLabel(route.kind))}</span>
+        <span>${escapeHtml(route.model || "")}</span>
+        ${provider.name ? `<span>${escapeHtml(this._t("runs.provider"))}: ${escapeHtml(provider.name)}${provider.fallback_used ? " ↳" : ""}</span>` : ""}
+        <span>${Number(record.latency_ms || 0)} ms</span>
+        <span>${escapeHtml(this._t("runs.tools", { count: (record.tools || []).length }))}</span>
+        ${rawMeta.compressed_bytes ? `<span>${rawMeta.compressed_bytes}/${rawMeta.uncompressed_bytes} B</span>` : ""}
+      </div>
+    `;
+    return [...parts, text].join("");
+  }
+
+  _causalChainPanel(causalChain) {
+    if (!causalChain || Object.keys(causalChain).length === 0) {
+      return "";
+    }
+    return `
+      <div class="detailGrid">
+        ${this._detailItem(this._t("runs.causal_chain"), [
+          causalChain.applicable === false
+            ? this._t("runs.not_applicable")
+            : (causalChain.complete ? "complete" : "incomplete"),
+          causalChain.applicable === false
+            ? ""
+            : (causalChain.ordered ? "ordered" : "not ordered"),
+          (causalChain.missing_event_types || []).join(", "),
+          causalChain.barge_in_stop_latency_ms === null || causalChain.barge_in_stop_latency_ms === undefined
+            ? ""
+            : `${Number(causalChain.barge_in_stop_latency_ms)} ms`,
+        ])}
+      </div>
+    `;
+  }
+
+  _diagnosticEvidenceTab(record) {
+    return [
+      this._groundingPanel(record),
+      this._evidencePanel(record),
+    ].join("");
+  }
+
+  _diagnosticAudioTab(record) {
+    return [
+      this._audioGraphPanel(record),
+      this._earconEventsPanel(record),
+      this._displayStatusPanel(record),
+    ].join("");
+  }
+  _diagnosticToolsTab({ record, tools, errors, attempts }) {
+    const parts = [
+      this._toolIterationsPanel(record),
+      this._duplicateSuppressionsPanel(record),
+      this._criticalPathPanel(record),
+      this._actionsPanel(record),
+      this._toolEventsPanel(tools, this._rid(record)),
+      this._errorsPanel(errors),
+    ];
+    if (attempts.length) {
+      parts.push(`
+        <h3>${escapeHtml(this._t("runs.provider_attempts"))}</h3>
+        <div class="attemptList">
+          ${attempts.map((attempt) => `
+            <div class="attempt ${attempt.status === "complete" ? "ok" : "bad"}">
+              <strong>${escapeHtml(attempt.provider || "")}</strong>
+              <span>${escapeHtml(attempt.model || "")}</span>
+              <span>${escapeHtml(attempt.status || "")} · ${Number(attempt.latency_ms || 0)} ms</span>
+              ${attempt.error ? `<span>${escapeHtml(attempt.error)}</span>` : ""}
+            </div>
+          `).join("")}
+        </div>
+      `);
+    }
+    return parts.join("");
+  }
+
+  _diagnosticTimelineTab(timeline) {
+    if (!timeline.length) {
+      return "";
+    }
+    return `
+      <h3>${escapeHtml(this._t("runs.timeline"))}</h3>
+      <div class="attemptList timelineList">
+        ${timeline.map((event) => `
+          <details class="attempt timelineEvent ${event.status === "error" ? "bad" : "ok"}">
+            <summary>
+              <strong>${escapeHtml(event.stage || "")}</strong>
+              <span>${Number(event.start_ms ?? event.t_ms ?? 0)} ms</span>
+              <span>${Number(event.duration_ms || 0)} ms</span>
+              ${event.attrs ? `<span class="meta">${escapeHtml(this._summarizeEventAttrs(event.attrs))}</span>` : ""}
+            </summary>
+            <pre>${escapeHtml(JSON.stringify(event.attrs || {}, null, 2))}</pre>
+          </details>
+        `).join("")}
+      </div>
+    `;
+  }
+
+  _diagnosticRawTab(record) {
+    const raw = record.raw_payload
+      ? this._jsonDetails(this._t("runs.raw_payload"), record.raw_payload, `record:${this._rid(record)}:raw_payload`)
+      : "";
+    const generic = this._genericDiagnosticPanels(record);
+    return [raw, generic].join("");
+  }
+
+  _genericDiagnosticPanels(record) {
+    const rid = this._rid(record);
+    const known = new Set([
+      "id", "run_id", "created_at", "conversation_id", "user_text", "assistant_text",
+      "final_speech_text", "latency_ms", "status", "schema_version", "route",
+      "route_decision", "turn_summary", "tools", "errors", "timeline",
+      "timeline_spans", "event_stream", "input", "first_response",
+      "first_response_audio", "search_gate", "search_debug",
+      "weather_context_path", "search_path", "audio_graph",
+      "earcon_diagnostics", "aec_diagnostics", "critical_path",
+      "critical_path_flags", "duplicate_tool_suppressions",
+      "tool_calls_by_iteration", "actions", "earcons", "display_status",
+      "grounding", "raw_payload_meta", "raw_payload", "causal_chain",
+      "usage", "completion", "speech", "verifier_mode", "loop",
+      "debug_flags", "lineage", "provider_attempts", "storage",
+      "proposed_actions", "first_response_decision", "first_response_text",
+      "diagnostic_snapshot",
+    ]);
+    const panels = [];
+    for (const [key, value] of Object.entries(record || {})) {
+      if (known.has(key)) {
+        continue;
+      }
+      if (value === null || value === undefined || value === "" || value === false || value === 0) {
+        continue;
+      }
+      if (typeof value !== "object") {
+        continue;
+      }
+      const display = Array.isArray(value) ? value : Object.keys(value);
+      if (!display.length) {
+        continue;
+      }
+      panels.push(`
+        <div class="debugSection">
+          <h3>${escapeHtml(key)}</h3>
+          <div class="detailGrid">
+            ${this._detailItem(key, [
+              Array.isArray(value)
+                ? `${value.length} items`
+                : Object.keys(value).slice(0, 5).join(", "),
+            ])}
+          </div>
+          ${this._jsonDetails(key, value, `record:${rid}:${key}`)}
+        </div>
+      `);
+    }
+    return panels.join("");
   }
 
   /**
@@ -3539,6 +3780,76 @@ class VoiceHarnessPanel extends HTMLElement {
         ${visible.map((line) => `<span>${escapeHtml(line)}</span>`).join("") || `<span class="meta">-</span>`}
       </div>
     `;
+  }
+
+  _eventStage(event) {
+    const eventType = String(event?.event_type || event?.stage || "");
+    if (eventType === "playback.interrupt.requested") {
+      return "barge_in_requested";
+    }
+    if (eventType === "gateway.result.late_dropped") {
+      return "stale_result_discarded";
+    }
+    if (eventType === "gateway.turn.superseded") {
+      return "turn_cancelled";
+    }
+    if (eventType.startsWith("gateway.")) {
+      return eventType.slice("gateway.".length).replaceAll(".", "_");
+    }
+    return eventType;
+  }
+
+  _eventAttrs(event) {
+    const payload = event?.payload;
+    if (payload === null || payload === undefined || typeof payload !== "object") {
+      return {};
+    }
+    const attrs = {};
+    for (const [key, value] of Object.entries(payload)) {
+      if (key !== "status") {
+        attrs[key] = value;
+      }
+    }
+    return attrs;
+  }
+
+  _eventStatus(event) {
+    const payload = event?.payload;
+    return (payload && typeof payload === "object" && payload.status) || event?.status || "ok";
+  }
+
+  _summarizeEventAttrs(attrs) {
+    if (attrs === null || attrs === undefined || typeof attrs !== "object") {
+      return "";
+    }
+    const preferred = [
+      "name", "source", "task_type", "task_family", "route", "status",
+      "reason", "iteration", "llm_used", "tools_used", "tool_name",
+      "display_state", "earcon_name", "effective_text",
+    ];
+    const picked = [];
+    for (const key of preferred) {
+      const value = attrs[key];
+      if (value === undefined || value === null || value === "") {
+        continue;
+      }
+      const text = typeof value === "object" ? JSON.stringify(value) : String(value);
+      picked.push(`${key}=${text}`);
+      if (picked.length >= 3) {
+        break;
+      }
+    }
+    if (picked.length === 0) {
+      const entries = Object.entries(attrs).slice(0, 3);
+      for (const [key, value] of entries) {
+        if (value === undefined || value === null || value === "") {
+          continue;
+        }
+        const text = typeof value === "object" ? JSON.stringify(value) : String(value);
+        picked.push(`${key}=${text}`);
+      }
+    }
+    return picked.join(" · ");
   }
 
   _trajectoryPanel(record, timeline, causalChain) {
@@ -3569,12 +3880,12 @@ class VoiceHarnessPanel extends HTMLElement {
           };
         })
       : timeline.map((event) => ({
-          label: event.stage || "event",
-          source: event.attrs?.source || event.attrs?.name || "gateway",
-          start: Number(event.start_ms ?? event.t_ms ?? 0),
+          label: event.stage || this._eventStage(event) || "event",
+          source: event.attrs?.source || event.attrs?.name || this._eventAttrs(event).source || "gateway",
+          start: Number(event.start_ms ?? event.monotonic_ms ?? event.t_ms ?? 0),
           duration: Number(event.duration_ms || 0),
-          status: event.status || "ok",
-          payload: event.attrs || {},
+          status: event.status || this._eventStatus(event),
+          payload: event.attrs || this._eventAttrs(event),
         }));
     if (!events.length) return "";
     const runId = String(record.run_id || record.id || "");
@@ -3599,7 +3910,9 @@ class VoiceHarnessPanel extends HTMLElement {
       event.content = summarize(event);
     });
     const end = Math.max(1, ...events.map((event) => event.start + Math.max(event.duration, 1)));
-    const chainTone = causalChain.complete && causalChain.ordered ? "ok" : "warning";
+    const chainTone = causalChain.applicable === false
+      ? "muted"
+      : (causalChain.complete && causalChain.ordered ? "ok" : "warning");
     const selected = events[selectedIndex] || null;
     const lanes = [["input", "Input"], ["model", "Gateway"], ["tool", "Tools"], ["output", "Output"]];
     return `
@@ -3607,7 +3920,7 @@ class VoiceHarnessPanel extends HTMLElement {
         <div class="trajectoryToolbar">
           <strong>${escapeHtml(this._t("runs.trajectory"))}</strong>
           <label class="trajectorySearch"><ha-icon icon="mdi:magnify"></ha-icon><input data-trajectory-search value="${escapeHtml(this._trajectoryQuery)}" placeholder="${escapeHtml(this._t("runs.trajectory_search"))}" aria-label="${escapeHtml(this._t("runs.trajectory_search"))}"></label>
-          <span class="chip ${chainTone}">${escapeHtml(causalChain.complete ? "causal chain complete" : "causal chain incomplete")}</span>
+          <span class="chip ${chainTone}">${escapeHtml(causalChain.applicable === false ? "causal chain not applicable" : (causalChain.complete ? "causal chain complete" : "causal chain incomplete"))}</span>
         </div>
         <div class="trajectoryOverview" aria-label="${escapeHtml(this._t("runs.trajectory_hint"))}">
           ${lanes.map(([kind, label]) => `<span class="trajectoryLaneLabel">${label}</span><div class="trajectoryLane">${events.map((event, index) => event.kind === kind ? `<i class="${kind} ${event.status === "error" ? "bad" : ""} ${index === selectedIndex ? "selected" : ""}" style="left:${Math.min(99, Math.max(0, (event.start / end) * 100)).toFixed(2)}%;width:${Math.max(0.6, Math.min(100, (Math.max(event.duration, end * 0.006) / end) * 100)).toFixed(2)}%"></i>` : "").join("")}</div>`).join("")}
@@ -3780,44 +4093,16 @@ class VoiceHarnessPanel extends HTMLElement {
 
   _inventoryAttrs(record) {
     const rawTimeline = Array.isArray(record.timeline) ? record.timeline : [];
-    const rawEvent = rawTimeline.find((event) => event?.stage === "local_inventory_render");
-    if (rawEvent?.attrs && typeof rawEvent.attrs === "object") {
-      return rawEvent.attrs;
+    const rawEvent = rawTimeline.find((event) => this._eventStage(event) === "local_inventory_render");
+    if (rawEvent) {
+      const attrs = this._eventAttrs(rawEvent);
+      if (Object.keys(attrs).length) {
+        return attrs;
+      }
     }
     const spans = Array.isArray(record.timeline_spans) ? record.timeline_spans : [];
     const span = spans.find((event) => event?.stage === "local_inventory_render");
     return span?.attrs && typeof span.attrs === "object" ? span.attrs : null;
-  }
-
-  _weatherPathPanel(record) {
-    const path = record.weather_context_path || {};
-    if (!path.active) {
-      return "";
-    }
-    return `
-      <div class="debugSection">
-        <h3>${escapeHtml(this._t("runs.weather_path"))}</h3>
-        <div class="detailGrid">
-          ${this._detailItem(this._t("runs.weather_path"), [
-            path.path || "",
-            `task_type=${path.task_type || ""}`,
-          ])}
-          ${this._detailItem("Local", [
-            `local_state_cache=${Boolean(path.local_state_cache)}`,
-            `weather_entity=${Boolean(path.weather_entity)}`,
-          ])}
-          ${this._detailItem("Live context", [
-            `GetLiveContext calls=${Number(path.get_live_context_calls || 0)}`,
-            `results=${Number(path.get_live_context_results || 0)}`,
-          ])}
-          ${this._detailItem("Fallback", [
-            `search_fallback=${Boolean(path.search_fallback)}`,
-            path.duplicate_live_context_suppressed ? "duplicate_live_context_suppressed=true" : "",
-          ])}
-        </div>
-        ${this._jsonDetails(this._t("runs.weather_path"), path, `record:${this._rid(record)}:weather_path`)}
-      </div>
-    `;
   }
 
   _toolIterationsPanel(record) {
@@ -3903,32 +4188,52 @@ class VoiceHarnessPanel extends HTMLElement {
     `;
   }
 
-  _searchDebugPanel(record) {
-    const debug = record.search_debug || {};
-    if (!Object.keys(debug).length) {
+  _searchPathPanel(record) {
+    const path = record.search_path || {};
+    const gate = path.gate || record.search_gate || {};
+    const weather = path.weather || record.weather_context_path || {};
+    const debug = path.debug || record.search_debug || {};
+    if (!Object.keys(gate).length && !Object.keys(weather).length && !Object.keys(debug).length) {
       return "";
     }
     const queries = Array.isArray(debug.queries) ? debug.queries : [];
     const providers = Array.isArray(debug.providers) ? debug.providers : [];
     const results = Array.isArray(debug.results) ? debug.results : [];
+    const pathActive = weather.active !== false && (weather.path || weather.active);
     return `
       <div class="debugSection">
-        <h3>${escapeHtml(this._t("runs.search_debug"))}</h3>
+        <h3>${escapeHtml(this._t("runs.search_path"))}</h3>
         <div class="detailGrid">
-          ${this._detailItem(this._t("runs.search_gate_reason"), [
+          ${this._detailItem(this._t("runs.search_gate"), [
+            gate.decision || "",
+            gate.reason || "",
+            gate.searched === true ? "searched=true" : "searched=false",
+          ])}
+          ${pathActive ? this._detailItem(this._t("runs.weather_path"), [
+            weather.path || "",
+            `task_type=${weather.task_type || ""}`,
+            `local_state_cache=${Boolean(weather.local_state_cache)}`,
+            `weather_entity=${Boolean(weather.weather_entity)}`,
+          ]) : ""}
+          ${this._detailItem("Live context", [
+            `GetLiveContext calls=${Number(weather.get_live_context_calls || 0)}`,
+            `results=${Number(weather.get_live_context_results || 0)}`,
+            weather.duplicate_live_context_suppressed ? "duplicate_live_context_suppressed=true" : "",
+          ])}
+          ${Object.keys(debug).length ? this._detailItem(this._t("runs.search_gate_reason"), [
             debug.searched ? this._t("common.enabled") : this._t("common.disabled"),
             debug.gate_reason || "",
-          ])}
-          ${this._detailItem("Latency", [
+          ]) : ""}
+          ${Object.keys(debug).length ? this._detailItem("Latency", [
             `${Number(debug.latency_ms || 0)} ms`,
             `${Number(debug.result_count || 0)} results`,
             `${Number(debug.evidence_extracted || 0)} evidence`,
-          ])}
-          ${this._detailItem(this._t("runs.debug_flags"), [
+          ]) : ""}
+          ${Object.keys(debug).length ? this._detailItem(this._t("runs.debug_flags"), [
             debug.timeout ? this._t("runs.timeout") : "",
             debug.cache_hit ? this._t("runs.cache_hit") : "",
             debug.polluted_result ? this._t("runs.polluted_result") : "",
-          ])}
+          ]) : ""}
         </div>
         ${queries.length ? `
           <div class="ruleList compact">
@@ -3959,7 +4264,7 @@ class VoiceHarnessPanel extends HTMLElement {
             `).join("")}
           </div>
         ` : ""}
-        ${this._jsonDetails(this._t("runs.search_debug"), debug, `record:${this._rid(record)}:search_debug`)}
+        ${this._jsonDetails(this._t("runs.search_path"), path, `record:${this._rid(record)}:search_path`)}
       </div>
     `;
   }
@@ -5956,6 +6261,23 @@ const styles = `
     font-size: 11px;
   }
 
+  .turnSummary {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 10px;
+    border: 1px solid var(--divider-color);
+    border-radius: 8px;
+    background: var(--secondary-background-color, rgba(0, 0, 0, 0.04));
+  }
+
+  .turnSummaryHead {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
   .turnOverview {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -6136,6 +6458,35 @@ const styles = `
     gap: 12px;
     padding: 12px;
     border-top: 1px solid var(--divider-color);
+  }
+
+  .diagnosticTabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding-bottom: 2px;
+  }
+
+  .diagnosticTab {
+    min-height: 28px;
+    padding: 0 10px;
+    border: 1px solid var(--divider-color);
+    border-radius: 5px;
+    background: var(--primary-background-color);
+    color: var(--secondary-text-color);
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .diagnosticTab.active {
+    border-color: var(--primary-color);
+    background: color-mix(in srgb, var(--primary-color) 14%, var(--card-background-color));
+    color: var(--primary-text-color);
+  }
+
+  .diagnosticTabBody {
+    display: grid;
+    gap: 12px;
   }
 
   .runtimeConfigDrawer {
@@ -6346,6 +6697,36 @@ const styles = `
     overflow: hidden;
     text-overflow: ellipsis;
     font-size: 12px;
+  }
+
+  .attempt.timelineEvent {
+    display: block;
+    padding: 0;
+  }
+
+  .attempt.timelineEvent summary {
+    display: grid;
+    grid-template-columns: minmax(92px, 0.7fr) minmax(160px, 1.3fr) minmax(92px, 0.7fr) minmax(80px, 0.5fr);
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    cursor: pointer;
+    list-style: none;
+  }
+
+  .attempt.timelineEvent summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .attempt.timelineEvent pre {
+    margin: 0;
+    padding: 8px 10px;
+    border-top: 1px solid var(--divider-color);
+    background: var(--secondary-background-color, rgba(0, 0, 0, 0.04));
+    overflow: auto;
+    max-height: 280px;
+    font-size: 11px;
+    line-height: 1.45;
   }
 
   .route {

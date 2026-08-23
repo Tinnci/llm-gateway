@@ -16,6 +16,67 @@ EVENT_TYPES = {
     "stale_result_discarded": "gateway.result.late_dropped",
     "turn_cancelled": "gateway.turn.superseded",
 }
+EVENT_TYPE_TO_STAGE = {event_type: stage for stage, event_type in EVENT_TYPES.items()}
+MAX_ATTR_ITEMS = 40
+MAX_ATTR_TEXT = 2000
+MAX_ATTR_DEPTH = 4
+
+
+def event_stage(event: dict[str, Any]) -> str:
+    """Return the original pipeline stage for one serialized event.
+
+    Canonical events derive the stage from ``event_type``; legacy records that
+    still carry a top-level ``stage`` keep working through the same projection.
+    """
+    legacy_stage = event.get("stage")
+    if legacy_stage:
+        return str(legacy_stage)
+    event_type = str(event.get("event_type") or "")
+    if event_type in EVENT_TYPE_TO_STAGE:
+        return EVENT_TYPE_TO_STAGE[event_type]
+    if event_type.startswith("gateway."):
+        return event_type.removeprefix("gateway.").replace(".", "_")
+    return event_type
+
+
+def event_payload(event: dict[str, Any]) -> dict[str, Any]:
+    """Return the merged status + attrs payload for one serialized event."""
+    payload = event.get("payload")
+    if isinstance(payload, dict):
+        return dict(payload)
+    legacy_attrs = event.get("attrs")
+    attrs = dict(legacy_attrs) if isinstance(legacy_attrs, dict) else {}
+    return {"status": str(event.get("status") or "ok"), **attrs}
+
+
+def _bound_attrs(value: object, *, depth: int = 0) -> object:
+    """Bound live-run attrs at the recorder boundary.
+
+    Diagnostic attrs are JSON-safe at the call sites, but this keeps one
+    oversized tool result or entity list from growing an in-memory run without
+    limit. The full trace store still applies its own redaction and bounds.
+    """
+    if depth >= MAX_ATTR_DEPTH:
+        return _truncate_attr_text(value)
+    if isinstance(value, dict):
+        return {
+            str(key): _bound_attrs(item, depth=depth + 1)
+            for key, item in list(value.items())[:MAX_ATTR_ITEMS]
+        }
+    if isinstance(value, list):
+        return [_bound_attrs(item, depth=depth + 1) for item in value[:MAX_ATTR_ITEMS]]
+    if isinstance(value, str):
+        return _truncate_attr_text(value)
+    if isinstance(value, bool | int | float) or value is None:
+        return value
+    return _truncate_attr_text(value)
+
+
+def _truncate_attr_text(value: object) -> str:
+    text = str(value).replace("\x00", "").strip()
+    if len(text) <= MAX_ATTR_TEXT:
+        return text
+    return text[: MAX_ATTR_TEXT - 1].rstrip() + "…"
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +94,13 @@ class VoiceRunEvent:
     attrs: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
+        """Return the canonical serialized event.
+
+        The canonical form is intentionally flat: ordering/identity fields at
+        top level, everything stage-specific inside ``payload``. Callers that
+        need the legacy stage/attrs view derive it through :func:`event_stage`
+        and :func:`event_payload` instead of maintaining a second copy.
+        """
         return {
             "event_id": self.event_id,
             "turn_id": self.turn_id,
@@ -46,11 +114,7 @@ class VoiceRunEvent:
             "monotonic_ms": self.t_ms,
             "caused_by": self.caused_by,
             "privacy": "trace_safe",
-            "payload": {"status": self.status, **self.attrs},
-            "stage": self.stage,
-            "t_ms": self.t_ms,
-            "status": self.status,
-            "attrs": dict(self.attrs),
+            "payload": {**_bound_attrs(self.attrs), "status": self.status},
         }
 
 

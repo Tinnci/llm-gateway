@@ -1696,7 +1696,6 @@ async def test_explicit_all_lights_reports_partial_batch_failure(
         if span["stage"] == "local_capability_execute"
     )
     assert execute_span["status"] == "warning"
-    assert execute_span["attrs"]["status"] == "partial"
     assert execute_span["attrs"]["action_trace"]["failed_entities"] == [
         {"entity_id": "light.monitor", "reason": "RuntimeError"}
     ]
