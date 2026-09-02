@@ -102,6 +102,7 @@ async def test_panel_uses_task_navigation_and_one_config_form(hass, hass_client)
     assert 'labelKey: "tab.runs"' in body
     assert 'labelKey: "tab.test"' in body
     assert 'labelKey: "tab.settings"' in body
+    assert "<voice-harness-overview>" in body
     assert 'data-form="config"' in body
     assert "configCard" in body
     assert "config.group_core" in body

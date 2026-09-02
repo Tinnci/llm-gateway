@@ -8,6 +8,7 @@ Object.assign(globalThis, {
   CustomEvent: browserWindow.CustomEvent,
   Document: browserWindow.Document,
   Event: browserWindow.Event,
+  HTMLDetailsElement: browserWindow.HTMLDetailsElement,
   HTMLElement: browserWindow.HTMLElement,
   KeyboardEvent: browserWindow.KeyboardEvent,
   Node: browserWindow.Node,
@@ -22,6 +23,9 @@ const { VoiceHarnessNavigation } = await import(
 );
 const { VoiceHarnessRunList } = await import(
   "../../custom_components/llm_gateway/frontend/voice-harness-run-list"
+);
+const { VoiceHarnessOverview } = await import(
+  "../../custom_components/llm_gateway/frontend/voice-harness-overview"
 );
 
 afterAll(() => browserWindow.close());
@@ -97,5 +101,77 @@ describe("Voice Harness run list", () => {
     expect(rows[0]?.getAttribute("aria-selected")).toBe("true");
     rows[1]?.click();
     expect(selected).toEqual(["run-2"]);
+  });
+});
+
+describe("Voice Harness overview", () => {
+  test("owns summary composition and task navigation", async () => {
+    const overview = new VoiceHarnessOverview();
+    overview.model = {
+      actions: [
+        { destination: "runs", icon: "mdi:play", label: "Inspect runs" },
+        { destination: "test", icon: "mdi:flask", label: "Run a test" },
+      ],
+      ariaLabel: "System health",
+      diagnosticsLabel: "Advanced diagnostics",
+      focusHint: "Inspect the affected run.",
+      focusIcon: "mdi:alert",
+      focusTitle: "Investigation needed",
+      headline: "System health",
+      memoryLabel: "Recent memory",
+      metrics: [
+        { icon: "mdi:lan", label: "Gateways", tone: "ok", value: "1" },
+      ],
+      stateLabel: "Investigation needed",
+      stateTone: "warning",
+      statusLine: "1 gateway",
+    };
+    overview.openSections = ["memory"];
+    document.body.append(overview);
+    await overview.updateComplete;
+
+    expect(overview.shadowRoot?.querySelectorAll("voice-harness-stat")).toHaveLength(1);
+    const disclosures = overview.shadowRoot?.querySelectorAll("details") || [];
+    expect(disclosures).toHaveLength(2);
+    expect(disclosures[1]?.open).toBe(true);
+
+    const destinations: string[] = [];
+    overview.addEventListener("harness-overview-navigate", (event) => {
+      destinations.push(
+        (event as CustomEvent<{ destination: string }>).detail.destination,
+      );
+    });
+    overview.shadowRoot?.querySelector("button")?.click();
+    expect(destinations).toEqual(["runs"]);
+  });
+
+  test("reports disclosure state without owning panel data", async () => {
+    const overview = new VoiceHarnessOverview();
+    overview.model = {
+      actions: [],
+      ariaLabel: "System health",
+      diagnosticsLabel: "Advanced diagnostics",
+      focusHint: "Ready",
+      focusIcon: "mdi:check",
+      focusTitle: "Ready",
+      headline: "System health",
+      memoryLabel: "Recent memory",
+      metrics: [],
+      stateLabel: "Ready",
+      stateTone: "ok",
+      statusLine: "1 gateway",
+    };
+    document.body.append(overview);
+    await overview.updateComplete;
+
+    const changes: Array<{ id: string; open: boolean }> = [];
+    overview.addEventListener("harness-overview-disclosure-toggle", (event) => {
+      changes.push((event as CustomEvent<{ id: string; open: boolean }>).detail);
+    });
+    const details = overview.shadowRoot?.querySelector("details");
+    if (!details) throw new Error("diagnostics disclosure was not rendered");
+    details.open = true;
+    details.dispatchEvent(new Event("toggle"));
+    expect(changes.at(-1)).toEqual({ id: "diagnostics", open: true });
   });
 });

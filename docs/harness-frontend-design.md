@@ -44,6 +44,7 @@ without behavior. Do not create a component only to replace one `div`.
 Current foundation:
 
 - `voice-harness-navigation.ts` owns tab semantics and keyboard navigation;
+- `voice-harness-overview.ts` owns overview composition, navigation, and disclosure state;
 - `voice-harness-run-list.ts` owns compact run selection and list keyboard behavior;
 - `voice-harness-stat.ts` owns the shared status metric presentation;
 - `voice-harness-styles.ts` owns component box, spacing, control, and focus rules;
@@ -84,7 +85,7 @@ private CSS class names.
 ## Migration order
 
 1. Keep the four-task shell and shared foundation stable.
-2. Move Overview into a Lit view with narrow typed input.
+2. Keep Overview's typed model and slotted domain evidence narrow.
 3. Continue moving selected-run detail sections out of the panel after the
    run list and single-detail surface are stable.
 4. Move Test and Settings one complete workflow at a time.

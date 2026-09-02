@@ -1085,6 +1085,10 @@ class VoiceHarnessPanel extends HTMLElement {
     this._trajectoryExpandedRunId = "";
     /** @type {Record<string, string>} */
     this._selectedRuns = {};
+    /** @type {Set<"diagnostics" | "memory">} */
+    this._overviewOpenSections = new Set();
+    /** @type {import("./voice-harness-overview.js").HarnessOverviewModel | null} */
+    this._renderedOverviewModel = null;
     /** @type {Record<string, string>} */
     this._diagnosticTabs = {};
     this._draftLocale = this._locale();
@@ -2165,6 +2169,7 @@ class VoiceHarnessPanel extends HTMLElement {
     const entries = this._data?.entries || [];
     this._renderedReplayPair = null;
     this._renderedReplayLabels = null;
+    this._renderedOverviewModel = null;
     // Full innerHTML replacement would snap every collapsible card back to
     // its template default; carry the user's expansion layout across.
     const openKeys = new Set(
@@ -2204,6 +2209,24 @@ class VoiceHarnessPanel extends HTMLElement {
     if (inspector && this._renderedReplayPair) {
       inspector.pair = this._renderedReplayPair;
       inspector.labels = this._renderedReplayLabels;
+    }
+    /** @type {import("./voice-harness-overview.js").VoiceHarnessOverview | null} */
+    const overview = this.shadowRoot.querySelector("voice-harness-overview");
+    if (overview && this._renderedOverviewModel) {
+      overview.model = this._renderedOverviewModel;
+      overview.openSections = [...this._overviewOpenSections];
+      overview.addEventListener("harness-overview-navigate", (event) => {
+        if (event instanceof CustomEvent) {
+          this._selectTab(String(event.detail?.destination || ""));
+        }
+      });
+      overview.addEventListener("harness-overview-disclosure-toggle", (event) => {
+        if (!(event instanceof CustomEvent)) return;
+        const id = event.detail?.id;
+        if (id !== "diagnostics" && id !== "memory") return;
+        if (event.detail?.open) this._overviewOpenSections.add(id);
+        else this._overviewOpenSections.delete(id);
+      });
     }
     /** @type {import("./voice-harness-navigation.js").VoiceHarnessNavigation | null} */
     const navigation = this.shadowRoot.querySelector("voice-harness-navigation");
@@ -2308,44 +2331,38 @@ class VoiceHarnessPanel extends HTMLElement {
     const first = snapshot.first_failing_check
       || checks.find((check) => check.status === "error" || check.status === "warning")
       || null;
+    this._renderedOverviewModel = {
+      actions: [
+        { destination: "runs", icon: "mdi:play-circle-outline", label: this._t("overview.open_runs") },
+        { destination: "test", icon: "mdi:flask-outline", label: this._t("overview.open_test") },
+      ],
+      ariaLabel: this._t("overview.health"),
+      diagnosticsLabel: this._t("overview.advanced"),
+      focusHint: issueCount
+        ? (first?.repair_hint || this._t("overview.attention_hint"))
+        : this._t("overview.ready_hint"),
+      focusIcon: issueCount ? "mdi:alert-decagram-outline" : "mdi:check-circle-outline",
+      focusTitle: issueCount
+        ? (first?.id || this._t("overview.attention"))
+        : this._t("overview.ready"),
+      headline: this._t("overview.health"),
+      memoryLabel: this._t("overview.memory"),
+      metrics: [
+        { icon: "mdi:lan-connect", label: this._t("overview.gateway_entries"), value: String(summary.entryCount), tone: summary.entryCount ? "ok" : "bad" },
+        { icon: "mdi:progress-clock", label: this._t("overview.active_runs"), value: String(summary.running), tone: summary.running ? "warning" : "muted" },
+        { icon: "mdi:alert-circle-outline", label: this._t("overview.recent_errors"), value: String(summary.recentErrors), tone: summary.recentErrors ? "bad" : "ok" },
+        { icon: "mdi:stethoscope", label: this._t("overview.issues"), value: String(summary.diagnosticIssues + summary.providerIssues), tone: issueCount ? "warning" : "ok" },
+      ],
+      stateLabel: issueCount ? this._t("overview.attention") : this._t("overview.ready"),
+      stateTone: issueCount ? "warning" : "ok",
+      statusLine: this._statusLine(entries),
+    };
     return `
-      <div class="overviewStack">
-        <section class="surface overviewHero" aria-label="${escapeHtml(this._t("overview.health"))}">
-          <div class="sectionHead">
-            <div>
-              <h2>${escapeHtml(this._t("overview.health"))}</h2>
-              <div class="meta">${escapeHtml(this._statusLine(entries))}</div>
-            </div>
-            <span class="chip ${issueCount ? "warning" : "ok"}">${escapeHtml(issueCount ? this._t("overview.attention") : this._t("overview.ready"))}</span>
-          </div>
-          <div class="overviewMetrics">
-            ${this._stat("mdi:lan-connect", this._t("overview.gateway_entries"), summary.entryCount, summary.entryCount ? "ok" : "bad")}
-            ${this._stat("mdi:progress-clock", this._t("overview.active_runs"), summary.running, summary.running ? "warning" : "muted")}
-            ${this._stat("mdi:alert-circle-outline", this._t("overview.recent_errors"), summary.recentErrors, summary.recentErrors ? "bad" : "ok")}
-            ${this._stat("mdi:stethoscope", this._t("overview.issues"), summary.diagnosticIssues + summary.providerIssues, issueCount ? "warning" : "ok")}
-          </div>
-          <div class="overviewFocus ${issueCount ? "warning" : "ok"}">
-            <ha-icon icon="${issueCount ? "mdi:alert-decagram-outline" : "mdi:check-circle-outline"}"></ha-icon>
-            <div>
-              <strong>${escapeHtml(issueCount ? (first?.id || this._t("overview.attention")) : this._t("overview.ready"))}</strong>
-              <span>${escapeHtml(issueCount ? (first?.repair_hint || this._t("overview.attention_hint")) : this._t("overview.ready_hint"))}</span>
-            </div>
-            <div class="overviewActions">
-              <button class="secondary" data-tab="runs"><ha-icon icon="mdi:play-circle-outline"></ha-icon><span>${escapeHtml(this._t("overview.open_runs"))}</span></button>
-              <button class="secondary" data-tab="test"><ha-icon icon="mdi:flask-outline"></ha-icon><span>${escapeHtml(this._t("overview.open_test"))}</span></button>
-            </div>
-          </div>
-        </section>
-        ${this._satelliteOverviewPanel(states, services, snapshot)}
-        <details class="surface overviewDisclosure" data-open-key="overview:diagnostics">
-          <summary>${escapeHtml(this._t("overview.advanced"))}</summary>
-          ${this._satelliteDiagnosticPanel(snapshot)}
-        </details>
-        <details class="surface overviewDisclosure" data-open-key="overview:memory">
-          <summary>${escapeHtml(this._t("overview.memory"))}</summary>
-          ${this._renderMemory(entries)}
-        </details>
-      </div>
+      <voice-harness-overview>
+        <div class="overview-slot" slot="satellite">${this._satelliteOverviewPanel(states, services, snapshot)}</div>
+        <div class="overview-slot" slot="diagnostics">${this._satelliteDiagnosticPanel(snapshot)}</div>
+        <div class="overview-slot" slot="memory">${this._renderMemory(entries)}</div>
+      </voice-harness-overview>
     `;
   }
 
@@ -5220,65 +5237,10 @@ const styles = `
     min-height: 420px;
   }
 
-  .overviewStack,
   .testStack,
   .settingsStack {
     display: grid;
     gap: 14px;
-  }
-
-  .overviewMetrics {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 8px;
-  }
-
-  .overviewFocus {
-    min-height: 72px;
-    display: grid;
-    grid-template-columns: 28px minmax(0, 1fr) auto;
-    gap: 12px;
-    align-items: center;
-    margin-top: 12px;
-    padding: 12px;
-    border: 1px solid var(--divider-color);
-    border-radius: 8px;
-    background: var(--primary-background-color);
-  }
-
-  .overviewFocus.ok {
-    border-color: color-mix(in srgb, var(--success-color) 30%, var(--divider-color));
-  }
-
-  .overviewFocus.warning {
-    border-color: color-mix(in srgb, var(--warning-color) 42%, var(--divider-color));
-  }
-
-  .overviewFocus > ha-icon {
-    width: 24px;
-    height: 24px;
-    color: var(--secondary-text-color);
-  }
-
-  .overviewFocus > div:nth-child(2) {
-    min-width: 0;
-    display: grid;
-    gap: 4px;
-  }
-
-  .overviewFocus strong {
-    font-size: 14px;
-  }
-
-  .overviewFocus span {
-    color: var(--secondary-text-color);
-    font-size: 12px;
-    line-height: 1.4;
-  }
-
-  .overviewActions {
-    display: flex;
-    gap: 8px;
   }
 
   .overviewDisclosure {
@@ -7190,12 +7152,6 @@ const styles = `
   }
 
   @media (max-width: 900px) {
-    .overviewMetrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-
-    .overviewFocus { grid-template-columns: 28px minmax(0, 1fr); }
-
-    .overviewActions { grid-column: 2; justify-content: flex-start; }
-
     .runInvestigator { grid-template-columns: minmax(190px, 0.4fr) minmax(0, 1fr); }
 
     .workbench {
@@ -7282,12 +7238,6 @@ const styles = `
     .shell {
       padding: 12px;
     }
-
-    .overviewMetrics { grid-template-columns: 1fr; }
-
-    .overviewFocus { grid-template-columns: 1fr; }
-
-    .overviewActions { grid-column: 1; flex-direction: column; }
 
     .runInvestigator { grid-template-columns: 1fr; }
 
