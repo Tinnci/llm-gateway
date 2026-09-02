@@ -26,6 +26,40 @@ The conversation kernel owns mutable Home Assistant state. A Turn Loop adapter
 can propose a result, but it cannot commit dialogue frames or device actions
 outside the kernel contract.
 
+## Harness Loop lifecycle
+
+The runtime loop is a bounded decision cycle, not a synonym for the diagnostic
+page:
+
+```text
+route decision
+    -> select one loop
+    -> start step
+    -> plan effects
+    -> execute through an injected service
+    -> observe bounded evidence
+    -> evaluate answerability and target coverage
+    -> continue or stop
+    -> kernel commits events, dialogue state, and speech
+```
+
+A loop returns either `TurnLoopContinuation`, `TurnLoopResult`, or `None` when
+it cannot own the turn. The driver records `harness_step_start` and
+`harness_step_end`, carries continuation reasons, and enforces a two-step voice
+budget. A terminal result includes `stop_reason`, `step_count`, and an
+`outcome_verdict`.
+
+Device-state reads are the first fully migrated query loop. The capability
+router resolves a target domain and hint, `GetLiveContext` receives that domain,
+and the renderer must prove that the returned entity covers the requested
+target before it may answer. A successful HTTP/tool call is therefore not
+treated as a successful turn when, for example, a fan question returns only
+temperature sensors.
+
+Weather and generic environmental summaries keep their established providers
+and renderers. They will migrate one route family at a time so the loop boundary
+does not silently change their fallback semantics.
+
 ## DSH patterns that fit this project
 
 ### Append facts, derive views
@@ -57,6 +91,12 @@ speech processing.
 
 Replay and Fork use stored evidence and dry-run evaluation. They do not repeat a
 Home Assistant device action.
+
+### Evaluate outcomes, not only transport
+
+Scenario evaluation can consume captured `route_decision`, `tool_args`, and
+`outcome_verdict` evidence. This catches semantic failures where every service
+returned successfully but the final answer did not cover the user's target.
 
 ## Patterns that do not fit
 

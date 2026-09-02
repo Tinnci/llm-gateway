@@ -47,6 +47,12 @@ events through `GET /api/llm_gateway/harness/runs/{run_id}/events` with
 `event_type`, `source`, and `status` filters. See
 [Voice Harness inspection API](voice-harness-api.md) for the full contract.
 
+For Harness Loop turns, the causal sequence includes
+`gateway.harness.step.start`, effect-specific tool events,
+`gateway.outcome.evaluated`, and `gateway.harness.step.end`. The terminal event
+does not infer correctness from transport status: its paired outcome verdict
+records whether the requested target was actually covered.
+
 ## Diagnostic drawer rendering
 
 The Voice Harness panel renders trace diagnostics through a keyed renderer

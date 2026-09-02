@@ -93,8 +93,10 @@ from .turn_loops import (
     ActionPlanLoop,
     ClarificationDialogueLoop,
     DeterministicCapabilityLoop,
+    LocalLiveContextLoop,
     TurnLoopContext,
     TurnLoopServices,
+    run_turn_loop,
     select_turn_loop,
 )
 from .voice_controls import async_handle_voice_runtime_command
@@ -424,8 +426,10 @@ def _resolution_frame_for_route(
     return None
 
 
-def _local_live_context_tool_args(text: str) -> dict[str, Any]:
-    slots = _local_live_context_slots(text)
+def _local_live_context_tool_args(
+    text: str, route_decision: RouteDecision | None = None
+) -> dict[str, Any]:
+    slots = _local_live_context_slots(text, route_decision)
     args: dict[str, Any] = {}
     domain = str(slots.get("domain") or "")
     area = str(slots.get("area") or "")
@@ -436,14 +440,20 @@ def _local_live_context_tool_args(text: str) -> dict[str, Any]:
     return _normalize_tool_args(LIVE_CONTEXT_TOOL_NAME, args, user_text=text)
 
 
-def _local_live_context_slots(text: str) -> dict[str, str]:
+def _local_live_context_slots(
+    text: str, route_decision: RouteDecision | None = None
+) -> dict[str, str]:
     normalized = _normalize_live_context_hint(text)
-    area = _local_live_context_area(text)
+    metadata = route_decision.metadata if route_decision is not None else {}
+    area = str(metadata.get("area") or _local_live_context_area(text))
     metric = _local_live_context_metric(normalized)
-    device_hint = ""
-    if "空调" in text:
+    device_hint = str(metadata.get("device_hint") or "")
+    routed_domain = str(metadata.get("domain") or "")
+    if routed_domain:
+        domain = routed_domain
+    elif "空调" in text:
         domain = "climate"
-        device_hint = "空调"
+        device_hint = device_hint or "空调"
     else:
         domain = "sensor"
     return {
@@ -883,6 +893,7 @@ class LLMGatewayConversationEntity(
                 ActionPlanLoop(),
                 DeterministicCapabilityLoop(),
                 ClarificationDialogueLoop(),
+                LocalLiveContextLoop(),
             ),
             loop_context,
         )
@@ -893,10 +904,19 @@ class LLMGatewayConversationEntity(
                 "loop_selected",
                 attrs={"loop": selected_loop.name},
             )
-            loop_result = await selected_loop.run(
+            loop_result = await run_turn_loop(
+                selected_loop,
                 self.hass,
                 loop_context,
-                TurnLoopServices(),
+                TurnLoopServices(
+                    plan_live_context=lambda text, decision: (
+                        _local_live_context_tool_args(text, decision),
+                        _local_live_context_slots(text, decision),
+                    ),
+                    execute_live_context=lambda args: (
+                        self._async_execute_live_context_tool(chat_log, args)
+                    ),
+                ),
             )
             if loop_result is not None:
                 frame = loop_result.dialogue_frame
@@ -941,20 +961,33 @@ class LLMGatewayConversationEntity(
                     attrs={
                         "loop": selected_loop.name,
                         "outcome": loop_result.status,
+                        "step_count": loop_result.step_count,
+                        "stop_reason": loop_result.stop_reason,
+                        "continuation_reasons": list(loop_result.continuation_reasons),
+                        "outcome_verdict": dict(loop_result.outcome_verdict),
                     },
                 )
                 await self._speak(chat_log, loop_result.speech)
+
+                route_trace = _local_route_trace(
+                    loop_result.route_kind,
+                    loop_result.route_model,
+                    first_response,
+                    route_decision,
+                )
+                route_trace["harness_loop"] = {
+                    "name": selected_loop.name,
+                    "step_count": loop_result.step_count,
+                    "stop_reason": loop_result.stop_reason,
+                    "continuation_reasons": list(loop_result.continuation_reasons),
+                    "outcome_verdict": dict(loop_result.outcome_verdict),
+                }
 
                 return await self._async_finalize_turn(
                     user_input,
                     chat_log,
                     started,
-                    _local_route_trace(
-                        loop_result.route_kind,
-                        loop_result.route_model,
-                        first_response,
-                        route_decision,
-                    ),
+                    route_trace,
                     run_id,
                     turn_token,
                 )
@@ -984,6 +1017,18 @@ class LLMGatewayConversationEntity(
                 run_id,
                 turn_token,
             )
+        if route_decision.next_action == "call_tool_then_local_render":
+            local_context_result = await self._async_try_local_live_context(
+                user_input,
+                chat_log,
+                started,
+                first_response,
+                route_decision,
+                run_id,
+                turn_token,
+            )
+            if local_context_result is not None:
+                return local_context_result
         if first_response.task_type in INVENTORY_TASK_TYPES:
             inventory = render_device_inventory(
                 effective_text,
@@ -1059,19 +1104,6 @@ class LLMGatewayConversationEntity(
             )
             if weather_result is not None:
                 return weather_result
-
-        if route_decision.next_action == "call_tool_then_local_render":
-            local_live_result = await self._async_try_local_live_context(
-                user_input,
-                chat_log,
-                started,
-                first_response,
-                route_decision,
-                run_id,
-                turn_token,
-            )
-            if local_live_result is not None:
-                return local_live_result
 
         route = select_model_route(effective_text, options)
         self._mark_run(
@@ -1153,6 +1185,37 @@ class LLMGatewayConversationEntity(
             turn_token,
         )
 
+    async def _async_execute_live_context_tool(
+        self,
+        chat_log: conversation.ChatLog,
+        tool_args: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Execute one Harness-owned live-context step through the HA tool seam."""
+        if not _chat_log_has_tool(chat_log, LIVE_CONTEXT_TOOL_NAME):
+            return {"error": "missing_GetLiveContext_tool"}
+        tool_call = llm.ToolInput(
+            id=ulid.ulid_now(),
+            tool_name=LIVE_CONTEXT_TOOL_NAME,
+            tool_args=tool_args,
+        )
+        try:
+            async for tool_result in chat_log.async_add_assistant_content(
+                conversation.AssistantContent(
+                    agent_id=self.entity_id,
+                    content=None,
+                    tool_calls=[tool_call],
+                )
+            ):
+                result = tool_result.tool_result
+                return (
+                    dict(result)
+                    if isinstance(result, dict)
+                    else {"error": "invalid_GetLiveContext_result"}
+                )
+        except (HomeAssistantError, ValueError) as err:
+            return {"error": type(err).__name__}
+        return {"error": "missing_GetLiveContext_result"}
+
     async def _async_try_local_live_context(  # noqa: PLR0913, PLR0917
         self,
         user_input: conversation.ConversationInput,
@@ -1178,8 +1241,8 @@ class LLMGatewayConversationEntity(
             )
             return None
 
-        tool_args = _local_live_context_tool_args(user_input.text)
-        slots = _local_live_context_slots(user_input.text)
+        tool_args = _local_live_context_tool_args(user_input.text, route_decision)
+        slots = _local_live_context_slots(user_input.text, route_decision)
         tool_call = llm.ToolInput(
             id=ulid.ulid_now(),
             tool_name=LIVE_CONTEXT_TOOL_NAME,
@@ -1432,7 +1495,7 @@ class LLMGatewayConversationEntity(
 
             if decision.next_action != "call_tool_then_local_render":
                 return None
-            tool_args = _local_live_context_tool_args(subtask.text)
+            tool_args = _local_live_context_tool_args(subtask.text, decision)
             tool_call = llm.ToolInput(
                 id=ulid.ulid_now(),
                 tool_name=LIVE_CONTEXT_TOOL_NAME,

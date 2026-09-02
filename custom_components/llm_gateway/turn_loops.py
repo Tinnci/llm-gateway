@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Protocol
 
 from .action_plan import ActionPlan, ActionPlanResult, async_execute_action_plan
@@ -15,6 +15,7 @@ from .dialogue import (
     dialogue_frame_from_local_capability,
     dialogue_frame_from_route,
 )
+from .static_context import render_scalar_state_answer
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterable
@@ -53,6 +54,22 @@ class TurnLoopResult:
     trace_events: tuple[TurnLoopTraceEvent, ...] = ()
     dialogue_frame: DialogueFrame | None = None
     proposed_actions: tuple[dict[str, Any], ...] = ()
+    stop_reason: str = "completed"
+    step_count: int = 1
+    continuation_reasons: tuple[str, ...] = ()
+    outcome_verdict: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class TurnLoopContinuation:
+    """Request another bounded step before the turn can stop."""
+
+    reason: str
+    context: TurnLoopContext
+    trace_events: tuple[TurnLoopTraceEvent, ...] = ()
+
+
+type TurnLoopDecision = TurnLoopResult | TurnLoopContinuation | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +83,12 @@ class TurnLoopServices:
     execute_action_plan: Callable[
         [HomeAssistant, ActionPlan], Awaitable[ActionPlanResult]
     ] = async_execute_action_plan
+    plan_live_context: (
+        Callable[[str, RouteDecision], tuple[dict[str, Any], dict[str, str]]] | None
+    ) = None
+    execute_live_context: (
+        Callable[[dict[str, Any]], Awaitable[dict[str, Any]]] | None
+    ) = None
 
 
 class TurnLoop(Protocol):
@@ -81,8 +104,231 @@ class TurnLoop(Protocol):
         hass: HomeAssistant,
         context: TurnLoopContext,
         services: TurnLoopServices,
-    ) -> TurnLoopResult | None:
+    ) -> TurnLoopDecision:
         """Run without committing a response or writing traces."""
+
+
+MAX_HARNESS_LOOP_STEPS = 2
+
+
+async def run_turn_loop(
+    loop: TurnLoop,
+    hass: HomeAssistant,
+    context: TurnLoopContext,
+    services: TurnLoopServices,
+    *,
+    max_steps: int = MAX_HARNESS_LOOP_STEPS,
+) -> TurnLoopResult | None:
+    """Drive one loop through bounded steps until it can stop."""
+    current = context
+    events: list[TurnLoopTraceEvent] = []
+    continuation_reasons: list[str] = []
+    for step in range(1, max(1, max_steps) + 1):
+        events.append(
+            TurnLoopTraceEvent(
+                stage="harness_step_start",
+                attrs={"loop": loop.name, "step": step},
+            )
+        )
+        decision = await loop.run(hass, current, services)
+        if decision is None:
+            events.append(
+                TurnLoopTraceEvent(
+                    stage="harness_step_end",
+                    status="error",
+                    attrs={"loop": loop.name, "step": step, "outcome": "declined"},
+                )
+            )
+            return None
+        if isinstance(decision, TurnLoopContinuation):
+            continuation_reasons.append(decision.reason)
+            events.extend(decision.trace_events)
+            events.append(
+                TurnLoopTraceEvent(
+                    stage="harness_step_end",
+                    status="warning",
+                    attrs={
+                        "loop": loop.name,
+                        "step": step,
+                        "outcome": "continue",
+                        "reason": decision.reason,
+                    },
+                )
+            )
+            current = decision.context
+            continue
+        events.extend(decision.trace_events)
+        events.append(
+            TurnLoopTraceEvent(
+                stage="harness_step_end",
+                status=(
+                    "ok" if decision.status not in {"failed", "blocked"} else "error"
+                ),
+                attrs={
+                    "loop": loop.name,
+                    "step": step,
+                    "outcome": decision.status,
+                    "stop_reason": decision.stop_reason,
+                },
+            )
+        )
+        return replace(
+            decision,
+            trace_events=tuple(events),
+            step_count=step,
+            continuation_reasons=tuple(continuation_reasons),
+        )
+    return TurnLoopResult(
+        status="failed",
+        speech="这次查询没有在限定步骤内完成，请稍后重试。",
+        route_kind="local_harness_guard",
+        route_model="harness_loop",
+        trace_events=(
+            *events,
+            TurnLoopTraceEvent(
+                stage="harness_loop_budget_exceeded",
+                status="error",
+                attrs={"loop": loop.name, "max_steps": max_steps},
+            ),
+        ),
+        stop_reason="step_budget_exceeded",
+        step_count=max_steps,
+        continuation_reasons=tuple(continuation_reasons),
+        outcome_verdict={
+            "answerable": False,
+            "reason": "step_budget_exceeded",
+        },
+    )
+
+
+class LocalLiveContextLoop:
+    """Query live HA context and stop only after answerability validation."""
+
+    name = "local_live_context"
+
+    def matches(self, context: TurnLoopContext) -> bool:
+        return (
+            context.route_decision.task_type == "device_state_query"
+            and context.route_decision.next_action == "call_tool_then_local_render"
+        )
+
+    async def run(
+        self,
+        _hass: HomeAssistant,
+        context: TurnLoopContext,
+        services: TurnLoopServices,
+    ) -> TurnLoopDecision:
+        if services.plan_live_context is None or services.execute_live_context is None:
+            return None
+        tool_args, slots = services.plan_live_context(
+            context.text, context.route_decision
+        )
+        events = [
+            TurnLoopTraceEvent(
+                stage="local_live_context_call",
+                attrs={
+                    "name": "GetLiveContext",
+                    "args": tool_args,
+                    "slots": slots,
+                    "llm_used": False,
+                    "tools_used": ["GetLiveContext"],
+                },
+            )
+        ]
+        result = await services.execute_live_context(tool_args)
+        error = str(result.get("error") or "")
+        events.append(
+            TurnLoopTraceEvent(
+                stage="tool_result",
+                status="error" if error else "ok",
+                attrs={
+                    "name": "GetLiveContext",
+                    "iteration": 0,
+                    "local_live_context": True,
+                },
+            )
+        )
+        if error:
+            verdict = {
+                "answerable": False,
+                "target_covered": False,
+                "reason": "tool_error",
+            }
+            events.append(
+                TurnLoopTraceEvent(
+                    stage="outcome_evaluated", status="error", attrs=verdict
+                )
+            )
+            return TurnLoopResult(
+                status="failed",
+                speech="暂时没有本地状态数据。",
+                route_kind="local_live_context",
+                route_model="live_context_renderer",
+                trace_events=tuple(events),
+                stop_reason="tool_error",
+                outcome_verdict=verdict,
+            )
+        rendered = render_scalar_state_answer(
+            context.text,
+            result,
+            task_type=context.route_decision.task_type,
+            route_decision=context.route_decision,
+        )
+        if rendered is None:
+            verdict = {
+                "answerable": False,
+                "target_covered": False,
+                "reason": "no_renderable_state",
+            }
+            events.extend(
+                (
+                    TurnLoopTraceEvent(
+                        stage="local_state_render", status="error", attrs=verdict
+                    ),
+                    TurnLoopTraceEvent(
+                        stage="outcome_evaluated", status="error", attrs=verdict
+                    ),
+                )
+            )
+            return TurnLoopResult(
+                status="failed",
+                speech="暂时没有本地状态数据。",
+                route_kind="local_live_context",
+                route_model="live_context_renderer",
+                trace_events=tuple(events),
+                stop_reason="no_renderable_state",
+                outcome_verdict=verdict,
+            )
+        verdict = {
+            "answerable": rendered.answerable,
+            "target_covered": rendered.target_covered,
+            "reason": rendered.outcome_reason or "answered",
+            "required_data": list(rendered.required_data),
+            "available_data": list(rendered.available_data),
+        }
+        events.extend(
+            (
+                TurnLoopTraceEvent(
+                    stage="local_state_render",
+                    status="ok" if rendered.answerable else "warning",
+                    attrs=rendered.trace_attrs(),
+                ),
+                TurnLoopTraceEvent(
+                    stage="outcome_evaluated",
+                    status="ok" if rendered.answerable else "warning",
+                    attrs=verdict,
+                ),
+            )
+        )
+        return TurnLoopResult(
+            status="complete" if rendered.answerable else "clarify",
+            speech=rendered.speech,
+            route_kind="local_live_context",
+            route_model="live_context_renderer",
+            trace_events=tuple(events),
+            stop_reason=verdict["reason"],
+            outcome_verdict=verdict,
+        )
 
 
 class DeterministicCapabilityLoop:

@@ -12,6 +12,7 @@ from .turn_loops import (
     DeterministicCapabilityLoop,
     TurnLoopContext,
     TurnLoopServices,
+    run_turn_loop,
     select_turn_loop,
 )
 from .voice_runs import VoiceRunRecorder
@@ -106,18 +107,33 @@ async def async_replay_turn(
         attrs={"replay_of": source_run_id, "mode": "dry_run"},
     )
     recorder.mark(fork_id, "loop_selected", attrs={"loop": loop.name})
-    result = await loop.run(
+    result = await run_turn_loop(
+        loop,
         hass,
         context,
         TurnLoopServices(execute_local_capability=_async_dry_run_capability),
     )
     if result is None:
         raise ReplayError("not_replayable", "turn produced no dry-run proposal")
+    for event in result.trace_events:
+        recorder.mark(
+            fork_id,
+            event.stage,
+            status=event.status,
+            attrs=event.attrs,
+        )
     proposed_actions = list(result.proposed_actions)
     recorder.mark(
         fork_id,
         "loop_completed",
-        attrs={"loop": loop.name, "outcome": result.status},
+        attrs={
+            "loop": loop.name,
+            "outcome": result.status,
+            "step_count": result.step_count,
+            "stop_reason": result.stop_reason,
+            "continuation_reasons": list(result.continuation_reasons),
+            "outcome_verdict": dict(result.outcome_verdict),
+        },
     )
     timeline = recorder.finish(fork_id, status="complete", route="replay")
     lineage = {
@@ -138,6 +154,13 @@ async def async_replay_turn(
                 "kind": "replay",
                 "model": "dry-run",
                 "route_decision": decision.as_dict(),
+                "harness_loop": {
+                    "name": loop.name,
+                    "step_count": result.step_count,
+                    "stop_reason": result.stop_reason,
+                    "continuation_reasons": list(result.continuation_reasons),
+                    "outcome_verdict": dict(result.outcome_verdict),
+                },
             },
             latency_ms=int(timeline[-1].get("t_ms") or 0),
             status="complete",

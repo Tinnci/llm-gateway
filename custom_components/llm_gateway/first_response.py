@@ -11,6 +11,7 @@ from .capabilities import decide_route
 TaskType = Literal[
     "home_control",
     "home_state",
+    "device_state_query",
     "weather_query",
     "indoor_environment_query",
     "outdoor_current_weather_query",
@@ -147,6 +148,7 @@ def decide_first_response(text: str) -> FirstResponseDecision:  # noqa: PLR0911,
         )
     if route.task_type in {
         "home_state",
+        "device_state_query",
         "indoor_environment_query",
         "home_temperature_summary",
     }:

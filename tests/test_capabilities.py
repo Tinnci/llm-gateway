@@ -359,6 +359,22 @@ def test_home_state_routes_to_local_live_context_without_llm():
         assert decision.allowed_tools == ("GetLiveContext",)
 
 
+def test_device_state_query_has_a_targeted_read_contract() -> None:
+    decision = decide_route("风扇现在是开着的还是关着的？")
+
+    assert decision.task_family == "home_state"
+    assert decision.task_type == "device_state_query"
+    assert decision.matched_capability == "device_state_query"
+    assert decision.next_action == "call_tool_then_local_render"
+    assert decision.allowed_tools == ("GetLiveContext",)
+    assert decision.metadata["domain"] == "fan"
+    assert decision.metadata["device_hint"] == "风扇"
+    assert decision.metadata["data_requirement"] == "entity_state"
+
+    assert decide_route("打开风扇").task_family == "home_control"
+    assert decide_route("门锁锁着吗？").task_type == "device_state_query"
+
+
 def test_colloquial_home_control_routes_to_control_capability():
     utterances = (
         "把风扇关了。",

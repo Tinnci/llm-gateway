@@ -139,6 +139,11 @@ query to filter recent replies. Then fetch a selected run's detail or event
 stream. Raw messages are excluded unless detail explicitly requests
 `include_raw=true`. See [Voice Harness inspection API](docs/voice-harness-api.md).
 
+The list query also supports `capability`, `outcome`, and `failure_stage` so an
+agent can find semantic failures without downloading full turns. Device-state
+queries run through a bounded Harness Loop that validates target coverage before
+speaking; its step and stop evidence is available in run detail and events.
+
 The panel can edit a small typed option list. It cannot edit API keys, provider
 secrets, the base URL, the system prompt, or exposed Home Assistant LLM APIs.
 Use the Home Assistant options flow for those values.

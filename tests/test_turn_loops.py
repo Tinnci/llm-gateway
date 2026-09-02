@@ -9,8 +9,12 @@ from custom_components.llm_gateway.turn_loops import (
     ActionPlanLoop,
     ClarificationDialogueLoop,
     DeterministicCapabilityLoop,
+    LocalLiveContextLoop,
     TurnLoopContext,
+    TurnLoopContinuation,
+    TurnLoopResult,
     TurnLoopServices,
+    run_turn_loop,
     select_turn_loop,
 )
 
@@ -141,3 +145,122 @@ def test_clarification_loop_does_not_claim_non_local_clarify_route() -> None:
     )
 
     assert select_turn_loop((ClarificationDialogueLoop(),), context) is None
+
+
+async def test_harness_loop_continues_then_stops_with_a_bounded_step_count() -> None:
+    class RepairingLoop:
+        name = "repairing"
+        calls = 0
+
+        def matches(self, _context):
+            return True
+
+        async def run(self, _hass, context, _services):
+            self.calls += 1
+            if self.calls == 1:
+                return TurnLoopContinuation("repair_target", context)
+            return TurnLoopResult(
+                status="complete",
+                speech="好了。",
+                route_kind="test",
+                route_model="test",
+                stop_reason="answered",
+            )
+
+    loop = RepairingLoop()
+    result = await run_turn_loop(
+        loop,
+        "fake-hass",
+        TurnLoopContext(text="查询", route_decision=_decision()),
+        TurnLoopServices(),
+    )
+
+    assert result is not None
+    assert result.step_count == 2
+    assert result.continuation_reasons == ("repair_target",)
+    assert [event.stage for event in result.trace_events] == [
+        "harness_step_start",
+        "harness_step_end",
+        "harness_step_start",
+        "harness_step_end",
+    ]
+
+
+async def test_local_live_context_loop_validates_device_state_before_stop() -> None:
+    decision = _decision(
+        route="local_live_context", next_action="call_tool_then_local_render"
+    )
+    decision = replace(
+        decision,
+        task_family="home_state",
+        task_type="device_state_query",
+        metadata={"domain": "fan", "device_hint": "风扇"},
+    )
+    context = TurnLoopContext(text="风扇开着吗？", route_decision=decision)
+
+    async def execute(_args):
+        return {
+            "success": True,
+            "result": (
+                "Live Context:\n- names: 米家循环扇 风扇\n  domain: fan\n  state: on\n"
+            ),
+        }
+
+    result = await run_turn_loop(
+        LocalLiveContextLoop(),
+        "fake-hass",
+        context,
+        TurnLoopServices(
+            plan_live_context=lambda _text, _decision: (
+                {"domain": "fan"},
+                {"domain": "fan", "device_hint": "风扇"},
+            ),
+            execute_live_context=execute,
+        ),
+    )
+
+    assert result is not None
+    assert result.status == "complete"
+    assert result.speech == "米家循环扇 风扇现在开着。"
+    assert result.stop_reason == "answered"
+    assert result.outcome_verdict["target_covered"] is True
+    assert any(event.stage == "outcome_evaluated" for event in result.trace_events)
+
+
+async def test_local_live_context_loop_rejects_unrelated_sensor_result() -> None:
+    decision = replace(
+        _decision(
+            route="local_live_context", next_action="call_tool_then_local_render"
+        ),
+        task_family="home_state",
+        task_type="device_state_query",
+        metadata={"domain": "fan", "device_hint": "风扇"},
+    )
+
+    async def execute(_args):
+        return {
+            "success": True,
+            "result": "Live Context:\n- names: 温度\n  domain: sensor\n  state: 26\n",
+        }
+
+    result = await run_turn_loop(
+        LocalLiveContextLoop(),
+        "fake-hass",
+        TurnLoopContext(text="风扇开着吗？", route_decision=decision),
+        TurnLoopServices(
+            plan_live_context=lambda _text, _decision: (
+                {"domain": "fan"},
+                {"domain": "fan", "device_hint": "风扇"},
+            ),
+            execute_live_context=execute,
+        ),
+    )
+
+    assert result is not None
+    assert result.status == "clarify"
+    assert result.stop_reason == "requested_target_missing"
+    assert result.outcome_verdict["answerable"] is False
+    assert result.outcome_verdict["target_covered"] is False
+    assert result.outcome_verdict["reason"] == "requested_target_missing"
+    assert result.outcome_verdict["required_data"] == ["entity_state"]
+    assert "温度" not in result.speech

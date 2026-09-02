@@ -86,6 +86,34 @@ def test_query_runs_filters_and_pages_with_run_id_cursor() -> None:
         query_runs(records, RunQuery(limit=1, cursor="missing"))
 
 
+def test_query_runs_exposes_and_filters_harness_outcome() -> None:
+    record = _record("run-loop", created_at="2026-09-02T12:00:00+00:00")
+    record["turn_summary"]["matched_capability"] = "device_state_query"
+    record["route"]["harness_loop"] = {
+        "name": "local_live_context",
+        "step_count": 1,
+        "stop_reason": "requested_target_missing",
+        "outcome_verdict": {
+            "answerable": False,
+            "target_covered": False,
+        },
+    }
+
+    [summary] = query_runs(
+        [record],
+        RunQuery(
+            limit=10,
+            capability="device_state_query",
+            outcome="not_answered",
+            failure_stage="requested_target_missing",
+        ),
+    )["records"]
+
+    assert summary["outcome"] == "not_answered"
+    assert summary["failure_stage"] == "requested_target_missing"
+    assert summary["harness_loop"]["target_covered"] is False
+
+
 def test_event_query_and_run_comparison_are_bounded() -> None:
     left = _record(
         "left",

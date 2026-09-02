@@ -220,6 +220,33 @@ PROMPT_POLICIES: list[dict[str, Any]] = [
 
 SAMPLE_SCENARIOS: list[dict[str, Any]] = [
     {
+        "id": "fan-state-target-coverage",
+        "name": "风扇状态目标覆盖",
+        "name_i18n": {
+            "en": "Fan state target coverage",
+            "zh-Hans": "风扇状态目标覆盖",
+        },
+        "user": "风扇现在是开着的还是关着的？",
+        "response": "客厅风扇现在关着。",
+        "expected": {
+            "must_search": False,
+            "route_decision": {
+                "task_family": "home_state",
+                "task_type": "device_state_query",
+                "next_action": "call_tool_then_local_render",
+                "route": "local_live_context",
+                "metadata": {"domain": "fan", "device_hint": "风扇"},
+            },
+            "tool_args": {"domain": "fan"},
+            "outcome_verdict": {"answerable": True, "target_covered": True},
+            "spoken_response": {
+                "max_sentences": 1,
+                "must_include": ["风扇"],
+                "must_not_mention": ["温度", "湿度", "PM2.5"],
+            },
+        },
+    },
+    {
         "id": "fast-light",
         "name": "普通灯光控制",
         "name_i18n": {"en": "Basic light control", "zh-Hans": "普通灯光控制"},
@@ -508,6 +535,9 @@ class HarnessRunsView(HomeAssistantView):
                     status=request.query.get("status"),
                     route=request.query.get("route"),
                     provider=request.query.get("provider"),
+                    capability=request.query.get("capability"),
+                    outcome=request.query.get("outcome"),
+                    failure_stage=request.query.get("failure_stage"),
                     contains=request.query.get("contains"),
                     has_error=has_error,
                 )

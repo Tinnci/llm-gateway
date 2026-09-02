@@ -246,6 +246,8 @@ class ScalarStateRenderResult:
     required_data: tuple[str, ...] = ()
     available_data: tuple[str, ...] = ()
     skipped_entities: tuple[str, ...] = ()
+    target_covered: bool = True
+    outcome_reason: str = ""
 
     def trace_attrs(self) -> dict[str, object]:
         """Return Voice Harness timeline attrs for the local state renderer."""
@@ -259,6 +261,8 @@ class ScalarStateRenderResult:
             "required_data": list(self.required_data),
             "available_data": list(self.available_data),
             "skipped_entities": list(self.skipped_entities),
+            "target_covered": self.target_covered,
+            "outcome_reason": self.outcome_reason,
             "entities": [
                 {
                     "name": entity.name,
@@ -490,13 +494,35 @@ def render_scalar_state_answer(  # noqa: PLR0911
     entities = tuple(
         entity
         for entity in parse_static_devices(raw_result, source="live_context")
-        if entity.domain in {"sensor", "weather", "climate"} and entity.state
+        if entity.domain
+        in {
+            "climate",
+            "cover",
+            "fan",
+            "humidifier",
+            "light",
+            "lock",
+            "media_player",
+            "sensor",
+            "switch",
+            "vacuum",
+            "weather",
+        }
+        and entity.state
     )
     if not entities:
         return None
 
     required_data = _required_data(route_decision)
     available_data = _available_data(entities)
+    if getattr(route_decision, "task_type", "") == "device_state_query":
+        return _render_device_state_query(
+            entities,
+            task_type=task_type,
+            route_decision=route_decision,
+            required_data=required_data,
+            available_data=available_data,
+        )
     if _forecast_required(route_decision):
         return ScalarStateRenderResult(
             speech=_forecast_missing_speech(route_decision),
@@ -600,6 +626,8 @@ def _required_data(route_decision: RouteDecision | None) -> tuple[str, ...]:
         return ("outdoor_weather",)
     if getattr(route_decision, "task_type", "") == "home_temperature_summary":
         return ("temperature_by_area",)
+    if getattr(route_decision, "task_type", "") == "device_state_query":
+        return ("entity_state",)
     return ("current_sensor_snapshot",)
 
 
@@ -613,7 +641,128 @@ def _available_data(entities: tuple[ExposedEntity, ...]) -> tuple[str, ...]:
         available.append("temperature_by_area")
     if any(entity.domain == "weather" for entity in entities):
         available.append("weather_entity")
+    if any(
+        entity.domain
+        in {
+            "climate",
+            "cover",
+            "fan",
+            "humidifier",
+            "light",
+            "lock",
+            "media_player",
+            "switch",
+            "vacuum",
+        }
+        and entity.state not in {"unknown", "unavailable"}
+        for entity in entities
+    ):
+        available.append("entity_state")
     return tuple(_dedup_names(available))
+
+
+def _render_device_state_query(
+    entities: tuple[ExposedEntity, ...],
+    *,
+    task_type: str,
+    route_decision: RouteDecision | None,
+    required_data: tuple[str, ...],
+    available_data: tuple[str, ...],
+) -> ScalarStateRenderResult:
+    metadata = getattr(route_decision, "metadata", {}) or {}
+    domain = str(metadata.get("domain") or "")
+    area = str(metadata.get("area") or "")
+    target_hint = _normalize_query_text(str(metadata.get("device_hint") or ""))
+    candidates = tuple(entity for entity in entities if entity.domain == domain)
+    if area:
+        candidates = tuple(
+            entity
+            for entity in candidates
+            if area in entity.areas or area in entity.name
+        )
+    if target_hint:
+        named = tuple(
+            entity
+            for entity in candidates
+            if target_hint in _normalize_query_text(entity.name)
+        )
+        if named:
+            candidates = named
+
+    label = DOMAIN_LABELS.get(domain, target_hint or "设备")
+    if not candidates:
+        area_label = f"{area}的" if area else ""
+        return ScalarStateRenderResult(
+            speech=f"我没有找到{area_label}{label}的当前状态。",
+            task_type=task_type,
+            source="GetLiveContext",
+            entity_count=0,
+            entities=(),
+            metrics=("state",),
+            answerable=False,
+            missing_requirements=("target_device",),
+            required_data=required_data,
+            available_data=available_data,
+            target_covered=False,
+            outcome_reason="requested_target_missing",
+        )
+    if len(candidates) > 1 and not area:
+        names = "、".join(entity.name for entity in candidates[:3])
+        return ScalarStateRenderResult(
+            speech=f"找到多个{label}：{names}。你想问哪一个？",
+            task_type=task_type,
+            source="GetLiveContext",
+            entity_count=len(candidates),
+            entities=candidates[:3],
+            metrics=("state",),
+            answerable=False,
+            missing_requirements=("target_device",),
+            required_data=required_data,
+            available_data=available_data,
+            target_covered=True,
+            outcome_reason="ambiguous_target",
+        )
+    selected = candidates[0]
+    if selected.state in {"unknown", "unavailable"}:
+        return ScalarStateRenderResult(
+            speech=f"{selected.name}当前状态不可用。",
+            task_type=task_type,
+            source="GetLiveContext",
+            entity_count=1,
+            entities=(selected,),
+            metrics=("state",),
+            answerable=False,
+            missing_requirements=("entity_state",),
+            required_data=required_data,
+            available_data=available_data,
+            target_covered=True,
+            outcome_reason="state_unavailable",
+        )
+    return ScalarStateRenderResult(
+        speech=f"{selected.name}现在{_spoken_device_state(selected)}。",
+        task_type=task_type,
+        source="GetLiveContext",
+        entity_count=1,
+        entities=(selected,),
+        metrics=("state",),
+        required_data=required_data,
+        available_data=available_data,
+        target_covered=True,
+        outcome_reason="answered",
+    )
+
+
+def _spoken_device_state(entity: ExposedEntity) -> str:
+    state = entity.state.lower()
+    if entity.domain == "lock":
+        return {"locked": "锁着", "unlocked": "没锁"}.get(state, entity.state)
+    if entity.domain == "cover":
+        return {"open": "开着", "closed": "关着"}.get(state, entity.state)
+    if state == "on":
+        return "开着"
+    if state == "off":
+        return "关着"
+    return entity.state
 
 
 def _is_outdoor_weather_entity(entity: ExposedEntity) -> bool:

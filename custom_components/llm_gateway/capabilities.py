@@ -144,6 +144,21 @@ _HOME_CONTROL_RE = re.compile(
     r"(打开|开启|关闭|关掉|关上|开了|关了|调亮|调暗|设置|开一下|关一下)"
 )
 _HOME_STATE_RE = re.compile(r"(多少|是不是|现在|开着吗|关着吗|锁了吗|温度|湿度|状态)")
+_DEVICE_STATE_QUESTION_RE = re.compile(
+    r"(状态|开着|关着|开没开|关没关|打开了吗|关闭了吗|"
+    r"是不是.{0,6}(开|关|锁)|有没有开|在运行吗|运行着吗|锁着吗|锁了吗)"
+)
+_DEVICE_STATE_DOMAINS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("media_player", ("播放器", "音箱", "电视")),
+    ("humidifier", ("加湿器",)),
+    ("climate", ("空调", "暖气", "温控")),
+    ("vacuum", ("扫地机", "扫地机器人")),
+    ("cover", ("窗帘", "卷帘")),
+    ("switch", ("开关",)),
+    ("light", ("灯光", "灯")),
+    ("fan", ("循环扇", "风扇")),
+    ("lock", ("门锁", "锁")),
+)
 _WEATHER_RE = re.compile(
     r"(天气|空气质量|空气怎么样|下雨|雨|外面|室外|冷不冷|热不热|气温|pm2\.?5|雾霾)"
 )
@@ -523,7 +538,7 @@ CAPABILITY_REGISTRY: tuple[Capability, ...] = (
     ),
     Capability(
         family="home_state",
-        examples=("家里 PM2.5 是多少", "客厅温度多少", "今天天气怎么样"),
+        examples=("风扇开着吗", "家里 PM2.5 是多少", "客厅温度多少", "今天天气怎么样"),
         route="local_live_context",
         tools=("GetLiveContext",),
         requires_live_home_context=True,
@@ -604,6 +619,18 @@ CAPABILITY_REGISTRY: tuple[Capability, ...] = (
 
 
 CAPABILITY_CONTRACTS: dict[str, CapabilityContract] = {
+    "device_state_query": CapabilityContract(
+        capability="device_state_query",
+        domain="home",
+        operation="read_state",
+        examples=("风扇开着吗？", "客厅灯是不是关了？", "门锁锁着吗？"),
+        required_user_slots=("target_device",),
+        required_system_capabilities=("GetLiveContext",),
+        allowed_tools=("GetLiveContext",),
+        forbidden_tools=("search_web", "HassTurnOn", "HassTurnOff"),
+        renderer_guard="requested_target_and_state_required",
+        answerability_guard="unrelated_domain_cannot_complete_turn",
+    ),
     "weather_forecast_query": CapabilityContract(
         capability="weather_forecast_query",
         domain="weather",
@@ -715,6 +742,18 @@ CAPABILITY_CONTRACTS: dict[str, CapabilityContract] = {
 }
 
 
+def _device_state_target(text: str) -> tuple[str, str] | None:
+    """Return a requested device domain and spoken target for state questions."""
+    if not _DEVICE_STATE_QUESTION_RE.search(text):
+        return None
+    normalized = _normalize(text)
+    for domain, terms in _DEVICE_STATE_DOMAINS:
+        for term in terms:
+            if _normalize(term) in normalized:
+                return domain, term
+    return None
+
+
 def decide_route(text: str) -> RouteDecision:  # noqa: PLR0911, PLR0912
     """Return a structured capability route decision for one utterance."""
     value = str(text or "").strip()
@@ -741,6 +780,27 @@ def decide_route(text: str) -> RouteDecision:  # noqa: PLR0911, PLR0912
             next_action="answer_with_llm",
             route="fast",
             matched_capability="general_conversation",
+        )
+
+    if device_state := _device_state_target(value):
+        domain, target_hint = device_state
+        return RouteDecision(
+            task_family="home_state",
+            task_type="device_state_query",
+            confidence=0.9,
+            requires_live_home_context=True,
+            allowed_tools=("GetLiveContext",),
+            next_action="call_tool_then_local_render",
+            route="local_live_context",
+            matched_capability="device_state_query",
+            metadata={
+                "domain": domain,
+                "device_hint": target_hint,
+                "area": _area_hint(value),
+                "operation": "read_state",
+                "data_requirement": "entity_state",
+                "capability_contract": _contract_metadata("device_state_query"),
+            },
         )
 
     if _HIGH_RISK_RE.search(value):
@@ -985,7 +1045,7 @@ def _environment_route(text: str, *, confidence: float) -> RouteDecision:
     """Return the split environment/weather capability route for one query."""
     environment = classify_environment_query(text)
     task_type: TaskType = "home_state"
-    matched_capability = "indoor_environment_query"
+    matched_capability = "home_state"
     if environment.forecast_required:
         missing = () if environment.location_hint else ("location_hint",)
         contract = _contract_metadata("weather_forecast_query")
@@ -1136,7 +1196,7 @@ def classify_environment_query(text: str) -> EnvironmentQuerySpec:
     )
 
 
-def _semantic_frame(
+def _semantic_frame(  # noqa: PLR0915 - explicit capability-to-frame mapping.
     index: int,
     text: str,
     decision: RouteDecision,
@@ -1151,6 +1211,10 @@ def _semantic_frame(
         domain = "home"
         operation = "inventory_summary"
         data_requirement = "static_context"
+    elif decision.task_type == "device_state_query":
+        domain = "home"
+        operation = "read_state"
+        data_requirement = "live_context"
     elif decision.task_type == "home_temperature_summary":
         domain = "environment"
         operation = "home_temperature_summary"

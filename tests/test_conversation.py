@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 from types import SimpleNamespace
+from typing import ClassVar
 from unittest.mock import patch
 
 from homeassistant.components import conversation
@@ -630,10 +631,8 @@ async def test_nearby_place_query_without_location_asks_permission_locally(
     loop_completed = next(
         span for span in trace["timeline_spans"] if span["stage"] == "loop_completed"
     )
-    assert loop_completed["attrs"] == {
-        "loop": "clarification_dialogue",
-        "outcome": "clarify",
-    }
+    assert loop_completed["attrs"]["loop"] == "clarification_dialogue"
+    assert loop_completed["attrs"]["outcome"] == "clarify"
     clarify_span = next(
         span
         for span in trace["timeline_spans"]
@@ -1258,6 +1257,73 @@ async def test_home_state_uses_local_live_context_without_model(
     )
     assert render_span["attrs"]["llm_final_used"] is False
     assert render_span["attrs"]["source"] == "GetLiveContext"
+
+
+async def test_device_state_uses_targeted_harness_loop_without_model(
+    hass, aioclient_mock, mock_config_entry
+):
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {
+            CONF_LLM_HASS_API: "assist",
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
+        },
+    )
+
+    class FakeLiveContextApi:
+        custom_serializer = None
+        tools: ClassVar = [SimpleNamespace(name=LIVE_CONTEXT_TOOL_NAME)]
+
+        async def async_call_tool(self, tool_input: llm.ToolInput):
+            assert tool_input.tool_args == {"domain": "fan"}
+            return {
+                "success": True,
+                "result": (
+                    "Live Context:\n"
+                    "- names: 米家循环扇 风扇\n"
+                    "  domain: fan\n"
+                    "  state: on\n"
+                    "  areas: 客厅\n"
+                ),
+            }
+
+    async def provide_live_context_api(self, *_args: object, **_kwargs: object) -> None:
+        self.llm_api = FakeLiveContextApi()
+        self.content.append(conversation.SystemContent(content=STATIC_CONTEXT))
+
+    with (
+        patch(
+            "homeassistant.components.conversation.ChatLog.async_provide_llm_data",
+            provide_live_context_api,
+        ),
+        patch(
+            "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
+        ) as completion,
+    ):
+        result = await conversation.async_converse(
+            hass,
+            "风扇现在是开着的还是关着的？",
+            None,
+            Context(),
+            agent_id=agent_id,
+        )
+
+    completion.assert_not_called()
+    assert result.response.speech["plain"]["speech"] == "米家循环扇 风扇现在开着。"
+    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+    assert trace["route_decision"]["task_type"] == "device_state_query"
+    assert trace["tools"][0]["args"] == {"domain": "fan"}
+    outcome = next(
+        span for span in trace["timeline_spans"] if span["stage"] == "outcome_evaluated"
+    )
+    assert outcome["attrs"]["answerable"] is True
+    assert outcome["attrs"]["target_covered"] is True
+    assert trace["route"]["harness_loop"]["stop_reason"] == "answered"
 
 
 async def test_climate_temperature_read_uses_local_live_context_without_model(

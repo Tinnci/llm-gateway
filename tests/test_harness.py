@@ -122,3 +122,41 @@ def test_evaluate_scenario_covers_climate_read_known_failure():
     )
 
     assert result.passed
+
+
+def test_evaluate_scenario_validates_captured_loop_evidence():
+    result = evaluate_scenario(
+        {
+            "user": "风扇现在是开着的还是关着的？",
+            "expected": {
+                "route_decision": {
+                    "task_type": "device_state_query",
+                    "metadata": {"domain": "fan"},
+                },
+                "tool_args": {"domain": "fan"},
+                "outcome_verdict": {
+                    "answerable": True,
+                    "target_covered": True,
+                },
+            },
+        },
+        {
+            "response": "客厅温度 25 度。",
+            "route_decision": {
+                "task_type": "device_state_query",
+                "metadata": {"domain": "fan"},
+            },
+            "tool_args": {"domain": "sensor"},
+            "outcome_verdict": {
+                "answerable": False,
+                "target_covered": False,
+            },
+        },
+    )
+
+    assert not result.passed
+    assert "tool_args_mismatch:domain:expected=fan:actual=sensor" in result.violations
+    assert (
+        "outcome_verdict_mismatch:target_covered:expected=True:actual=False"
+        in result.violations
+    )

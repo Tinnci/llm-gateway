@@ -17,6 +17,9 @@ class RunQuery:
     status: str | None = None
     route: str | None = None
     provider: str | None = None
+    capability: str | None = None
+    outcome: str | None = None
+    failure_stage: str | None = None
     contains: str | None = None
     has_error: bool | None = None
 
@@ -31,6 +34,27 @@ def run_summary(record: dict[str, Any]) -> dict[str, Any]:
     )
     errors = record.get("errors") if isinstance(record.get("errors"), list) else []
     tools = turn.get("tools") if isinstance(turn.get("tools"), list) else []
+    harness_loop = (
+        route.get("harness_loop") if isinstance(route.get("harness_loop"), dict) else {}
+    )
+    verdict = (
+        harness_loop.get("outcome_verdict")
+        if isinstance(harness_loop.get("outcome_verdict"), dict)
+        else {}
+    )
+    answerable = verdict.get("answerable")
+    outcome = (
+        "answered"
+        if answerable is True
+        else "not_answered"
+        if answerable is False
+        else str(record.get("status") or "")
+    )
+    failure_stage = (
+        str(harness_loop.get("stop_reason") or verdict.get("reason") or "")
+        if answerable is False
+        else ""
+    )
     return {
         "schema_version": int(record.get("schema_version") or 0),
         "run_id": str(record.get("run_id") or record.get("id") or ""),
@@ -47,6 +71,16 @@ def run_summary(record: dict[str, Any]) -> dict[str, Any]:
         },
         "task_family": str(turn.get("task_family") or ""),
         "task_type": str(turn.get("task_type") or ""),
+        "capability": str(turn.get("matched_capability") or ""),
+        "outcome": outcome,
+        "failure_stage": failure_stage,
+        "harness_loop": {
+            "name": str(harness_loop.get("name") or ""),
+            "step_count": int(harness_loop.get("step_count") or 0),
+            "stop_reason": str(harness_loop.get("stop_reason") or ""),
+            "answerable": answerable,
+            "target_covered": verdict.get("target_covered"),
+        },
         "latency_ms": int(record.get("latency_ms") or 0),
         "tools": [str(tool) for tool in tools[:20]],
         "error_count": len(errors),
@@ -61,7 +95,9 @@ def run_summary(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def query_runs(records: list[dict[str, Any]], query: RunQuery) -> dict[str, Any]:
+def query_runs(  # noqa: PLR0912 - each field is an independent API filter.
+    records: list[dict[str, Any]], query: RunQuery
+) -> dict[str, Any]:
     """Filter newest-first trace records and return one cursor page."""
     needle = (query.contains or "").casefold()
     filtered = []
@@ -76,6 +112,12 @@ def query_runs(records: list[dict[str, Any]], query: RunQuery) -> dict[str, Any]
         if query.route and summary["route"]["kind"] != query.route:
             continue
         if query.provider and summary["route"]["provider"] != query.provider:
+            continue
+        if query.capability and summary["capability"] != query.capability:
+            continue
+        if query.outcome and summary["outcome"] != query.outcome:
+            continue
+        if query.failure_stage and summary["failure_stage"] != query.failure_stage:
             continue
         if (
             query.has_error is not None

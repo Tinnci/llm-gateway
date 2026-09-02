@@ -59,18 +59,37 @@ def evaluate_scenario(  # noqa: PLR0912 - compact rule list for harness reportin
         expected.get("behavior") or scenario.get("expected_behavior") or ""
     )
     risk_level = str(expected.get("risk_level") or scenario.get("risk_level") or "")
-    route_decision = decide_route(user)
+    computed_route = decide_route(user).as_dict()
+    route_decision = (
+        actual.get("route_decision")
+        if isinstance(actual.get("route_decision"), dict)
+        else computed_route
+    )
     route_expected = expected.get("route_decision") or expected.get("route")
     if not isinstance(route_expected, dict):
         route_expected = {}
 
     if (
-        route_decision.requires_llm is False
-        and route_decision.next_action == "answer_with_llm"
+        route_decision.get("requires_llm") is False
+        and route_decision.get("next_action") == "answer_with_llm"
     ):
         violations.append("route_contract_non_llm_answers_with_llm")
 
-    violations.extend(_route_violations(route_decision.as_dict(), route_expected))
+    violations.extend(_route_violations(route_decision, route_expected))
+    violations.extend(
+        _nested_expectation_violations(
+            actual.get("tool_args"),
+            expected.get("tool_args"),
+            prefix="tool_args",
+        )
+    )
+    violations.extend(
+        _nested_expectation_violations(
+            actual.get("outcome_verdict"),
+            expected.get("outcome_verdict"),
+            prefix="outcome_verdict",
+        )
+    )
 
     if expected.get("must_search") is True and not should_allow_search(user):
         violations.append("search_required_but_policy_denied")
@@ -123,6 +142,24 @@ def evaluate_scenario(  # noqa: PLR0912 - compact rule list for harness reportin
         violations.append("confirmation_prompt_missing")
 
     return HarnessResult(not violations, violations)
+
+
+def _nested_expectation_violations(
+    actual: object,
+    expected: object,
+    *,
+    prefix: str,
+) -> list[str]:
+    """Compare a bounded expected mapping against captured runtime evidence."""
+    if not isinstance(expected, dict):
+        return []
+    actual_mapping = actual if isinstance(actual, dict) else {}
+    return [
+        f"{prefix}_mismatch:{key}:expected={expected_value}:"
+        f"actual={actual_mapping.get(str(key))}"
+        for key, expected_value in expected.items()
+        if actual_mapping.get(str(key)) != expected_value
+    ]
 
 
 def _route_violations(

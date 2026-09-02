@@ -160,6 +160,9 @@ class TraceStore:
                 "timeout_s": turn.route.get("timeout_s"),
                 "provider": turn.route.get("provider"),
                 "provider_attempts": turn.route.get("provider_attempts") or [],
+                "harness_loop": _bound_value(
+                    turn.route.get("harness_loop") or {}, limit=1200, depth=3
+                ),
             },
             "route_decision": _route_decision_summary(turn.route, timeline_spans),
             "turn_summary": _turn_summary(
