@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import custom_components.llm_gateway.traces as traces_module
 from custom_components.llm_gateway.const import (
     CONF_DIAGNOSTIC_TRACES,
     CONF_TRACE_INCLUDE_RAW_MESSAGES,
@@ -1279,3 +1280,35 @@ async def test_trace_record_exposes_one_glance_turn_summary(hass):
     assert summary["route"] == "local_live_context"
     assert summary["tools"] == ["GetLiveContext"]
     assert summary["latency_ms"] == 88
+
+
+def test_trace_bytes_budget_keeps_newest_within_ceiling(hass, monkeypatch):
+    """Byte pruning drops oldest records when storage stays count-cheap."""
+    store = traces_module.TraceStore(hass, "entry-bytes")
+
+    # Production order is newest-first; inject exactly that shape.
+    created_at = datetime.now(UTC).isoformat()
+    store._records = [
+        {
+            "id": f"run-{i}",
+            "created_at": created_at,
+            "blob": "x" * 10_000,
+        }
+        for i in (2, 1, 0)
+    ]
+    monkeypatch.setattr(traces_module, "TRACE_BYTES_BUDGET", 15_000)
+    store._prune(
+        {
+            CONF_TRACE_MAX_RUNS: 30,
+            CONF_TRACE_RETENTION_HOURS: 24,
+        }
+    )
+
+    # Newest-first: run-2 fits under the 15k budget; run-1 crosses it.
+    assert [r["id"] for r in store._records] == ["run-2"]
+    assert traces_module._record_bytes({"a": "x" * 4}) == 13
+
+
+def test_trace_bytes_budget_respects_non_json_values(monkeypatch):
+    """The helper never raises on non-JSON-safe values."""
+    assert traces_module._record_bytes({"bad": object()}) == 0

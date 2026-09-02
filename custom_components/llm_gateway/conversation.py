@@ -83,7 +83,11 @@ from .search import (
     mark_external_tool_calls,
 )
 from .static_context import render_device_inventory, render_scalar_state_answer
-from .tools_registry import enabled_external_tools, find_external_tool
+from .tools_registry import (
+    enabled_external_tools,
+    execute_external_tools,
+    find_external_tool,
+)
 from .traces import TraceTurn
 from .turn_loops import (
     ActionPlanLoop,
@@ -2359,44 +2363,50 @@ class LLMGatewayConversationEntity(
             ):
                 return provider_runs
 
+            external_calls = []
             for tool_call in content.tool_calls or []:
                 if not tool_call.external:
                     continue
                 declaration = find_external_tool(tool_call.tool_name)
-                if declaration is None:
-                    continue
-                self._mark_run(
-                    runtime,
-                    run_id,
-                    "search_started",
-                    attrs={
-                        "name": tool_call.tool_name,
-                        "iteration": iteration,
-                        "query": str(tool_call.tool_args.get("query") or ""),
-                        "interaction_state": "searching",
-                        "spoken_hint": declaration.spoken_hint,
-                    },
-                )
-                result = await declaration.execute(
+                if declaration is not None:
+                    external_calls.append((tool_call, declaration))
+
+            if external_calls:
+                results = await execute_external_tools(
+                    external_calls,
                     runtime.session,
                     options,
-                    tool_call,
+                    on_start=lambda call, _iteration=iteration: self._mark_run(
+                        runtime,
+                        run_id,
+                        "search_started",
+                        attrs={
+                            "name": call.tool_name,
+                            "iteration": _iteration,
+                            "query": str(call.tool_args.get("query") or ""),
+                            "interaction_state": "searching",
+                            "spoken_hint": find_external_tool(
+                                call.tool_name
+                            ).spoken_hint,
+                        },
+                    ),
+                    on_result=lambda call, result, _iteration=iteration: self._mark_run(
+                        runtime,
+                        run_id,
+                        "search_result",
+                        status="error" if "error" in result else "ok",
+                        attrs={"name": call.tool_name, "iteration": _iteration},
+                    ),
                 )
-                self._mark_run(
-                    runtime,
-                    run_id,
-                    "search_result",
-                    status="error" if "error" in result else "ok",
-                    attrs={"name": tool_call.tool_name, "iteration": iteration},
-                )
-                chat_log.async_add_assistant_content_without_tools(
-                    conversation.ToolResultContent(
-                        agent_id=self.entity_id,
-                        tool_call_id=tool_call.id,
-                        tool_name=tool_call.tool_name,
-                        tool_result=result,
+                for tool_call, result in results:
+                    chat_log.async_add_assistant_content_without_tools(
+                        conversation.ToolResultContent(
+                            agent_id=self.entity_id,
+                            tool_call_id=tool_call.id,
+                            tool_name=tool_call.tool_name,
+                            tool_result=result,
+                        )
                     )
-                )
 
             if not chat_log.unresponded_tool_results:
                 return provider_runs

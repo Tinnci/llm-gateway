@@ -96,5 +96,14 @@
       "invalid_json": "额外请求体必须是有效 JSON。",
       "invalid_provider_profiles": "Provider profiles 必须是有效 JSON，并包含 provider name、base_url、api_key 和可选的分档模型覆盖。"
     }
+  },
+  "system_health": {
+    "info": {
+      "configured_entries": "已配置条目",
+      "loaded_entries": "已加载条目",
+      "provider_failures": "Provider 失败数",
+      "providers_in_cooldown": "冷却中的 Provider",
+      "diagnostic_traces_enabled": "诊断记录已启用"
+    }
   }
 }

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
+import time
 
 from custom_components.llm_gateway.const import (
     CONF_SEARCH_ENABLED,
@@ -11,6 +13,7 @@ from custom_components.llm_gateway.const import (
 from custom_components.llm_gateway.tools_registry import (
     SEARCH_TOOL,
     enabled_external_tools,
+    execute_external_tools,
     find_external_tool,
 )
 
@@ -41,6 +44,55 @@ def test_specs_shape_and_hint_lookup():
     assert find_external_tool("nonexistent") is None
 
 
+def _no_specs(_options):
+    return []
+
+
 async def test_execute_is_coroutine_factory():
     """Registry execute is an awaitable-returning callable."""
     assert inspect.iscoroutinefunction(SEARCH_TOOL.execute)
+
+
+async def test_execute_external_tools_runs_concurrently_in_order():
+    started: list[str] = []
+    finished: list[str] = []
+
+    async def slow_execute(_session, _options, call):
+        await asyncio.sleep(0.04)
+        return {"ok": call.tool_name}
+
+    def make_call(name):
+        return type("Call", (), {"tool_name": name, "tool_args": {}, "id": name})()
+
+    calls = [
+        (make_call("a"), SEARCH_TOOL),
+        (make_call("b"), SEARCH_TOOL),
+    ]
+    # SEARCH_TOOL.execute is the real search executor; stub it locally.
+    calls[0] = (
+        calls[0][0],
+        type(calls[0][1])(
+            name="a", spoken_hint="h", build_specs=_no_specs, execute=slow_execute
+        ),
+    )
+    calls[1] = (
+        calls[1][0],
+        type(calls[1][1])(
+            name="b", spoken_hint="h", build_specs=_no_specs, execute=slow_execute
+        ),
+    )
+
+    started_at = time.monotonic()
+    results = await execute_external_tools(
+        calls,
+        None,
+        {},
+        on_start=lambda call: started.append(call.tool_name),
+        on_result=lambda call, _result: finished.append(call.tool_name),
+    )
+    elapsed = time.monotonic() - started_at
+
+    assert elapsed < 0.08
+    assert [call.tool_name for call, _result in results] == ["a", "b"]
+    assert started == ["a", "b"]
+    assert set(finished) == {"a", "b"}

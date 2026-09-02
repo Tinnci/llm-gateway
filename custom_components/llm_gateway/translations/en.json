@@ -96,5 +96,14 @@
       "invalid_json": "Extra request body must be valid JSON.",
       "invalid_provider_profiles": "Provider profiles must be valid JSON with provider name, base_url, api_key and optional tier model overrides."
     }
+  },
+  "system_health": {
+    "info": {
+      "configured_entries": "Configured entries",
+      "loaded_entries": "Loaded entries",
+      "provider_failures": "Provider failures",
+      "providers_in_cooldown": "Providers in cooldown",
+      "diagnostic_traces_enabled": "Diagnostic traces enabled"
+    }
   }
 }

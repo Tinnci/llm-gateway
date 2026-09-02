@@ -11,6 +11,7 @@ played while it runs — instead of touching three modules.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -67,3 +68,33 @@ def enabled_external_tools(
 def find_external_tool(name: str) -> ExternalTool | None:
     """Look up a declaration by tool name."""
     return next((tool for tool in _EXTERNAL_TOOLS if tool.name == name), None)
+
+
+async def execute_external_tools(
+    calls: list[tuple[Any, ExternalTool]],
+    session: aiohttp.ClientSession,
+    options: dict[str, Any],
+    *,
+    on_start: Callable[[Any], None] | None = None,
+    on_result: Callable[[Any, dict[str, Any]], None] | None = None,
+) -> list[tuple[Any, dict[str, Any]]]:
+    """Run a batch of external tools concurrently, preserving input order.
+
+    Each declaration is invoked with the shared session/options; per-call
+    trace callbacks fire around execution. Results align with ``calls``.
+    """
+
+    async def one(
+        call: Any,  # noqa: ANN401 - gateway calls are loosely typed ToolInputs
+        declaration: ExternalTool,
+    ) -> tuple[Any, dict[str, Any]]:
+        if on_start is not None:
+            on_start(call)
+        result = await declaration.execute(session, options, call)
+        if on_result is not None:
+            on_result(call, result)
+        return (call, result)
+
+    return list(
+        await asyncio.gather(*(one(call, declaration) for call, declaration in calls))
+    )

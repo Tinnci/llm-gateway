@@ -36,6 +36,13 @@ SUMMARY_TEXT_LIMIT = 1200
 RAW_TEXT_LIMIT = 12000
 EXTERNAL_EVENT_CORRELATION_WINDOW_SECONDS = 30
 TRACE_ENCODING = "json+zlib+base64"
+TRACE_BYTES_BUDGET = 8 * 1024 * 1024
+"""Approximate total storage ceiling for in-memory trace records.
+
+Run-count and retention limits already bound the list; the byte budget
+stops a few raw-heavy runs from ballooning the store even within those
+limits. Newest records win under the budget (insertion keeps newest first).
+"""
 _SECRET_MARKERS = ("api_key", "apikey", "authorization", "password", "secret", "token")
 _NON_BLOCKING_STAGES = {
     "verifier_audit",
@@ -276,6 +283,23 @@ class TraceStore:
             for record in self._records[:max_runs]
             if _parse_time(str(record.get("created_at") or ""), cutoff) >= cutoff
         ]
+        # Byte budget: newest-first, stop before the approximate byte ceiling.
+        total = 0
+        bounded: list[dict[str, Any]] = []
+        for record in self._records:
+            total += _record_bytes(record)
+            if total > TRACE_BYTES_BUDGET:
+                break
+            bounded.append(record)
+        self._records = bounded
+
+
+def _record_bytes(record: dict[str, Any]) -> int:
+    """Approximate serialized size of one stored record."""
+    try:
+        return len(json.dumps(record, ensure_ascii=False).encode("utf-8"))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _record_for_panel(record: dict[str, Any], *, include_raw: bool) -> dict[str, Any]:
