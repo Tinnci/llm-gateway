@@ -23,6 +23,10 @@ import {
   diagnosticTabRenderers,
   registerDiagnosticTab,
 } from "./voice-harness-diagnostic-tabs.js";
+import {
+  harnessViews,
+  registerHarnessView,
+} from "./voice-harness-view-registry.js";
 import "./voice-harness-replay-inspector.js";
 import {
   escapeHtml,
@@ -67,16 +71,52 @@ import {
  * @typedef {{ user: string, response: string, expected: string }} ScenarioDraft
  */
 
-const TABS = [
-  ["runs", "tab.runs", "mdi:play-circle-outline"],
-  ["config", "tab.config", "mdi:cog-outline"],
-  ["satellite", "tab.satellite", "mdi:microphone-settings"],
-  ["policies", "tab.policies", "mdi:shield-check-outline"],
-  ["scenarios", "tab.scenarios", "mdi:clipboard-text-search-outline"],
-  ["memory", "tab.memory", "mdi:database-eye-outline"],
-];
-
-const TAB_IDS = new Set(TABS.map(([id]) => id));
+// This is the UI composition root. The panel consumer reads a registry
+// snapshot; each view owns its metadata and dispatch function.
+[
+  {
+    id: "runs",
+    labelKey: "tab.runs",
+    icon: "mdi:play-circle-outline",
+    order: 10,
+    render: (panel, entries) => panel._renderRuns(entries),
+  },
+  {
+    id: "config",
+    labelKey: "tab.config",
+    icon: "mdi:cog-outline",
+    order: 20,
+    render: (panel, entries) => panel._renderConfig(entries),
+  },
+  {
+    id: "satellite",
+    labelKey: "tab.satellite",
+    icon: "mdi:microphone-settings",
+    order: 30,
+    render: (panel) => panel._renderSatellite(),
+  },
+  {
+    id: "policies",
+    labelKey: "tab.policies",
+    icon: "mdi:shield-check-outline",
+    order: 40,
+    render: (panel, entries) => panel._renderPolicies(entries),
+  },
+  {
+    id: "scenarios",
+    labelKey: "tab.scenarios",
+    icon: "mdi:clipboard-text-search-outline",
+    order: 50,
+    render: (panel, entries) => panel._renderScenarioLab(entries),
+  },
+  {
+    id: "memory",
+    labelKey: "tab.memory",
+    icon: "mdi:database-eye-outline",
+    order: 60,
+    render: (panel, entries) => panel._renderMemory(entries),
+  },
+].forEach((view) => registerHarnessView(view));
 
 const DEFAULT_EXPECTED = {
   must_search: false,
@@ -1271,7 +1311,7 @@ class VoiceHarnessPanel extends HTMLElement {
     }
     const tab = button.dataset.tab;
     if (tab) {
-      if (TAB_IDS.has(tab)) {
+      if (this._visibleHarnessViews().some((view) => view.id === tab)) {
         this._activeTab = tab;
         if (tab === "config" && !this._configData) {
           this._loadConfig();
@@ -2134,6 +2174,7 @@ class VoiceHarnessPanel extends HTMLElement {
       // necessarily open pre-render; keep it authoritative.
       openKeys.add(`record:${this._trajectoryExpandedRunId}`);
     }
+    const views = this._visibleHarnessViews();
     this.shadowRoot.innerHTML = `
       <style>${styles}</style>
       <main class="shell">
@@ -2150,11 +2191,11 @@ class VoiceHarnessPanel extends HTMLElement {
         </header>
         ${this._error ? `<div class="banner error">${escapeHtml(this._error)}</div>` : ""}
         <nav class="tabs" aria-label="${escapeHtml(this._t("aria.views"))}">
-          ${TABS.map(([id, labelKey, icon]) => tabButton({
-            active: this._activeTab === id,
-            icon,
-            id,
-            label: this._t(labelKey),
+          ${views.map((view) => tabButton({
+            active: this._activeTab === view.id,
+            icon: view.icon,
+            id: view.id,
+            label: this._t(view.labelKey),
           })).join("")}
         </nav>
         <section class="content">
@@ -2189,25 +2230,13 @@ class VoiceHarnessPanel extends HTMLElement {
     if (!this._data) {
       return this._renderLoading();
     }
-    if (this._activeTab === "runs") {
-      return this._renderRuns(entries);
-    }
-    if (this._activeTab === "config") {
-      return this._renderConfig(entries);
-    }
-    if (this._activeTab === "satellite") {
-      return this._renderSatellite();
-    }
-    if (this._activeTab === "policies") {
-      return this._renderPolicies(entries);
-    }
-    if (this._activeTab === "scenarios") {
-      return this._renderScenarioLab(entries);
-    }
-    if (this._activeTab === "memory") {
-      return this._renderMemory(entries);
-    }
-    return this._renderRuns(entries);
+    const views = this._visibleHarnessViews();
+    const active = views.find((view) => view.id === this._activeTab) || views[0];
+    return active ? active.render(this, entries) : this._renderLoading();
+  }
+
+  _visibleHarnessViews() {
+    return harnessViews().filter((view) => !view.visible || view.visible(this));
   }
 
   _renderLoading() {

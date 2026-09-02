@@ -235,6 +235,7 @@ TypeScript contract checks use `tsgo` through
 
 ## Documentation
 
+- [Voice Harness architecture](docs/harness-architecture.md)
 - [Pipeline architecture](docs/pipeline-architecture.md)
 - [Turn event stream](docs/turn-event-stream.md)
 - [Voice audio audit](docs/voice-audio-audit-postmarketos-ha-docker.md)
