@@ -1,138 +1,103 @@
 # LLM Gateway for Home Assistant
 
-LLM Gateway is a voice-first Home Assistant conversation agent for
-OpenAI-compatible chat endpoints. It works with any compatible gateway that
-exposes `/v1/models` and `/v1/chat/completions`, including LiteLLM, vLLM,
-OpenRouter, Ollama's OpenAI shim, and similar providers.
+Use OpenAI-compatible models as a routed Home Assistant conversation agent.
 
-The current implementation is no longer a single-model chat proxy. It is a
-routed assistant runtime with short spoken answers, Home Assistant tool policy,
-search gating, short session memory, compressed diagnostic traces, a localized
-Voice Harness panel, and a small earcon toolchain.
+LLM Gateway provides model routing, Home Assistant tool policy, web search,
+short memory, bounded traces, and an admin Voice Harness.
 
-## Current capabilities
+It works with services that provide `/v1/models` and
+`/v1/chat/completions`. Examples include LiteLLM, vLLM, OpenRouter, and
+Ollama's OpenAI-compatible endpoint.
 
-- **Live model discovery**: the config flow validates the API key against
-  `/v1/models` and populates model pickers from the endpoint's actual model
-  list.
-- **Fast / Mid / Deep routing**: normal voice turns use Fast, search and device
-  diagnostics use Mid, and long reasoning uses Deep as a Home Assistant
-  background task.
-- **Ordered model provider fallback**: optional provider profiles can override
-  tier models, timeouts, token budgets, and extra request bodies. Retryable
-  network/auth/429/5xx failures fail over to the next provider and are recorded
-  in diagnostic traces without exposing API keys.
-- **Home Assistant tool control**: Assist LLM API tools can be enabled from the
-  options flow. High-risk actions are blocked until the user explicitly confirms.
-- **Deterministic low-risk batch control**: explicit Chinese quantifiers such as
-  `所有`, `全部`, `每个`, and `每一` produce an `all` target scope for supported
-  low-risk domains. Batch execution excludes unavailable, hidden, disabled, and
-  config/diagnostic entities, skips targets already in the requested state, and
-  records bounded per-entity success/failure evidence.
-- **Weather provider routing**: outdoor current-weather and forecast turns first
-  use Home Assistant `weather` entities and `weather.get_forecasts`, including
-  providers such as `tianqi`. Current temperature, humidity, pressure, wind
-  speed, and visibility questions use metric-specific local renderers instead
-  of returning the full weather summary; sensor snapshots remain a fallback for
-  installations without a weather entity.
-- **Search gating**: `search_web` is only exposed when search is enabled, a
-  provider key exists, and the user request actually needs current external
-  information. Provider priority is Tavily, Serper, Firecrawl, then Brave.
-- **TTS-safe Markdown cleanup**: only the final spoken response is converted to
-  voice-safe plain text with `mistune`; the model's richer Markdown remains in
-  the conversation log.
-- **Short session memory**: recent turns are stored with a short TTL using Home
-  Assistant `Store` and injected only when a conversation id is present.
-- **Recoverable dialogue frames**: ambiguous device or missing-slot prompts are
-  scoped to the caller's conversation id. A high-confidence unrelated request
-  suspends the old frame, records the transition, and emits a display-only
-  cancellation/continuing notice before processing the new request.
-- **Diagnostic run traces**: when explicitly enabled, completed turns are stored
-  as bounded Voice Harness records. Summary fields are readable in the panel;
-  optional raw chat/tool payloads are redacted and stored as `json+zlib+base64`.
-- **Satellite diagnostics ingestion**: Voice Harness reads
-  `sensor.kukui_diagnostic_snapshot`, shows layered checks and PipeWire/AEC
-  state, accepts both full and Recorder-safe compact projections, and stores a
-  bounded trace-safe diagnostic summary on each recorded run. Compact traces
-  preserve the reported total status counts and explicitly mark themselves
-  incomplete instead of treating omitted `ok` checks as absent.
-- **Voice Harness panel**: the integration auto-registers an admin-only sidebar
-  panel named `Voice Harness`; no manual `panel_custom` YAML is required. Panel
-  chrome, prompt policies, scenarios, and earcon descriptions render in English
-  or Simplified Chinese based on the Home Assistant/browser locale.
-- **Earcon pack support**: rendered WAV earcons are served through the panel's
-  static path. The `tools/ha-earcon` uv project renders and lints deterministic
-  prompt sounds.
+> [!IMPORTANT]
+> A model response does not bypass Home Assistant action policy. High-risk
+> actions require explicit confirmation.
 
-## Current boundaries
+## Features
 
-- LLM Gateway records the post-STT text/LLM/tool/final-speech turn. Wake word
-  timing, raw audio, VAD chunks, and OPUS clips are satellite/ASR-layer signals;
-  those should be ingested from the satellite rather than reconstructed inside
-  the conversation agent.
-- On the maintained postmarketOS satellite, capture and playback are routed
-  through PipeWire WebRTC AEC (`kukui_aec_source` and `kukui_voice_sink`).
-  LLM Gateway should expose and consume that telemetry; it should not own PCM
-  processing, capture muting, or satellite playback policy.
-- Local OPUS spoken fallback clips for network/TTS/port failures belong in the
-  satellite playback chain. The Gateway ships the earcon pack and provider
-  fallback trace fields; the playback wrapper lives with the satellite service.
-- Durable alias memory and vector RAG are intentionally not defaults. Chinese
-  embedding quality still needs validation before this becomes a first-class
-  route.
-- Deep tasks do not directly control Home Assistant devices. They produce
-  analysis and notifications; actions still go through Fast/Mid plus policy.
+### Model routing
+
+- Fast, Mid, and Deep model tiers
+- Live model discovery from the configured endpoint
+- Separate token budgets, timeouts, and request bodies for each tier
+- Ordered provider fallback for retryable provider failures
+- Provider attempt and fallback evidence in diagnostic traces
+
+Fast handles normal voice turns. Mid handles search and device diagnostics.
+Deep runs long analysis as a Home Assistant background task.
+
+Deep tasks do not control devices. Device actions use Fast or Mid with the same
+tool policy.
+
+### Home Assistant control
+
+- Optional Assist LLM API tools
+- Confirmation for high-risk actions
+- Deterministic low-risk batch control
+- Hidden, disabled, unavailable, and diagnostic entity exclusion
+- State-match evidence for supported deterministic actions
+- Local weather entity routing before external search
+
+Chinese batch terms such as `所有`, `全部`, `每个`, and `每一` can select an
+`all` target scope for supported low-risk domains.
+
+### Search and response handling
+
+- Search tools only appear when the request needs current information.
+- Search provider order is Tavily, Serper, Firecrawl, then Brave.
+- The final spoken response uses TTS-safe plain text.
+- The conversation log can keep the richer Markdown response.
+- Short session memory is scoped by conversation ID and a short time limit.
+
+### Voice Harness
+
+The integration adds an admin-only **Voice Harness** panel. The panel does not
+need a manual `panel_custom` configuration.
+
+The panel provides:
+
+- recent runs and route evidence,
+- provider state and latency probes,
+- safe routing and retention settings,
+- prompt-policy evaluation,
+- bundled scenarios,
+- short-memory inspection,
+- earcon assets,
+- satellite diagnostic summaries.
+
+English and Simplified Chinese labels follow the Home Assistant or browser
+locale.
 
 ## Installation
 
-### HACS custom repository
+### HACS
 
-1. HACS -> menu -> Custom repositories.
-2. Add `https://github.com/Tinnci/llm-gateway` with category `Integration`.
-3. Install `LLM Gateway`, then restart Home Assistant.
+1. Open HACS.
+2. Add `https://github.com/Tinnci/llm-gateway` as a custom integration repository.
+3. Install **LLM Gateway**.
+4. Restart Home Assistant.
 
-### Manual install
+### Manual installation
 
-Copy `custom_components/llm_gateway` into:
-
-```text
-<ha-config>/custom_components/llm_gateway
-```
-
-Then restart Home Assistant.
+1. Copy `custom_components/llm_gateway` to `<ha-config>/custom_components/llm_gateway`.
+2. Restart Home Assistant.
 
 ## Configuration
 
-1. Go to Settings -> Devices & services -> Add integration -> LLM Gateway.
-2. Enter the OpenAI-compatible base URL and API key.
-3. Open Configure to set:
-   - routing mode,
-   - Fast / Mid / Deep model ids,
-   - token budgets and request timeouts,
-   - extra request JSON per tier,
-   - Home Assistant control exposure,
-   - optional search provider keys,
-   - optional ordered fallback provider profiles,
-   - optional diagnostic trace recording for the Voice Harness panel.
+1. Open **Settings > Devices & services**.
+2. Add **LLM Gateway**.
+3. Enter the OpenAI-compatible base URL and API key.
+4. Select the Fast, Mid, and Deep models.
+5. Enable only the Home Assistant LLM APIs that the agent needs.
+6. Set LLM Gateway as the conversation agent in an Assist pipeline.
 
-Set LLM Gateway as the Conversation agent in the Assist pipeline that serves
-your voice satellite.
+The options flow also controls search, fallback providers, timeouts, token
+budgets, and diagnostic trace retention.
 
-## Example model profile
+The old `chat_model`, `max_tokens`, `chat_timeout`, and `extra_body`
+options remain valid Fast-tier fallbacks.
 
-The bundled example profile uses these model ids:
-
-- Fast: `nvidia/nemotron-3-nano-30b-a3b`
-- Mid: `nvidia/nemotron-3-nano-30b-a3b`
-- Deep: `nvidia/nemotron-3-super-120b-a12b`
-
-They are editable examples, not a provider requirement. Any OpenAI-compatible
-provider can be used if it exposes the required endpoints.
-
-The legacy `chat_model`, `max_tokens`, `chat_timeout`, and `extra_body` options
-still work as Fast-route fallbacks so older entries continue to load.
-
-Optional fallback providers are configured as JSON in the options flow:
+### Fallback provider example
 
 ```json
 {
@@ -156,118 +121,94 @@ Optional fallback providers are configured as JSON in the options flow:
 }
 ```
 
-## Voice Harness
+## Voice Harness interface
 
-The panel is registered during integration setup with:
-
-- `hass.http.async_register_static_paths([StaticPathConfig(...)])`
-- `frontend.async_register_built_in_panel(...)`
-
-The sidebar URL is `voice-harness`, and the panel calls:
+The panel route is `voice-harness`. It uses these integration endpoints:
 
 - `GET /api/llm_gateway/harness/status`
 - `POST /api/llm_gateway/harness/evaluate`
-- `/api/llm_gateway/static/...` for the panel module and earcon assets
+- `/api/llm_gateway/static/...`
 
-Current panel views:
+The panel can edit a small typed option list. It cannot edit API keys, provider
+secrets, the base URL, the system prompt, or exposed Home Assistant LLM APIs.
+Use the Home Assistant options flow for those values.
 
-- `Runs / 运行记录`: config entries, model routes, provider state, recent
-  diagnostic text traces, latency, tool event counts, and optional compressed
-  raw payloads. Provider attempts and fallback reasons are visible when a run
-  crosses provider boundaries. Weather path and audio/AEC graph summaries are
-  shown when the trace includes them.
-- `Settings / 配置`: editable safe options for routing mode, Fast/Mid/Deep
-  model ids, token budgets, request timeouts, and bounded diagnostic trace
-  retention.
-- `Prompt Policies / 提示策略`: spoken prompt policies and risk rules.
-- `Scenarios / 场景测试`: ad hoc prompt policy evaluation, search gate
-  visibility, draft preflight checks, and bundled sample scenario runs.
-- `Memory Lab / 记忆实验室`: short memory snapshots.
-- `Earcons / 提示音`: rendered earcon manifest and playback.
+## Diagnostics and telemetry
 
-Home Assistant translation files cover the config/options flow. The custom
-panel has its own small frontend dictionary because HA custom panel modules do
-not automatically receive integration translation strings. The panel localizes
-human-facing labels, route names, risk levels, trace statuses, and policy rule
-ids; internal model ids and raw diagnostic payloads are intentionally shown as
-raw technical values.
+Home Assistant can download native config-entry diagnostics. The System Health
+page also shows aggregate provider and trace state.
 
-The panel intentionally does not edit API keys, base URL, exposed Home
-Assistant LLM APIs, search provider secrets, or the system prompt. Those stay in
-the Home Assistant options flow so sensitive fields keep the standard HA
-selector and storage behaviour. The editable panel API accepts only a typed
-whitelist and validates every numeric range server-side before updating config
-entry options.
+Native diagnostics include:
 
-## Diagnostic traces and chat history
+- integration and routing configuration,
+- enabled feature flags,
+- aggregate provider health,
+- trace counts and retention settings,
+- satellite diagnostic status counts.
 
-Diagnostic traces are separate from short session memory:
+Native diagnostics omit API keys, prompts, provider error text, complete turns,
+raw tool payloads, and Voice Harness records.
 
-- Memory is runtime context for the assistant. It keeps a small recent window
-  for follow-up turns such as "make it dimmer".
-- Traces are admin diagnostics for Voice Harness. They are disabled by default
-  and are meant for reproducing routing, prompt, search, and Home Assistant tool
-  behaviour after a bad run.
+### Voice Harness traces
 
-Options:
+Voice Harness traces are separate from Home Assistant Recorder and short
+session memory. They are disabled by default.
 
-- `diagnostic_traces`: enables bounded per-turn records.
-- `trace_include_raw_messages`: additionally stores redacted raw chat/tool
-  payloads as `json+zlib+base64`.
-- `trace_max_runs`: caps records per config entry.
-- `trace_retention_hours`: drops older records.
+Enable `diagnostic_traces` only when you need per-turn evidence. Use
+`trace_max_runs` and `trace_retention_hours` to bound storage.
 
-Each trace summary includes timestamp, conversation id, user text, final spoken
-assistant text, route tier/model, latency, status, tool event summary, and
-compressed payload size. Satellite diagnostic summaries also include projection
-completeness, reported check totals, non-OK totals, and the first failing
-prerequisite. Raw payload capture is opt-in because it can contain household
-state, entity names, prompts, and device context. Secret-looking keys such as
-API keys, authorization headers, passwords, tokens, and secrets are redacted
-before compression.
+`trace_include_raw_messages` adds redacted and compressed chat or tool
+payloads. This option can still capture private household context. Disable it
+after the investigation.
 
-This follows the same operational pattern used by production LLM observability
-systems such as LangSmith-style run traces and OpenTelemetry-style spans:
-record small indexed summaries by default, keep raw payload capture explicit,
-bound retention, redact secrets before storage, and make traces replayable
-enough for diagnosis without turning them into permanent user transcripts.
-LLM Gateway does not store raw microphone audio; OPUS/FLAC audio history should
-be implemented in the satellite or ASR project with its own short retention and
-local-only controls.
+Do not put complete turns or full diagnostic JSON in Home Assistant Recorder.
+Use low-cardinality counters and latency metrics for long-term telemetry.
 
-## Earcon workflow
+### Satellite diagnostics
 
-Render the bundled pack:
+Voice Harness can read `sensor.kukui_diagnostic_snapshot`. The entity contains
+a compact Recorder-safe projection. The satellite keeps the full snapshot on
+its localhost diagnostic endpoint.
+
+The compact projection preserves status counts and the first failed
+prerequisite. It marks itself incomplete when it omits healthy checks.
+
+## Runtime boundary
+
+LLM Gateway owns the conversation, route, tool, and final speech-text stages.
+It does not own:
+
+- raw microphone audio,
+- wake-word timing,
+- VAD audio chunks,
+- PipeWire or acoustic echo cancellation,
+- capture muting,
+- satellite playback,
+- local offline fallback clips.
+
+The satellite and ASR layers must provide those signals. LLM Gateway can consume
+their bounded telemetry.
+
+## Earcons
+
+The repository includes a deterministic earcon tool.
 
 ```bash
 cd tools/ha-earcon
-uv run ha-earcon render packs/ha_voice_minimal_v0.yaml --out ../../custom_components/llm_gateway/frontend/earcons/ha_voice_minimal_v0
-uv run ha-earcon lint ../../custom_components/llm_gateway/frontend/earcons/ha_voice_minimal_v0/*.wav
+uv run ha-earcon render packs/ha_voice_minimal_v0.yaml \
+  --out ../../custom_components/llm_gateway/frontend/earcons/ha_voice_minimal_v0
+uv run ha-earcon lint \
+  ../../custom_components/llm_gateway/frontend/earcons/ha_voice_minimal_v0/*.wav
 ```
 
-The pack currently uses WAV for deterministic short cues. OPUS fallback spoken
-clips are generated and played at the satellite layer so they still work when
-HA, TTS, or the network path is unavailable.
+`processing_loop.wav` marks a slow provider wait.
+`provider_fallback.wav` marks a provider change.
 
-The pack includes two latency-oriented cues:
-
-- `processing_loop.wav`: a short loopable cue for slow LLM/search waits. The
-  satellite should play it at reduced gain after a soft latency threshold and
-  stop it before final TTS starts.
-- `provider_fallback.wav`: a one-shot cue for model-provider fallback when the
-  primary provider is too slow or fails.
-
-Provider fallback is implemented as ordered failover, not blind round-robin load
-balancing. Search provider fallback already follows a priority list. Model
-fallback uses optional provider profiles and records provider, attempts,
-latency, fallback reason, and final status in diagnostic traces. A short-lived
-circuit breaker can still be added later if live traces show repeated provider
-flapping.
+The satellite decides when and how to play these sounds.
 
 ## Development
 
-Use `uv` for Python, `bun` for frontend build checks, and `tsgo` through
-`@typescript/native-preview` for frontend contract checks:
+Use `uv` for Python and `bun` for the panel.
 
 ```bash
 uv sync --dev
@@ -275,30 +216,44 @@ bun install
 uv run pytest
 bun run typecheck
 bun run build:panel
+bun test
+uvx ruff check custom_components tests tools/ha-earcon/src tools/ha-earcon/tests scripts
+uvx ruff format --check custom_components tests tools/ha-earcon/src tools/ha-earcon/tests scripts
+git diff --check
 ```
 
-The Voice Harness panel is still served to Home Assistant as browser-loadable
-`.js` modules. TypeScript helper sources in `custom_components/llm_gateway/frontend`
-are compiled back to same-directory `.js` files by `bun run build:panel` before
-the panel bundle check runs.
+TypeScript contract checks use `tsgo` through
+`@typescript/native-preview`.
 
-## Security notes
+## Security
 
-- API keys are configuration data and must not be logged.
-- Search traces should record provider, query, latency, and result count, but
-  never provider secrets.
-- Diagnostic traces are off by default. Enable raw payload capture only while
-  debugging, then disable it again.
-- Home Assistant actions from search results must still pass the same tool
-  policy as direct user requests.
+- Do not log API keys, authorization headers, passwords, or tokens.
+- Treat prompts, entity names, and tool payloads as private data.
+- Keep raw trace capture off during normal operation.
+- Apply the same action policy to search-derived and direct user requests.
+- Download native diagnostics before you report a defect.
+
+## Documentation
+
+- [Pipeline architecture](docs/pipeline-architecture.md)
+- [Turn event stream](docs/turn-event-stream.md)
+- [Voice audio audit](docs/voice-audio-audit-postmarketos-ha-docker.md)
+- [Runtime verification](docs/voice-feedback-runtime-verification.md)
+
+## Documentation style
+
+This README applies practical rules from ASD-STE100 Simplified Technical
+English, Issue 9. It uses active voice, short sentences, and consistent terms.
+
+This use is not an ASD-STE100 compliance certification. Project-specific terms
+remain necessary.
+
+Reference: ASD STEMG. [ASD-STE100 Simplified Technical English](https://www.asd-ste100.org/), Issue 9, 2025.
 
 ## License
 
-Source-available for non-commercial use under the PolyForm Noncommercial
-License 1.0.0. See `LICENSE`.
+This source is available for non-commercial use under the
+[PolyForm Noncommercial License 1.0.0](LICENSE).
 
-Commercial use is not permitted without a separate license. This is not an OSI
-open-source license because commercial use is restricted.
-
-Third-party dependencies and services keep their own licenses and terms. See
-`NOTICE.md`.
+Commercial use requires a separate license. This license is not an OSI
+open-source license. See [NOTICE.md](NOTICE.md) for third-party terms.
