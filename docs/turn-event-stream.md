@@ -41,6 +41,12 @@ still does not make clocks comparable for latency calculations.
 turn event stream describes what happened during one interaction; neither is a
 replacement for the other.
 
+Programmatic clients first select a run through the bounded
+`GET /api/llm_gateway/harness/runs` projection. They can then query matching
+events through `GET /api/llm_gateway/harness/runs/{run_id}/events` with
+`event_type`, `source`, and `status` filters. See
+[Voice Harness inspection API](voice-harness-api.md) for the full contract.
+
 ## Diagnostic drawer rendering
 
 The Voice Harness panel renders trace diagnostics through a keyed renderer

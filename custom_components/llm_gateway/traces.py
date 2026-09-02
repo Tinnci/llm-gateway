@@ -23,6 +23,7 @@ from .const import (
     RECOMMENDED_TRACE_MAX_RUNS,
     RECOMMENDED_TRACE_RETENTION_HOURS,
 )
+from .observability import RunQuery, query_runs
 from .satellite_diagnostics import (
     SATELLITE_DIAGNOSTIC_SNAPSHOT_ENTITY_ID,
     satellite_diagnostic_snapshot,
@@ -254,6 +255,10 @@ class TraceStore:
             _record_for_panel(record, include_raw=False)
             for record in self._records[: max(1, limit)]
         ]
+
+    def query_runs(self, query: RunQuery) -> dict[str, Any]:
+        """Return a lightweight filtered page for programmatic inspection."""
+        return query_runs(self._records, query)
 
     def get_run(
         self, run_id: str, *, include_raw: bool = True

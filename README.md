@@ -126,8 +126,18 @@ options remain valid Fast-tier fallbacks.
 The panel route is `voice-harness`. It uses these integration endpoints:
 
 - `GET /api/llm_gateway/harness/status`
+- `GET /api/llm_gateway/harness/health`
+- `GET /api/llm_gateway/harness/runs`
+- `GET /api/llm_gateway/harness/runs/{run_id}`
+- `GET /api/llm_gateway/harness/runs/{run_id}/events`
+- `GET /api/llm_gateway/harness/runs/compare`
 - `POST /api/llm_gateway/harness/evaluate`
 - `/api/llm_gateway/static/...`
+
+The run endpoints form one layered inspection API. Use the lightweight list
+query to filter recent replies. Then fetch a selected run's detail or event
+stream. Raw messages are excluded unless detail explicitly requests
+`include_raw=true`. See [Voice Harness inspection API](docs/voice-harness-api.md).
 
 The panel can edit a small typed option list. It cannot edit API keys, provider
 secrets, the base URL, the system prompt, or exposed Home Assistant LLM APIs.
@@ -236,6 +246,7 @@ TypeScript contract checks use `tsgo` through
 ## Documentation
 
 - [Voice Harness architecture](docs/harness-architecture.md)
+- [Voice Harness inspection API](docs/voice-harness-api.md)
 - [Pipeline architecture](docs/pipeline-architecture.md)
 - [Turn event stream](docs/turn-event-stream.md)
 - [Voice audio audit](docs/voice-audio-audit-postmarketos-ha-docker.md)

@@ -441,11 +441,20 @@ Current views:
 Current APIs:
 
 - `GET /api/llm_gateway/harness/status`
+- `GET /api/llm_gateway/harness/health`
+- `GET /api/llm_gateway/harness/runs`
+- `GET /api/llm_gateway/harness/runs/{run_id}`
+- `GET /api/llm_gateway/harness/runs/{run_id}/events`
+- `GET /api/llm_gateway/harness/runs/compare`
 - `POST /api/llm_gateway/harness/evaluate`
 - `POST /api/llm_gateway/harness/options`
 
 The status API reads the earcon manifest through Home Assistant's executor to
 avoid blocking the event loop.
+
+Programmatic inspection uses the coarse-to-detail flow in
+[Voice Harness inspection API](voice-harness-api.md). List and health responses
+remain bounded. Raw messages require an explicit detail opt-in.
 
 ## Earcons and local audio fallbacks
 

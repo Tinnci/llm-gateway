@@ -89,6 +89,7 @@ from .first_response_audio import first_response_audio_status
 from .harness import evaluate_scenario
 from .memory import FactWrite
 from .model_catalog import model_catalog_for
+from .observability import RunQuery, compare_runs, query_events
 from .policy import should_allow_search
 from .providers import normalize_provider_profiles_json, provider_profiles_from_options
 from .replay import ReplayError, ReplayOverrides, async_replay_turn
@@ -98,6 +99,8 @@ from .search import search_providers_from_options
 from .voice_text import markdown_to_spoken_text
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
 
@@ -420,7 +423,10 @@ def async_register_views(hass: HomeAssistant) -> None:
     """Register Voice Harness API views."""
     hass.http.register_view(HarnessStatusView)
     hass.http.register_view(HarnessRunsView)
+    hass.http.register_view(HarnessRunsCompareView)
     hass.http.register_view(HarnessRunDetailView)
+    hass.http.register_view(HarnessRunEventsView)
+    hass.http.register_view(HarnessHealthView)
     hass.http.register_view(HarnessReplayView)
     hass.http.register_view(HarnessEvaluateView)
     hass.http.register_view(HarnessOptionsView)
@@ -482,9 +488,68 @@ class HarnessRunsView(HomeAssistantView):
             )
         runtime = getattr(entry, "runtime_data", None)
         if runtime is None:
-            return self.json({"records": []})
+            return self.json(
+                {
+                    "api_version": 1,
+                    "records": [],
+                    "has_more": False,
+                    "next_cursor": None,
+                }
+            )
         limit = _bounded_query_int(request.query.get("limit"), default=30, maximum=200)
-        return self.json({"records": runtime.trace_store.list_runs(limit=limit)})
+        try:
+            since = _query_datetime(request.query.get("since"))
+            has_error = _query_bool(request.query.get("has_error"))
+            page = runtime.trace_store.query_runs(
+                RunQuery(
+                    limit=limit,
+                    cursor=request.query.get("cursor"),
+                    since=since,
+                    status=request.query.get("status"),
+                    route=request.query.get("route"),
+                    provider=request.query.get("provider"),
+                    contains=request.query.get("contains"),
+                    has_error=has_error,
+                )
+            )
+        except ValueError as err:
+            return self.json_message(str(err), HTTPStatus.BAD_REQUEST, "invalid_query")
+        return self.json({"api_version": 1, **page})
+
+
+class HarnessRunsCompareView(HomeAssistantView):
+    """Compare two stored runs through a bounded projection."""
+
+    name = f"api:{DOMAIN}:harness:runs_compare"
+    url = f"{API_BASE}/harness/runs/compare"
+
+    @require_admin
+    async def get(self, request: web.Request) -> web.Response:
+        """Handle run comparison requests."""
+        hass: HomeAssistant = request.app["hass"]
+        entry = _select_entry(hass, request.query.get("entry_id"))
+        runtime = getattr(entry, "runtime_data", None) if entry else None
+        if runtime is None:
+            return self.json_message(
+                "No LLM Gateway config entry found",
+                HTTPStatus.NOT_FOUND,
+                "entry_not_found",
+            )
+        left_id = str(request.query.get("left_run_id") or "")
+        right_id = str(request.query.get("right_run_id") or "")
+        if not left_id or not right_id:
+            return self.json_message(
+                "left_run_id and right_run_id are required",
+                HTTPStatus.BAD_REQUEST,
+                "invalid_query",
+            )
+        left = runtime.trace_store.get_run(left_id, include_raw=False)
+        right = runtime.trace_store.get_run(right_id, include_raw=False)
+        if left is None or right is None:
+            return self.json_message(
+                "Voice run not found", HTTPStatus.NOT_FOUND, "run_not_found"
+            )
+        return self.json({"api_version": 1, "comparison": compare_runs(left, right)})
 
 
 class HarnessRunDetailView(HomeAssistantView):
@@ -505,14 +570,124 @@ class HarnessRunDetailView(HomeAssistantView):
                 "entry_not_found",
             )
         runtime = getattr(entry, "runtime_data", None)
-        record = runtime.trace_store.get_run(run_id) if runtime else None
+        try:
+            include_raw = _query_bool(request.query.get("include_raw"), default=False)
+        except ValueError as err:
+            return self.json_message(str(err), HTTPStatus.BAD_REQUEST, "invalid_query")
+        record = (
+            runtime.trace_store.get_run(run_id, include_raw=include_raw)
+            if runtime
+            else None
+        )
         if record is None:
             return self.json_message(
                 "Voice run not found",
                 HTTPStatus.NOT_FOUND,
                 "run_not_found",
             )
-        return self.json({"record": record})
+        return self.json({"api_version": 1, "record": record})
+
+
+class HarnessRunEventsView(HomeAssistantView):
+    """Return filtered events for one stored run."""
+
+    name = f"api:{DOMAIN}:harness:run_events"
+    url = f"{API_BASE}/harness/runs/{{run_id}}/events"
+
+    @require_admin
+    async def get(self, request: web.Request, run_id: str) -> web.Response:
+        """Handle event-stream queries."""
+        hass: HomeAssistant = request.app["hass"]
+        entry = _select_entry(hass, request.query.get("entry_id"))
+        runtime = getattr(entry, "runtime_data", None) if entry else None
+        record = (
+            runtime.trace_store.get_run(run_id, include_raw=False) if runtime else None
+        )
+        if record is None:
+            return self.json_message(
+                "Voice run not found", HTTPStatus.NOT_FOUND, "run_not_found"
+            )
+        event_types = tuple(
+            item.strip()
+            for item in str(request.query.get("event_type") or "").split(",")
+            if item.strip()
+        )
+        events = query_events(
+            record,
+            event_types=event_types,
+            source=request.query.get("source"),
+            status=request.query.get("status"),
+        )
+        return self.json(
+            {
+                "api_version": 1,
+                "run_id": run_id,
+                "count": len(events),
+                "events": events,
+            }
+        )
+
+
+class HarnessHealthView(HomeAssistantView):
+    """Return a small agent-readable health snapshot."""
+
+    name = f"api:{DOMAIN}:harness:health"
+    url = f"{API_BASE}/harness/health"
+
+    @require_admin
+    async def get(self, request: web.Request) -> web.Response:
+        """Handle health snapshot requests."""
+        hass: HomeAssistant = request.app["hass"]
+        entries = _entries(hass)
+        snapshots = []
+        for entry in entries:
+            runtime = getattr(entry, "runtime_data", None)
+            storage = (
+                runtime.trace_store.snapshot(include_raw=False).get("storage", {})
+                if runtime
+                else {}
+            )
+            provider_health = runtime.provider_selector.snapshot() if runtime else []
+            snapshots.append(
+                {
+                    **_entry_meta(entry),
+                    "active_turn": bool(
+                        runtime and runtime.turn_controller.current_turn_id
+                    ),
+                    "trace_records": int(storage.get("records") or 0),
+                    "provider_failures": sum(
+                        int(row.get("failures") or 0) for row in provider_health
+                    ),
+                    "providers_in_cooldown": sum(
+                        int(row.get("cooldown_remaining_s") or 0) > 0
+                        for row in provider_health
+                    ),
+                }
+            )
+        diagnostic = satellite_diagnostic_snapshot(hass)
+        checks = diagnostic.get("checks") if isinstance(diagnostic, dict) else []
+        checks = (
+            [check for check in checks if isinstance(check, dict)]
+            if isinstance(checks, list)
+            else []
+        )
+        return self.json(
+            {
+                "api_version": 1,
+                "entries": snapshots,
+                "diagnostics": {
+                    "total": len(checks),
+                    "errors": sum(check.get("status") == "error" for check in checks),
+                    "warnings": sum(
+                        check.get("status") == "warning" for check in checks
+                    ),
+                    "blocked": sum(
+                        check.get("status") == "blocked" for check in checks
+                    ),
+                    "first_failing_check": diagnostic.get("first_failing_check"),
+                },
+            }
+        )
 
 
 class HarnessReplayView(HomeAssistantView):
@@ -1043,9 +1218,29 @@ def _bounded_query_int(value: object, *, default: int, maximum: int) -> int:
     return max(1, min(maximum, parsed))
 
 
+def _query_bool(value: str | None, *, default: bool | None = None) -> bool | None:
+    """Parse an optional boolean query parameter without truthy-string surprises."""
+    if value is None:
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes"}:
+        return True
+    if normalized in {"0", "false", "no"}:
+        return False
+    raise ValueError("boolean query values must be true or false")
+
+
+def _query_datetime(value: str | None) -> datetime | None:
+    """Parse an optional timezone-aware ISO 8601 timestamp."""
+    if not value:
+        return None
+    parsed = dt_util.parse_datetime(value)
+    if parsed is None or parsed.tzinfo is None:
+        raise ValueError("since must be a timezone-aware ISO 8601 timestamp")
+    return parsed
+
+
 def _entry_status(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
-    runtime = getattr(entry, "runtime_data", None)
-    feedback = getattr(runtime, "feedback", None) if runtime else None
     runtime = getattr(entry, "runtime_data", None)
     feedback = getattr(runtime, "feedback", None) if runtime else None
     options = entry.options
@@ -1076,7 +1271,7 @@ def _entry_status(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
         ),
         "trace": _trace_status(options),
         "traces": (
-            runtime.trace_store.snapshot()
+            runtime.trace_store.snapshot(include_raw=False)
             if runtime
             else {"records": [], "storage": {"encoding": "json+zlib+base64"}}
         ),

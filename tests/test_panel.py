@@ -692,7 +692,11 @@ async def test_harness_runs_api_lists_recent_runs(hass, hass_client, mock_config
     mock_config_entry.add_to_hass(hass)
     trace_store = TraceStore(hass, mock_config_entry.entry_id)
     await trace_store.async_load()
-    mock_config_entry.runtime_data = SimpleNamespace(trace_store=trace_store)
+    mock_config_entry.runtime_data = SimpleNamespace(
+        trace_store=trace_store,
+        provider_selector=SimpleNamespace(snapshot=list),
+        turn_controller=SimpleNamespace(current_turn_id=None),
+    )
     await async_setup_panel(hass)
 
     options = {
@@ -736,12 +740,52 @@ async def test_harness_runs_api_lists_recent_runs(hass, hass_client, mock_config
 
     assert response.status == 200
     data = await response.json()
+    assert data["api_version"] == 1
     assert len(data["records"]) == 30
-    assert data["records"][0]["input"]["conversation_id"] == "conv-30"
-    assert data["records"][0]["debug_flags"]["search"] is False
-    assert data["records"][0]["verifier_mode"] == "disabled"
-    assert data["records"][0]["actions"][0]["domain"] == "light"
+    assert data["records"][0]["conversation_id"] == "conv-30"
+    assert data["records"][0]["tools"] == ["HassTurnOn"]
+    assert data["records"][0]["latency_ms"] == 130
     assert "raw_payload" not in data["records"][0]
+
+    filtered = await client.get(
+        "/api/llm_gateway/harness/runs?limit=2&route=fast&contains=30"
+    )
+    filtered_data = await filtered.json()
+    assert filtered_data["records"][0]["conversation_id"] == "conv-30"
+    assert filtered_data["has_more"] is False
+
+    first_page = await client.get("/api/llm_gateway/harness/runs?limit=2")
+    first_page_data = await first_page.json()
+    assert first_page_data["has_more"] is True
+    second_page = await client.get(
+        f"/api/llm_gateway/harness/runs?limit=2&cursor={first_page_data['next_cursor']}"
+    )
+    second_page_data = await second_page.json()
+    assert second_page_data["records"][0]["conversation_id"] == "conv-28"
+
+    invalid_cursor = await client.get("/api/llm_gateway/harness/runs?cursor=not-a-run")
+    assert invalid_cursor.status == 400
+    invalid_since = await client.get(
+        "/api/llm_gateway/harness/runs?since=2026-09-02T10:00:00"
+    )
+    assert invalid_since.status == 400
+    invalid_boolean = await client.get(
+        "/api/llm_gateway/harness/runs?has_error=sometimes"
+    )
+    assert invalid_boolean.status == 400
+
+    comparison = await client.get(
+        "/api/llm_gateway/harness/runs/compare"
+        f"?left_run_id={data['records'][1]['run_id']}"
+        f"&right_run_id={data['records'][0]['run_id']}"
+    )
+    comparison_data = await comparison.json()
+    assert comparison_data["comparison"]["latency_ms"]["delta"] == 1
+
+    health = await client.get("/api/llm_gateway/harness/health")
+    health_data = await health.json()
+    assert health_data["api_version"] == 1
+    assert health_data["entries"][0]["trace_records"] == 31
 
 
 async def test_harness_run_detail_api_returns_debug_record(
@@ -921,7 +965,25 @@ async def test_harness_run_detail_api_returns_debug_record(
         "open_panel",
     ]
     assert record["critical_path"][3]["blocking"] is False
-    assert record["raw_payload"]["speech"]["tts_cleaned"] is True
+    assert "raw_payload" not in record
+
+    raw_response = await client.get(
+        f"/api/llm_gateway/harness/runs/{run_id}?include_raw=true"
+    )
+    raw_record = (await raw_response.json())["record"]
+    assert raw_record["raw_payload"]["speech"]["tts_cleaned"] is True
+
+    invalid_raw = await client.get(
+        f"/api/llm_gateway/harness/runs/{run_id}?include_raw=sometimes"
+    )
+    assert invalid_raw.status == 400
+
+    events_response = await client.get(f"/api/llm_gateway/harness/runs/{run_id}/events")
+    events = await events_response.json()
+    assert events["api_version"] == 1
+    assert events["run_id"] == run_id
+    assert events["count"] == len(events["events"])
+    assert events["events"]
 
     missing = await client.get("/api/llm_gateway/harness/runs/not-found")
     assert missing.status == 404
