@@ -81,10 +81,14 @@ async def test_panel_static_module_is_served(hass, hass_client):
     assert "voice-harness-panel" in body
     assert "Phosh lock screen is running" in body
     assert "Phosh 锁屏运行中" in body
+    for module in ("voice-harness-api.js", "voice-harness-components.js"):
+        dependency = await client.get(f"/llm_gateway/static/{module}")
+        assert dependency.status == 200
+        assert dependency.content_type == "text/javascript"
 
 
-async def test_panel_merges_settings_into_config_tab(hass, hass_client):
-    """The panel serves one merged Configuration tab and no legacy forms."""
+async def test_panel_uses_task_navigation_and_one_config_form(hass, hass_client):
+    """The panel serves four task views and no legacy settings form."""
     assert await async_setup_component(hass, "http", {})
 
     await async_setup_panel(hass)
@@ -93,15 +97,23 @@ async def test_panel_merges_settings_into_config_tab(hass, hass_client):
     response = await client.get(PANEL_MODULE)
     assert response.status == 200
     body = await response.text()
-    # Merged Configuration tab is present with collapsible cards.
+    # The task navigation is small and the settings view keeps one config form.
+    assert 'labelKey: "tab.overview"' in body
+    assert 'labelKey: "tab.runs"' in body
+    assert 'labelKey: "tab.test"' in body
+    assert 'labelKey: "tab.settings"' in body
     assert 'data-form="config"' in body
     assert "configCard" in body
     assert "config.group_core" in body
     assert "config.group_audio_traces" in body
     # Legacy Settings form and its API path are gone from the bundle.
     assert 'data-form="settings"' not in body
-    assert '"tab.settings"' not in body
-    # Earcons moved into the Satellite render instead of a dedicated tab.
+    assert 'labelKey: "tab.config"' not in body
+    assert 'labelKey: "tab.satellite"' not in body
+    assert 'labelKey: "tab.policies"' not in body
+    assert 'labelKey: "tab.scenarios"' not in body
+    assert 'labelKey: "tab.memory"' not in body
+    # Earcons stay inside Settings instead of returning as a dedicated tab.
     assert '"tab.earcons"' not in body
     assert "_renderEarcons()" in body
 

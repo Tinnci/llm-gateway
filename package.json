@@ -2,13 +2,17 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build:frontend-modules": "bun build --target=browser --format=esm custom_components/llm_gateway/frontend/voice-harness-model.ts custom_components/llm_gateway/frontend/voice-harness-scenario.ts custom_components/llm_gateway/frontend/voice-harness-utils.ts custom_components/llm_gateway/frontend/voice-harness-ui.ts custom_components/llm_gateway/frontend/voice-harness-replay-diff.ts custom_components/llm_gateway/frontend/voice-harness-replay-inspector.ts --outdir custom_components/llm_gateway/frontend",
+    "build:frontend-modules": "bun run scripts/build_frontend_modules.ts",
     "build:panel": "bun run build:frontend-modules && bun build --target=browser custom_components/llm_gateway/frontend/voice-harness-panel.js --outfile=/tmp/voice-harness-panel.js",
-    "typecheck": "tsgo --noEmit -p tsconfig.json"
+    "typecheck": "bun run typecheck:all && bun run typecheck:strict",
+    "typecheck:all": "tsgo --noEmit -p tsconfig.json",
+    "typecheck:strict": "tsgo --noEmit -p tsconfig.strict.json"
   },
   "devDependencies": {
     "@typescript/native-preview": "7.0.0-dev.20260618.1",
     "diff": "^9.0.0",
-    "lit": "^3.3.1"
+    "happy-dom": "20.12.2",
+    "lit": "^3.3.1",
+    "valibot": "1.4.2"
   }
 }

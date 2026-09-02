@@ -4,6 +4,7 @@ import {
   asrEndpointFromSources,
   diagnosticCheckDetail,
   diagnosticLayerCounts,
+  harnessOverview,
   runSummary,
   satelliteEntityTone,
   satelliteValue,
@@ -16,9 +17,12 @@ import {
 import {
   chip,
   iconButton,
-  tabButton,
 } from "./voice-harness-ui.js";
-import { resolveReplayPair } from "./voice-harness-replay-diff.js";
+import {
+  parseHarnessStatus,
+  requestHarnessJson,
+} from "./voice-harness-api.js";
+import { resolveReplayPair } from "./voice-harness-components.js";
 import {
   diagnosticTabRenderers,
   registerDiagnosticTab,
@@ -27,7 +31,6 @@ import {
   harnessViews,
   registerHarnessView,
 } from "./voice-harness-view-registry.js";
-import "./voice-harness-replay-inspector.js";
 import {
   escapeHtml,
   firstResponseAdapter,
@@ -75,46 +78,32 @@ import {
 // snapshot; each view owns its metadata and dispatch function.
 [
   {
+    id: "overview",
+    labelKey: "tab.overview",
+    icon: "mdi:view-dashboard-outline",
+    order: 10,
+    render: (panel, entries) => panel._renderOverview(entries),
+  },
+  {
     id: "runs",
     labelKey: "tab.runs",
     icon: "mdi:play-circle-outline",
-    order: 10,
+    order: 20,
     render: (panel, entries) => panel._renderRuns(entries),
   },
   {
-    id: "config",
-    labelKey: "tab.config",
-    icon: "mdi:cog-outline",
-    order: 20,
-    render: (panel, entries) => panel._renderConfig(entries),
-  },
-  {
-    id: "satellite",
-    labelKey: "tab.satellite",
-    icon: "mdi:microphone-settings",
+    id: "test",
+    labelKey: "tab.test",
+    icon: "mdi:flask-outline",
     order: 30,
-    render: (panel) => panel._renderSatellite(),
+    render: (panel, entries) => panel._renderTest(entries),
   },
   {
-    id: "policies",
-    labelKey: "tab.policies",
-    icon: "mdi:shield-check-outline",
+    id: "settings",
+    labelKey: "tab.settings",
+    icon: "mdi:cog-outline",
     order: 40,
-    render: (panel, entries) => panel._renderPolicies(entries),
-  },
-  {
-    id: "scenarios",
-    labelKey: "tab.scenarios",
-    icon: "mdi:clipboard-text-search-outline",
-    order: 50,
-    render: (panel, entries) => panel._renderScenarioLab(entries),
-  },
-  {
-    id: "memory",
-    labelKey: "tab.memory",
-    icon: "mdi:database-eye-outline",
-    order: 60,
-    render: (panel, entries) => panel._renderMemory(entries),
+    render: (panel, entries) => panel._renderSettings(entries),
   },
 ].forEach((view) => registerHarnessView(view));
 
@@ -135,12 +124,26 @@ const I18N = {
     "common.saved": "Saved",
     "common.enabled": "Enabled",
     "common.disabled": "Disabled",
+    "tab.overview": "Overview",
     "tab.runs": "Runs",
-    "tab.config": "Configuration",
-    "tab.satellite": "Satellite",
-    "tab.policies": "Prompt Policies",
-    "tab.scenarios": "Scenarios",
-    "tab.memory": "Memory Lab",
+    "tab.test": "Test",
+    "tab.settings": "Settings",
+    "overview.health": "System health",
+    "overview.gateway_entries": "Gateways",
+    "overview.active_runs": "Active runs",
+    "overview.recent_errors": "Recent errors",
+    "overview.issues": "Open issues",
+    "overview.ready": "No current fault was found",
+    "overview.ready_hint": "Inspect recent runs or evaluate a policy change.",
+    "overview.attention": "Investigation needed",
+    "overview.attention_hint": "Start with the first failing prerequisite, then inspect the affected run.",
+    "overview.open_runs": "Inspect runs",
+    "overview.open_test": "Run a test",
+    "overview.advanced": "Advanced diagnostics",
+    "overview.memory": "Recent conversation memory",
+    "test.policies": "Policy reference",
+    "settings.satellite": "Satellite controls and tuning",
+    "settings.earcons": "Earcon assets",
     "status.loading": "Reading integration status",
     "status.waiting": "Waiting for Home Assistant",
     "status.no_entries": "No LLM Gateway config entries loaded yet",
@@ -579,12 +582,26 @@ const I18N = {
     "common.saved": "已保存",
     "common.enabled": "已启用",
     "common.disabled": "未启用",
+    "tab.overview": "概览",
     "tab.runs": "运行记录",
-    "tab.config": "配置中心",
-    "tab.satellite": "卫星端",
-    "tab.policies": "提示策略",
-    "tab.scenarios": "场景测试",
-    "tab.memory": "记忆实验室",
+    "tab.test": "测试",
+    "tab.settings": "设置",
+    "overview.health": "系统健康",
+    "overview.gateway_entries": "网关",
+    "overview.active_runs": "正在运行",
+    "overview.recent_errors": "最近错误",
+    "overview.issues": "待处理问题",
+    "overview.ready": "未发现当前故障",
+    "overview.ready_hint": "可以检查最近运行，或评估策略改动。",
+    "overview.attention": "需要调查",
+    "overview.attention_hint": "先处理第一个失败的前置条件，再检查受影响的运行。",
+    "overview.open_runs": "检查运行",
+    "overview.open_test": "运行测试",
+    "overview.advanced": "高级诊断",
+    "overview.memory": "最近会话记忆",
+    "test.policies": "策略参考",
+    "settings.satellite": "卫星端控制与调优",
+    "settings.earcons": "提示音资源",
     "status.loading": "正在读取集成状态",
     "status.waiting": "等待 Home Assistant",
     "status.no_entries": "尚未加载 LLM Gateway 配置项",
@@ -1034,7 +1051,7 @@ class VoiceHarnessPanel extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
-    this._activeTab = "runs";
+    this._activeTab = "overview";
     /** @type {HarnessStatus | null} */
     this._data = null;
     this._error = "";
@@ -1066,6 +1083,8 @@ class VoiceHarnessPanel extends HTMLElement {
     this._trajectoryQuery = "";
     this._selectedTrajectory = null;
     this._trajectoryExpandedRunId = "";
+    /** @type {Record<string, string>} */
+    this._selectedRuns = {};
     /** @type {Record<string, string>} */
     this._diagnosticTabs = {};
     this._draftLocale = this._locale();
@@ -1111,7 +1130,9 @@ class VoiceHarnessPanel extends HTMLElement {
     this._error = "";
     this._render();
     try {
-      this._data = await this._api("GET", "llm_gateway/harness/status");
+      this._data = /** @type {HarnessStatus} */ (parseHarnessStatus(
+        await this._api("GET", "llm_gateway/harness/status"),
+      ));
     } catch (err) {
       this._error = err.message || String(err);
     } finally {
@@ -1268,32 +1289,9 @@ class VoiceHarnessPanel extends HTMLElement {
     await Promise.all(calls);
   }
 
+  /** @returns {Promise<any>} */
   async _api(method, path, payload) {
-    if (this.hass?.callApi) {
-      return this.hass.callApi(method, path, payload);
-    }
-    const response = await fetch(`/api/${path}`, {
-      method,
-      credentials: "same-origin",
-      headers: payload ? { "Content-Type": "application/json" } : undefined,
-      body: payload ? JSON.stringify(payload) : undefined,
-    });
-    if (!response.ok) {
-      let message = `${response.status} ${response.statusText}`;
-      let code = "";
-      try {
-        const body = await response.json();
-        if (body && typeof body === "object") {
-          message = String(body.message || message);
-          code = String(body.code || "");
-        }
-      } catch (_err) {
-        // Keep the status-text fallback.
-      }
-      const err = Object.assign(new Error(message), { code });
-      throw err;
-    }
-    return response.json();
+    return requestHarnessJson(this.hass, method, path, payload);
   }
 
   _onClick(event) {
@@ -1311,13 +1309,7 @@ class VoiceHarnessPanel extends HTMLElement {
     }
     const tab = button.dataset.tab;
     if (tab) {
-      if (this._visibleHarnessViews().some((view) => view.id === tab)) {
-        this._activeTab = tab;
-        if (tab === "config" && !this._configData) {
-          this._loadConfig();
-        }
-      }
-      this._render();
+      this._selectTab(tab);
       return;
     }
     if (button.dataset.diagnosticTab && button.dataset.diagnosticKey) {
@@ -1473,7 +1465,7 @@ class VoiceHarnessPanel extends HTMLElement {
           response,
           expected: JSON.stringify(expected, null, 2),
         };
-        this._activeTab = "scenarios";
+        this._activeTab = "test";
         this._evaluate({
           user,
           response,
@@ -1481,6 +1473,17 @@ class VoiceHarnessPanel extends HTMLElement {
         });
       }
     }
+  }
+
+  _selectTab(tab) {
+    if (!this._visibleHarnessViews().some((view) => view.id === tab)) {
+      return;
+    }
+    this._activeTab = tab;
+    if (tab === "settings" && !this._configData) {
+      this._loadConfig();
+    }
+    this._render();
   }
 
   _onInput(event) {
@@ -2190,14 +2193,7 @@ class VoiceHarnessPanel extends HTMLElement {
           })}
         </header>
         ${this._error ? `<div class="banner error">${escapeHtml(this._error)}</div>` : ""}
-        <nav class="tabs" aria-label="${escapeHtml(this._t("aria.views"))}">
-          ${views.map((view) => tabButton({
-            active: this._activeTab === view.id,
-            icon: view.icon,
-            id: view.id,
-            label: this._t(view.labelKey),
-          })).join("")}
-        </nav>
+        <voice-harness-navigation></voice-harness-navigation>
         <section class="content">
           ${this._busy && !this._data ? this._renderLoading() : this._renderActive(entries)}
         </section>
@@ -2209,6 +2205,22 @@ class VoiceHarnessPanel extends HTMLElement {
       inspector.pair = this._renderedReplayPair;
       inspector.labels = this._renderedReplayLabels;
     }
+    /** @type {import("./voice-harness-navigation.js").VoiceHarnessNavigation | null} */
+    const navigation = this.shadowRoot.querySelector("voice-harness-navigation");
+    if (navigation) {
+      navigation.active = this._activeTab;
+      navigation.items = views.map((view) => ({
+        icon: view.icon,
+        id: view.id,
+        label: this._t(view.labelKey),
+      }));
+      navigation.addEventListener("harness-view-select", (event) => {
+        if (event instanceof CustomEvent) {
+          this._selectTab(String(event.detail?.id || ""));
+        }
+      });
+    }
+    this._wireRunLists(entries);
     for (const card of this.shadowRoot.querySelectorAll("details[data-open-key]")) {
       if (card instanceof HTMLDetailsElement && openKeys.has(card.dataset.openKey || "")) {
         card.open = true;
@@ -2239,6 +2251,40 @@ class VoiceHarnessPanel extends HTMLElement {
     return harnessViews().filter((view) => !view.visible || view.visible(this));
   }
 
+  _wireRunLists(entries) {
+    for (const list of this.shadowRoot.querySelectorAll("voice-harness-run-list")) {
+      const entryId = list.dataset.entryId || "";
+      const entry = entries.find((item) => item.entry_id === entryId);
+      const records = entry?.traces?.records || [];
+      const selected = this._selectedRunRecord(entryId, records);
+      list.items = records.map((record) => ({
+        id: this._runId(record),
+        latency: `${Number(record.latency_ms || 0)} ms`,
+        route: this._routeLabel(record.route?.kind || record.route || ""),
+        status: record.status === "error" || (record.errors || []).length
+          ? "bad"
+          : record.completion?.complete === false ? "warning" : "ok",
+        subtitle: String(record.user_text || record.conversation_id || ""),
+        title: this._formatTime(record.created_at),
+      }));
+      list.selected = selected ? this._runId(selected) : "";
+      list.addEventListener("harness-run-select", (event) => {
+        if (!(event instanceof CustomEvent)) return;
+        this._selectedRuns[entryId] = String(event.detail?.id || "");
+        this._render();
+      });
+    }
+  }
+
+  _runId(record) {
+    return String(record?.run_id || record?.id || "");
+  }
+
+  _selectedRunRecord(entryId, records) {
+    const selectedId = this._selectedRuns[entryId] || "";
+    return records.find((record) => this._runId(record) === selectedId) || records[0] || null;
+  }
+
   _renderLoading() {
     return `
       <div class="grid">
@@ -2247,6 +2293,92 @@ class VoiceHarnessPanel extends HTMLElement {
         <div class="surface skeleton wide"></div>
       </div>
     `;
+  }
+
+  _renderOverview(entries) {
+    const satellite = this._data?.satellite || {};
+    const states = satellite.states || {};
+    const services = satellite.services || {};
+    const snapshot = /** @type {Record<string, any>} */ (satellite.diagnostic_snapshot
+      || states.diagnostic_snapshot?.attributes?.snapshot
+      || {});
+    const checks = Array.isArray(snapshot.checks) ? snapshot.checks : [];
+    const summary = harnessOverview(entries, checks);
+    const issueCount = summary.diagnosticIssues + summary.providerIssues + summary.recentErrors;
+    const first = snapshot.first_failing_check
+      || checks.find((check) => check.status === "error" || check.status === "warning")
+      || null;
+    return `
+      <div class="overviewStack">
+        <section class="surface overviewHero" aria-label="${escapeHtml(this._t("overview.health"))}">
+          <div class="sectionHead">
+            <div>
+              <h2>${escapeHtml(this._t("overview.health"))}</h2>
+              <div class="meta">${escapeHtml(this._statusLine(entries))}</div>
+            </div>
+            <span class="chip ${issueCount ? "warning" : "ok"}">${escapeHtml(issueCount ? this._t("overview.attention") : this._t("overview.ready"))}</span>
+          </div>
+          <div class="overviewMetrics">
+            ${this._stat("mdi:lan-connect", this._t("overview.gateway_entries"), summary.entryCount, summary.entryCount ? "ok" : "bad")}
+            ${this._stat("mdi:progress-clock", this._t("overview.active_runs"), summary.running, summary.running ? "warning" : "muted")}
+            ${this._stat("mdi:alert-circle-outline", this._t("overview.recent_errors"), summary.recentErrors, summary.recentErrors ? "bad" : "ok")}
+            ${this._stat("mdi:stethoscope", this._t("overview.issues"), summary.diagnosticIssues + summary.providerIssues, issueCount ? "warning" : "ok")}
+          </div>
+          <div class="overviewFocus ${issueCount ? "warning" : "ok"}">
+            <ha-icon icon="${issueCount ? "mdi:alert-decagram-outline" : "mdi:check-circle-outline"}"></ha-icon>
+            <div>
+              <strong>${escapeHtml(issueCount ? (first?.id || this._t("overview.attention")) : this._t("overview.ready"))}</strong>
+              <span>${escapeHtml(issueCount ? (first?.repair_hint || this._t("overview.attention_hint")) : this._t("overview.ready_hint"))}</span>
+            </div>
+            <div class="overviewActions">
+              <button class="secondary" data-tab="runs"><ha-icon icon="mdi:play-circle-outline"></ha-icon><span>${escapeHtml(this._t("overview.open_runs"))}</span></button>
+              <button class="secondary" data-tab="test"><ha-icon icon="mdi:flask-outline"></ha-icon><span>${escapeHtml(this._t("overview.open_test"))}</span></button>
+            </div>
+          </div>
+        </section>
+        ${this._satelliteOverviewPanel(states, services, snapshot)}
+        <details class="surface overviewDisclosure" data-open-key="overview:diagnostics">
+          <summary>${escapeHtml(this._t("overview.advanced"))}</summary>
+          ${this._satelliteDiagnosticPanel(snapshot)}
+        </details>
+        <details class="surface overviewDisclosure" data-open-key="overview:memory">
+          <summary>${escapeHtml(this._t("overview.memory"))}</summary>
+          ${this._renderMemory(entries)}
+        </details>
+      </div>
+    `;
+  }
+
+  _renderTest(entries) {
+    return `
+      <div class="testStack">
+        ${this._renderScenarioLab(entries)}
+        <details class="surface overviewDisclosure" data-open-key="test:policies">
+          <summary>${escapeHtml(this._t("test.policies"))}</summary>
+          ${this._renderPolicies(entries)}
+        </details>
+      </div>
+    `;
+  }
+
+  _renderSettings(entries) {
+    return `
+      <div class="settingsStack">
+        ${this._renderConfig(entries)}
+        <details class="surface overviewDisclosure" data-open-key="settings:satellite">
+          <summary>${escapeHtml(this._t("settings.satellite"))}</summary>
+          ${this._renderSatellite()}
+        </details>
+        <details class="surface overviewDisclosure" data-open-key="settings:earcons">
+          <summary>${escapeHtml(this._t("settings.earcons"))}</summary>
+          ${this._renderEarcons()}
+        </details>
+      </div>
+    `;
+  }
+
+  _stat(icon, label, value, tone = "muted") {
+    return `<voice-harness-stat icon="${escapeHtml(icon)}" label="${escapeHtml(label)}" value="${escapeHtml(value)}" tone="${escapeHtml(tone)}"></voice-harness-stat>`;
   }
 
   _renderRuns(entries) {
@@ -2778,10 +2910,6 @@ class VoiceHarnessPanel extends HTMLElement {
           ${snapshot.generated_at ? `<span class="chip muted">${escapeHtml(this._t("satellite.generated"))}: ${escapeHtml(this._formatTime(snapshot.generated_at))}</span>` : ""}
         </div>
       </article>
-      <section class="earconSection" aria-label="${escapeHtml(this._t("config.earcons_section"))}">
-        <h2>${escapeHtml(this._t("config.earcons_section"))}</h2>
-        ${this._renderEarcons()}
-      </section>
     `;
   }
 
@@ -3244,6 +3372,7 @@ class VoiceHarnessPanel extends HTMLElement {
     const storage = entry.traces?.storage || {};
     const hasRecords = records.length > 0;
     const hasLiveRuns = liveRuns.length > 0;
+    const selectedRecord = this._selectedRunRecord(entry.entry_id, records);
     return `
       <section class="tracePanel">
         <div class="traceHeader">
@@ -3262,9 +3391,12 @@ class VoiceHarnessPanel extends HTMLElement {
         ${this._runSummaryPanel(records, liveRuns)}
         ${this._replayDiffInspector(records)}
         ${hasRecords ? `
-          <div class="traceList">
-            ${this._replayStatus ? `<div class="banner success">${escapeHtml(this._replayStatus)}</div>` : ""}
-            ${records.map((record) => this._traceCard(record, entry.entry_id)).join("")}
+          <div class="runInvestigator">
+            <voice-harness-run-list data-entry-id="${escapeHtml(entry.entry_id)}"></voice-harness-run-list>
+            <div class="runDetail">
+              ${this._replayStatus ? `<div class="banner success">${escapeHtml(this._replayStatus)}</div>` : ""}
+              ${selectedRecord ? this._traceCard(selectedRecord, entry.entry_id, true) : ""}
+            </div>
           </div>
         ` : this._traceReadinessPanel(trace, storage)}
         ${hasLiveRuns ? `
@@ -3323,23 +3455,11 @@ class VoiceHarnessPanel extends HTMLElement {
     const summary = runSummary(records, liveRuns);
     return `
       <div class="runSummary" aria-label="${escapeHtml(this._t("runs.summary"))}">
-        ${this._summaryMetric("mdi:database-clock-outline", this._t("runs.recorded"), summary.recorded)}
-        ${this._summaryMetric("mdi:progress-clock", this._t("runs.live_running"), summary.running)}
-        ${this._summaryMetric("mdi:alert-circle-outline", this._t("runs.error_count"), summary.errors, summary.errors ? "bad" : "ok")}
-        ${this._summaryMetric("mdi:timer-outline", this._t("runs.avg_latency"), summary.avgLatency ? `${summary.avgLatency} ms` : "-")}
-        ${this._summaryMetric("mdi:routes", this._t("runs.latest_route"), summary.latestRoute ? this._routeLabel(summary.latestRoute) : "-")}
-      </div>
-    `;
-  }
-
-  _summaryMetric(icon, label, value, tone = "muted") {
-    return `
-      <div class="summaryMetric ${escapeHtml(tone)}">
-        <ha-icon icon="${escapeHtml(icon)}"></ha-icon>
-        <div>
-          <span>${escapeHtml(label)}</span>
-          <strong>${escapeHtml(value)}</strong>
-        </div>
+        ${this._stat("mdi:database-clock-outline", this._t("runs.recorded"), summary.recorded)}
+        ${this._stat("mdi:progress-clock", this._t("runs.live_running"), summary.running)}
+        ${this._stat("mdi:alert-circle-outline", this._t("runs.error_count"), summary.errors, summary.errors ? "bad" : "ok")}
+        ${this._stat("mdi:timer-outline", this._t("runs.avg_latency"), summary.avgLatency ? `${summary.avgLatency} ms` : "-")}
+        ${this._stat("mdi:routes", this._t("runs.latest_route"), summary.latestRoute ? this._routeLabel(summary.latestRoute) : "-")}
       </div>
     `;
   }
@@ -3390,7 +3510,7 @@ class VoiceHarnessPanel extends HTMLElement {
     `;
   }
 
-  _traceCard(record, entryId) {
+  _traceCard(record, entryId, open = false) {
     const rawMeta = record.raw_payload_meta || {};
     const route = record.route || {};
     const provider = route.provider || {};
@@ -3414,7 +3534,7 @@ class VoiceHarnessPanel extends HTMLElement {
     const causalChain = record.causal_chain || {};
     const loopName = record.loop?.name || record.loop_name || `${route.kind || "auto"}-turn-loop`;
     return `
-      <details class="traceCard" data-open-key="record:${record.run_id || record.id}">
+      <details class="traceCard" data-open-key="record:${record.run_id || record.id}" ${open ? "open" : ""}>
         <summary>
           <div class="runIdentity">
             <div class="runEyebrow">
@@ -5096,30 +5216,97 @@ const styles = `
     padding: 0 14px;
   }
 
-  .tabs {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
-    gap: 8px;
-    margin: 14px 0 18px;
-  }
-
-  .tab {
-    height: 44px;
-    padding: 0 10px;
-  }
-
-  .tab.active {
-    border-color: var(--primary-color);
-    background: color-mix(in srgb, var(--primary-color) 14%, var(--card-background-color));
-  }
-
-  .tab span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
   .content {
     min-height: 420px;
+  }
+
+  .overviewStack,
+  .testStack,
+  .settingsStack {
+    display: grid;
+    gap: 14px;
+  }
+
+  .overviewMetrics {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .overviewFocus {
+    min-height: 72px;
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: center;
+    margin-top: 12px;
+    padding: 12px;
+    border: 1px solid var(--divider-color);
+    border-radius: 8px;
+    background: var(--primary-background-color);
+  }
+
+  .overviewFocus.ok {
+    border-color: color-mix(in srgb, var(--success-color) 30%, var(--divider-color));
+  }
+
+  .overviewFocus.warning {
+    border-color: color-mix(in srgb, var(--warning-color) 42%, var(--divider-color));
+  }
+
+  .overviewFocus > ha-icon {
+    width: 24px;
+    height: 24px;
+    color: var(--secondary-text-color);
+  }
+
+  .overviewFocus > div:nth-child(2) {
+    min-width: 0;
+    display: grid;
+    gap: 4px;
+  }
+
+  .overviewFocus strong {
+    font-size: 14px;
+  }
+
+  .overviewFocus span {
+    color: var(--secondary-text-color);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .overviewActions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .overviewDisclosure {
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .overviewDisclosure > summary {
+    min-height: 48px;
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 650;
+  }
+
+  .overviewDisclosure[open] > summary {
+    border-bottom: 1px solid var(--divider-color);
+  }
+
+  .overviewDisclosure > .satelliteLayout,
+  .overviewDisclosure > .satelliteDiagnosticPanel,
+  .overviewDisclosure > .memoryGrid,
+  .overviewDisclosure > .policyGrid,
+  .overviewDisclosure > .earconHeader,
+  .overviewDisclosure > .earconGrid {
+    margin: 14px;
   }
 
   .surface,
@@ -5950,6 +6137,34 @@ const styles = `
     gap: 12px;
   }
 
+  .runInvestigator {
+    min-height: 420px;
+    display: grid;
+    grid-template-columns: minmax(220px, 0.34fr) minmax(0, 1fr);
+    overflow: hidden;
+    border: 1px solid var(--divider-color);
+    border-radius: 8px;
+    background: var(--card-background-color);
+  }
+
+  .runInvestigator > voice-harness-run-list {
+    max-height: 720px;
+    overflow: auto;
+    padding: 6px;
+    border-right: 1px solid var(--divider-color);
+  }
+
+  .runDetail {
+    min-width: 0;
+    padding: 10px;
+    background: var(--primary-background-color);
+  }
+
+  .runDetail > .traceCard {
+    margin: 0;
+    background: var(--card-background-color);
+  }
+
   .providerPanel {
     margin-top: 12px;
     border: 1px solid var(--divider-color);
@@ -5998,52 +6213,6 @@ const styles = `
     display: grid;
     grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 8px;
-  }
-
-  .summaryMetric {
-    min-height: 66px;
-    border: 1px solid var(--divider-color);
-    border-radius: 8px;
-    display: grid;
-    grid-template-columns: 26px minmax(0, 1fr);
-    gap: 8px;
-    align-items: center;
-    padding: 10px;
-    background: var(--card-background-color);
-  }
-
-  .summaryMetric ha-icon {
-    width: 22px;
-    height: 22px;
-    color: var(--secondary-text-color);
-  }
-
-  .summaryMetric div {
-    min-width: 0;
-    display: grid;
-    gap: 2px;
-  }
-
-  .summaryMetric span {
-    color: var(--secondary-text-color);
-    font-size: 12px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .summaryMetric strong {
-    min-width: 0;
-    font-size: 14px;
-    line-height: 1.25;
-    overflow-wrap: anywhere;
-  }
-
-  .summaryMetric.ok {
-    border-color: color-mix(in srgb, var(--success-color) 30%, var(--divider-color));
-  }
-
-  .summaryMetric.bad {
-    border-color: color-mix(in srgb, var(--error-color) 38%, var(--divider-color));
   }
 
   .traceReadiness {
@@ -7021,9 +7190,13 @@ const styles = `
   }
 
   @media (max-width: 900px) {
-    .tabs {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-    }
+    .overviewMetrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+    .overviewFocus { grid-template-columns: 28px minmax(0, 1fr); }
+
+    .overviewActions { grid-column: 2; justify-content: flex-start; }
+
+    .runInvestigator { grid-template-columns: minmax(190px, 0.4fr) minmax(0, 1fr); }
 
     .workbench {
       grid-template-columns: 1fr;
@@ -7110,12 +7283,18 @@ const styles = `
       padding: 12px;
     }
 
-    .tabs {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
+    .overviewMetrics { grid-template-columns: 1fr; }
 
-    .tab {
-      justify-content: flex-start;
+    .overviewFocus { grid-template-columns: 1fr; }
+
+    .overviewActions { grid-column: 1; flex-direction: column; }
+
+    .runInvestigator { grid-template-columns: 1fr; }
+
+    .runInvestigator > voice-harness-run-list {
+      max-height: 220px;
+      border-right: 0;
+      border-bottom: 1px solid var(--divider-color);
     }
 
     .grid,

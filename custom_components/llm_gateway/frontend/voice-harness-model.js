@@ -12,6 +12,25 @@ function runSummary(records, liveRuns) {
     running: liveRuns.filter((run) => run.status === "running").length
   };
 }
+function harnessOverview(entries, diagnosticChecks) {
+  const records = entries.flatMap((entry) => entry.traces?.records || []);
+  const liveRuns = entries.flatMap((entry) => entry.voice_runs || []);
+  const summary = runSummary(records, liveRuns);
+  const providerIssues = entries.reduce((count, entry) => {
+    const configIssue = entry.model_providers?.config_error ? 1 : 0;
+    const healthIssues = (entry.provider_health || []).filter((provider) => Number(provider.failures || 0) > 0).length;
+    return count + configIssue + healthIssues;
+  }, 0);
+  const diagnosticIssues = diagnosticChecks.filter((check) => check.status === "error" || check.status === "warning").length;
+  return {
+    averageLatency: summary.avgLatency,
+    diagnosticIssues,
+    entryCount: entries.length,
+    providerIssues,
+    recentErrors: summary.errors,
+    running: summary.running
+  };
+}
 function diagnosticLayerCounts(checks) {
   const layers = new Map;
   for (const check of checks) {
@@ -122,6 +141,7 @@ export {
   satelliteValue,
   satelliteEntityTone,
   runSummary,
+  harnessOverview,
   diagnosticLayerCounts,
   diagnosticCheckDetail,
   asrEndpointFromSources

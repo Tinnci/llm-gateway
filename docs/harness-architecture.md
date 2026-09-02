@@ -71,6 +71,9 @@ is bounded. Full turns remain opt-in private diagnostic data.
 
 ## Frontend extension contract
 
+The page information architecture, component policy, and open-source
+comparison are defined in [Voice Harness frontend design](harness-frontend-design.md).
+
 A top-level view registration contains:
 
 - `id`

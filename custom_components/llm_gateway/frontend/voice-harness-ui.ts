@@ -12,13 +12,6 @@ type ButtonOptions = {
   type?: "button" | "submit";
 };
 
-type TabButtonOptions = {
-  active: boolean;
-  icon: string;
-  id: string;
-  label: string;
-};
-
 export function attrs(values: Record<string, AttrValue> = {}): string {
   const rendered = Object.entries(values)
     .filter(([, value]) => value !== false && value !== null && value !== undefined)
@@ -49,15 +42,6 @@ export function button(options: ButtonOptions): string {
 
 export function iconButton(options: Omit<ButtonOptions, "className" | "label">): string {
   return button({ ...options, className: "iconButton" });
-}
-
-export function tabButton(options: TabButtonOptions): string {
-  return button({
-    className: `tab ${options.active ? "active" : ""}`.trim(),
-    data: { tab: options.id },
-    icon: options.icon,
-    label: options.label,
-  });
 }
 
 export function chip(content: unknown, tone: Tone = "muted", title = ""): string {

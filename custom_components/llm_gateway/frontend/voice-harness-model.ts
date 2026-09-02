@@ -9,6 +9,22 @@ export type RunSummary = {
   running: number;
 };
 
+export type HarnessOverview = {
+  averageLatency: number;
+  diagnosticIssues: number;
+  entryCount: number;
+  providerIssues: number;
+  recentErrors: number;
+  running: number;
+};
+
+type HarnessEntryLike = {
+  model_providers?: { config_error?: unknown };
+  provider_health?: Array<{ failures?: unknown }>;
+  traces?: { records?: RunRecord[] };
+  voice_runs?: LiveRun[];
+};
+
 export type DiagnosticLayerCount = {
   layer: string;
   total: number;
@@ -59,6 +75,33 @@ export function runSummary(records: RunRecord[], liveRuns: LiveRun[]): RunSummar
     latestRoute: latestRouteKind || "",
     recorded: records.length,
     running: liveRuns.filter((run) => run.status === "running").length,
+  };
+}
+
+export function harnessOverview(
+  entries: HarnessEntryLike[],
+  diagnosticChecks: Record<string, unknown>[]
+): HarnessOverview {
+  const records = entries.flatMap((entry) => entry.traces?.records || []);
+  const liveRuns = entries.flatMap((entry) => entry.voice_runs || []);
+  const summary = runSummary(records, liveRuns);
+  const providerIssues = entries.reduce((count, entry) => {
+    const configIssue = entry.model_providers?.config_error ? 1 : 0;
+    const healthIssues = (entry.provider_health || []).filter(
+      (provider) => Number(provider.failures || 0) > 0
+    ).length;
+    return count + configIssue + healthIssues;
+  }, 0);
+  const diagnosticIssues = diagnosticChecks.filter(
+    (check) => check.status === "error" || check.status === "warning"
+  ).length;
+  return {
+    averageLatency: summary.avgLatency,
+    diagnosticIssues,
+    entryCount: entries.length,
+    providerIssues,
+    recentErrors: summary.errors,
+    running: summary.running,
   };
 }
 

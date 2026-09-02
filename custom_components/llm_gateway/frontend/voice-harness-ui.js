@@ -90,19 +90,10 @@ function button(options) {
 function iconButton(options) {
   return button({ ...options, className: "iconButton" });
 }
-function tabButton(options) {
-  return button({
-    className: `tab ${options.active ? "active" : ""}`.trim(),
-    data: { tab: options.id },
-    icon: options.icon,
-    label: options.label
-  });
-}
 function chip(content, tone = "muted", title = "") {
   return `<span class="chip ${escapeHtml(tone)}"${title ? ` title="${escapeHtml(title)}"` : ""}>${escapeHtml(content)}</span>`;
 }
 export {
-  tabButton,
   iconButton,
   icon,
   chip,
