@@ -76,6 +76,7 @@ async def test_panel_static_module_is_served(hass, hass_client):
     response = await client.get(PANEL_MODULE)
     assert response.status == 200
     assert response.content_type == "text/javascript"
+    assert "immutable" not in response.headers.get("Cache-Control", "")
     body = await response.text()
     assert "customElements.define" in body
     assert "voice-harness-panel" in body
@@ -85,6 +86,7 @@ async def test_panel_static_module_is_served(hass, hass_client):
         dependency = await client.get(f"/llm_gateway/static/{module}")
         assert dependency.status == 200
         assert dependency.content_type == "text/javascript"
+        assert "immutable" not in dependency.headers.get("Cache-Control", "")
 
 
 async def test_panel_uses_task_navigation_and_one_config_form(hass, hass_client):

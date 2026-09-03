@@ -167,6 +167,10 @@ A diagnostic drawer registration contains:
 Both registries reject malformed entries and duplicate IDs. Both return a
 disposer.
 
+The panel and its ES module dependencies share one release lifecycle. Home
+Assistant serves this small admin bundle with revalidation so every import is
+resolved from the same deployed component version after restart.
+
 The current composition root registers the built-in views. A later change can
 move one view renderer into its own module without changing navigation code.
 
