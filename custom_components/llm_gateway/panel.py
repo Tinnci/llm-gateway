@@ -21,7 +21,7 @@ PANEL_COMPONENT = "voice-harness-panel"
 PANEL_MODULE_VERSION = json.loads(
     (Path(__file__).parent / "manifest.json").read_text(encoding="utf-8")
 )["version"]
-PANEL_ASSET_BASE = f"{URL_BASE}/{PANEL_MODULE_VERSION}"
+PANEL_ASSET_BASE = f"/{DOMAIN}/assets/{PANEL_MODULE_VERSION}"
 PANEL_MODULE = f"{PANEL_ASSET_BASE}/voice-harness-panel.js"
 PANEL_TITLE = "Voice Harness"
 DATA_PANEL_SETUP = f"{DOMAIN}_voice_harness_panel_setup"

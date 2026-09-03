@@ -168,7 +168,7 @@ Both registries reject malformed entries and duplicate IDs. Both return a
 disposer.
 
 The panel and its ES module dependencies share one versioned asset namespace.
-The entry module loads from `/static/<version>/`, so every relative import
+The entry module loads from `/assets/<version>/`, so every relative import
 resolves inside the same deployed component version. The unversioned path stays
 available with revalidation for health probes and direct diagnostics.
 

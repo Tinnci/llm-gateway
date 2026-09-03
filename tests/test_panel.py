@@ -64,7 +64,7 @@ async def test_panel_registers_sidebar_entry(hass):
     assert panel.config["_panel_custom"]["module_url"] == PANEL_MODULE
     assert panel.config["api_base"] == "/api/llm_gateway"
     module_url = panel.config["_panel_custom"]["module_url"]
-    assert module_url.startswith("/llm_gateway/static/")
+    assert module_url.startswith("/llm_gateway/assets/")
 
 
 async def test_panel_static_module_is_served(hass, hass_client):
