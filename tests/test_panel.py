@@ -39,6 +39,7 @@ from custom_components.llm_gateway.const import (
 )
 from custom_components.llm_gateway.memory import VoiceMemory
 from custom_components.llm_gateway.panel import (
+    PANEL_ASSET_BASE,
     PANEL_MODULE,
     PANEL_TITLE,
     PANEL_URL,
@@ -76,17 +77,19 @@ async def test_panel_static_module_is_served(hass, hass_client):
     response = await client.get(PANEL_MODULE)
     assert response.status == 200
     assert response.content_type == "text/javascript"
-    assert "immutable" not in response.headers.get("Cache-Control", "")
+    assert PANEL_MODULE.startswith(f"{PANEL_ASSET_BASE}/")
     body = await response.text()
     assert "customElements.define" in body
     assert "voice-harness-panel" in body
     assert "Phosh lock screen is running" in body
     assert "Phosh 锁屏运行中" in body
     for module in ("voice-harness-api.js", "voice-harness-components.js"):
-        dependency = await client.get(f"/llm_gateway/static/{module}")
+        dependency = await client.get(f"{PANEL_ASSET_BASE}/{module}")
         assert dependency.status == 200
         assert dependency.content_type == "text/javascript"
-        assert "immutable" not in dependency.headers.get("Cache-Control", "")
+    legacy = await client.get("/llm_gateway/static/voice-harness-panel.js")
+    assert legacy.status == 200
+    assert "immutable" not in legacy.headers.get("Cache-Control", "")
 
 
 async def test_panel_uses_task_navigation_and_one_config_form(hass, hass_client):

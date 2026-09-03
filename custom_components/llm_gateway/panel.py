@@ -21,7 +21,8 @@ PANEL_COMPONENT = "voice-harness-panel"
 PANEL_MODULE_VERSION = json.loads(
     (Path(__file__).parent / "manifest.json").read_text(encoding="utf-8")
 )["version"]
-PANEL_MODULE = f"{URL_BASE}/voice-harness-panel.js?v={PANEL_MODULE_VERSION}"
+PANEL_ASSET_BASE = f"{URL_BASE}/{PANEL_MODULE_VERSION}"
+PANEL_MODULE = f"{PANEL_ASSET_BASE}/voice-harness-panel.js"
 PANEL_TITLE = "Voice Harness"
 DATA_PANEL_SETUP = f"{DOMAIN}_voice_harness_panel_setup"
 
@@ -33,7 +34,14 @@ async def async_setup_panel(hass: HomeAssistant) -> None:
     hass.data[DATA_PANEL_SETUP] = True
     frontend_path = Path(__file__).parent / "frontend"
     await hass.http.async_register_static_paths(
-        [StaticPathConfig(URL_BASE, str(frontend_path), cache_headers=False)]
+        [
+            StaticPathConfig(
+                PANEL_ASSET_BASE,
+                str(frontend_path),
+                cache_headers=True,
+            ),
+            StaticPathConfig(URL_BASE, str(frontend_path), cache_headers=False),
+        ]
     )
     async_register_views(hass)
     frontend.async_register_built_in_panel(
