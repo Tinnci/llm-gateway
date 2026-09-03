@@ -92,6 +92,8 @@ def test_query_runs_exposes_and_filters_harness_outcome() -> None:
     record["route"]["harness_loop"] = {
         "name": "local_live_context",
         "step_count": 1,
+        "total_duration_ms": 18,
+        "final_phase": "broad_live_context",
         "stop_reason": "requested_target_missing",
         "outcome_verdict": {
             "answerable": False,
@@ -112,6 +114,29 @@ def test_query_runs_exposes_and_filters_harness_outcome() -> None:
     assert summary["outcome"] == "not_answered"
     assert summary["failure_stage"] == "requested_target_missing"
     assert summary["harness_loop"]["target_covered"] is False
+    assert summary["harness_loop"]["total_duration_ms"] == 18
+    assert summary["harness_loop"]["final_phase"] == "broad_live_context"
+
+
+def test_run_summary_uses_route_terminal_outcome_for_local_clarification() -> None:
+    summary = run_summary(
+        {
+            "run_id": "clarify-1",
+            "status": "complete",
+            "route": {
+                "kind": "local_multi_intent_clarify",
+                "terminal_outcome": "clarify",
+                "outcome_verdict": {
+                    "answerable": False,
+                    "reason": "requires_separate_turns",
+                },
+            },
+        }
+    )
+
+    assert summary["terminal_outcome"] == "clarify"
+    assert summary["outcome"] == "not_answered"
+    assert summary["failure_stage"] == "requires_separate_turns"
 
 
 def test_event_query_and_run_comparison_are_bounded() -> None:

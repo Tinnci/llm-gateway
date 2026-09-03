@@ -79,3 +79,7 @@ The fork is stored as a normal trace with `lineage.replay_of`, its own
 `lineage.fork_id`, bounded overrides, proposed actions, and replay lifecycle
 events. A dry-run fork does not ingest current satellite evidence because that
 evidence belongs to the live device timeline rather than the historical fork.
+Recorded replay uses the source route decision exactly. `reclassify` evaluates
+the stored input with the current router, while `local_action` is an explicit
+dry-run action proposal. The deterministic replay contract accepts route and
+loop choices; model-prompt comparison belongs to a model-backed replay path.

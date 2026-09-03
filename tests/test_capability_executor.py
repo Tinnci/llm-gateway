@@ -37,6 +37,12 @@ def test_local_action_candidate_rejects_high_risk_control():
     assert local_action_candidate("打开前门门锁") is None
 
 
+def test_local_action_candidate_rejects_negated_and_ambiguous_actions():
+    assert local_action_candidate("不要打开客厅灯") is None
+    assert local_action_candidate("客厅灯不要关") is None
+    assert local_action_candidate("打开灯还是关灯？") is None
+
+
 def test_local_action_candidate_parses_media_volume():
     candidate = local_action_candidate("把客厅音箱音量调到最大")
 

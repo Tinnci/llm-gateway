@@ -65,6 +65,15 @@ _MEDIA_VOLUME_RE = re.compile(r"(音箱|播放器|homepod|喇叭|扬声器|电�
 _HIGH_RISK_RE = re.compile(
     r"(门锁|开门|前门|后门|报警|警报|车库门|卷帘门|门禁|热水器|取暖器|烤箱|炉灶|全屋)"
 )
+_ACTION_VERB_RE = re.compile(r"(打开|开启|关闭|关掉|关上|调亮|调暗|设置|开|关)")
+_NEGATED_ACTION_RE = re.compile(
+    r"(?:(不要|别|不用|无需|禁止).{0,12}"
+    r"(打开|开启|关闭|关掉|关上|调亮|调暗|设置|开|关)|"
+    r"(打开|开启|关闭|关掉|关上|调亮|调暗|设置).{0,8}(不要|别|不用))"
+)
+_AMBIGUOUS_ACTION_RE = re.compile(
+    r"(?=.*(?:打开|开启|开))(?=.*(?:关闭|关掉|关上|关))(?=.*(?:还是|或者|或))"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,11 +142,27 @@ class LocalCapabilityResult:
 def local_action_candidate(text: str) -> LocalActionCandidate | None:
     """Return a local low-risk action candidate, if the text is deterministic."""
     normalized = _normalize(text)
-    if not normalized or _HIGH_RISK_RE.search(normalized):
+    if (
+        not normalized
+        or _HIGH_RISK_RE.search(normalized)
+        or unsafe_action_intent_reason(normalized)
+    ):
         return None
     if "音量" in normalized or "声音" in normalized or "静音" in normalized:
         return _volume_candidate(text, normalized)
     return _home_control_candidate(text, normalized)
+
+
+def unsafe_action_intent_reason(text: str) -> str:
+    """Return why an apparent action must not be committed locally."""
+    normalized = _normalize(text)
+    if not normalized or not _ACTION_VERB_RE.search(normalized):
+        return ""
+    if _NEGATED_ACTION_RE.search(normalized):
+        return "negated_action"
+    if _AMBIGUOUS_ACTION_RE.search(normalized):
+        return "ambiguous_action"
+    return ""
 
 
 async def async_try_execute_local_capability(

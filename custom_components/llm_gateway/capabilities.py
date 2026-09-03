@@ -6,7 +6,11 @@ import re
 from dataclasses import dataclass, field
 from typing import Literal
 
-from .capability_executor import LocalActionCandidate, local_action_candidate
+from .capability_executor import (
+    LocalActionCandidate,
+    local_action_candidate,
+    unsafe_action_intent_reason,
+)
 from .static_context import classify_inventory_query
 
 TaskFamily = Literal[
@@ -28,6 +32,7 @@ TaskFamily = Literal[
 TaskType = Literal[
     "home_control",
     "home_state",
+    "device_state_query",
     "weather_query",
     "indoor_environment_query",
     "outdoor_current_weather_query",
@@ -88,6 +93,7 @@ FrameDomain = Literal[
 DataRequirement = Literal[
     "static_context",
     "live_context",
+    "entity_state",
     "weather_forecast",
     "external_search",
     "stable_knowledge",
@@ -244,6 +250,9 @@ _CONTENT_GENERATION_RE = re.compile(
 )
 _NORMALIZE_RE = re.compile(r"[\s《》「」『』“”\"'`·.。,:：，、_\-—!?！？]+")
 _SENTENCE_SPLIT_RE = re.compile(r"[？?。!！；;]+")
+_INTENT_CONNECTOR_RE = re.compile(
+    r"\s*(?:然后再?(?:告诉我)?|再告诉我|(?<=语音)并(?=(?:打开|关闭|开启|关掉)))\s*"
+)
 _FORECAST_TOMORROW_RE = re.compile(r"(明天|明日)")
 _FORECAST_FUTURE_RE = re.compile(r"(后天|大后天|周末|下周|未来|下午|晚上|今晚)")
 _LOCATION_HINT_RE = re.compile(
@@ -754,7 +763,7 @@ def _device_state_target(text: str) -> tuple[str, str] | None:
     return None
 
 
-def decide_route(text: str) -> RouteDecision:  # noqa: PLR0911, PLR0912
+def decide_route(text: str) -> RouteDecision:  # noqa: C901, PLR0911, PLR0912
     """Return a structured capability route decision for one utterance."""
     value = str(text or "").strip()
     normalized = _normalize(value)
@@ -801,6 +810,25 @@ def decide_route(text: str) -> RouteDecision:  # noqa: PLR0911, PLR0912
                 "data_requirement": "entity_state",
                 "capability_contract": _contract_metadata("device_state_query"),
             },
+        )
+
+    if unsafe_reason := unsafe_action_intent_reason(value):
+        return RouteDecision(
+            task_family="unknown_or_ambiguous",
+            task_type="ambiguous_entity_query",
+            confidence=0.98,
+            requires_llm=False,
+            allowed_tools=(),
+            forbidden_tools=("HassTurnOn", "HassTurnOff", "HassCallService"),
+            next_action="clarify",
+            user_visible_prompt=(
+                "好的，保持当前状态。"
+                if unsafe_reason == "negated_action"
+                else "你想打开还是关闭？请明确一个操作。"
+            ),
+            route="local_clarify",
+            matched_capability="home_control_guard",
+            metadata={"reason": unsafe_reason},
         )
 
     if _HIGH_RISK_RE.search(value):
@@ -1118,15 +1146,7 @@ def plan_multi_intent(text: str) -> MultiIntentPlan:
         for index, part in enumerate(normalized_parts)
         if part.strip()
     )
-    if len(subtasks) <= 1:
-        return MultiIntentPlan(original, subtasks)
-    supported = tuple(
-        subtask
-        for subtask in subtasks
-        if subtask.route_decision.task_family
-        in {"home_inventory", "home_capability", "home_state"}
-    )
-    return MultiIntentPlan(original, supported if len(supported) > 1 else subtasks)
+    return MultiIntentPlan(original, subtasks)
 
 
 def plan_typed_semantic(text: str) -> TypedSemanticPlan:
@@ -1442,6 +1462,7 @@ def _english_stable_knowledge_route(text: str) -> RouteDecision | None:
 
 
 def _split_sentence_subtasks(text: str) -> list[str]:
+    text = _INTENT_CONNECTOR_RE.sub("。", text)
     parts = [
         part.strip(" ，,")
         for part in _SENTENCE_SPLIT_RE.split(text)

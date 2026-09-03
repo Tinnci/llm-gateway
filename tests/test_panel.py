@@ -1022,14 +1022,15 @@ async def test_harness_replay_api_creates_side_effect_free_fork(
     client = await hass_client()
     response = await client.post(
         "/api/llm_gateway/harness/runs/source-replay/replay",
-        json={"overrides": {"prompt": "candidate-b"}},
+        json={"overrides": {"route": "local_action"}},
     )
 
     assert response.status == 201
     record = (await response.json())["record"]
     assert calls == []
     assert record["lineage"]["replay_of"] == "source-replay"
-    assert record["lineage"]["overrides"]["prompt"] == "candidate-b"
+    assert record["lineage"]["overrides"]["route"] == "local_action"
+    assert record["lineage"]["overrides"]["prompt"] == ""
     assert record["proposed_actions"][0]["target_scope"] == "all"
 
 

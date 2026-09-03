@@ -686,8 +686,7 @@ def _render_device_state_query(
             for entity in candidates
             if target_hint in _normalize_query_text(entity.name)
         )
-        if named:
-            candidates = named
+        candidates = named
 
     label = DOMAIN_LABELS.get(domain, target_hint or "设备")
     if not candidates:

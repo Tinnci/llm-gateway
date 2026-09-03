@@ -839,8 +839,28 @@ class LLMGatewayConversationEntity(
             else:
                 self._dialogue_frames.pop(pending_key, None)
 
+        first_response = decide_first_response(effective_text)
+        self._mark_run(
+            runtime,
+            run_id,
+            "first_response",
+            attrs=first_response.as_dict(),
+        )
+        multi_intent_plan = plan_multi_intent(effective_text)
+        if multi_intent_plan.is_multi_intent:
+            return await self._async_handle_multi_intent(
+                user_input,
+                chat_log,
+                started,
+                first_response,
+                route_decision,
+                multi_intent_plan,
+                run_id,
+                turn_token,
+            )
+
         local_control_speech = await async_handle_voice_runtime_command(
-            self.hass, user_input.text
+            self.hass, effective_text
         )
         if local_control_speech is not None:
             self._mark_run(runtime, run_id, "local_control")
@@ -861,28 +881,6 @@ class LLMGatewayConversationEntity(
                 run_id,
                 turn_token,
             )
-
-        first_response = decide_first_response(effective_text)
-        self._mark_run(
-            runtime,
-            run_id,
-            "first_response",
-            attrs=first_response.as_dict(),
-        )
-        multi_intent_plan = plan_multi_intent(effective_text)
-        if multi_intent_plan.is_multi_intent:
-            multi_intent_result = await self._async_try_multi_intent(
-                user_input,
-                chat_log,
-                started,
-                first_response,
-                route_decision,
-                multi_intent_plan,
-                run_id,
-                turn_token,
-            )
-            if multi_intent_result is not None:
-                return multi_intent_result
         loop_context = TurnLoopContext(
             text=effective_text,
             route_decision=route_decision,
@@ -965,6 +963,9 @@ class LLMGatewayConversationEntity(
                         "stop_reason": loop_result.stop_reason,
                         "continuation_reasons": list(loop_result.continuation_reasons),
                         "outcome_verdict": dict(loop_result.outcome_verdict),
+                        "terminal_outcome": loop_result.status,
+                        "total_duration_ms": loop_result.total_duration_ms,
+                        "final_phase": loop_result.final_phase,
                     },
                 )
                 await self._speak(chat_log, loop_result.speech)
@@ -981,7 +982,12 @@ class LLMGatewayConversationEntity(
                     "stop_reason": loop_result.stop_reason,
                     "continuation_reasons": list(loop_result.continuation_reasons),
                     "outcome_verdict": dict(loop_result.outcome_verdict),
+                    "terminal_outcome": loop_result.status,
+                    "total_duration_ms": loop_result.total_duration_ms,
+                    "final_phase": loop_result.final_phase,
                 }
+                route_trace["terminal_outcome"] = loop_result.status
+                route_trace["outcome_verdict"] = dict(loop_result.outcome_verdict)
 
                 return await self._async_finalize_turn(
                     user_input,
@@ -1192,7 +1198,11 @@ class LLMGatewayConversationEntity(
     ) -> dict[str, Any]:
         """Execute one Harness-owned live-context step through the HA tool seam."""
         if not _chat_log_has_tool(chat_log, LIVE_CONTEXT_TOOL_NAME):
-            return {"error": "missing_GetLiveContext_tool"}
+            return {
+                "error": "missing_GetLiveContext_tool",
+                "code": "tool_unavailable",
+                "retryable": False,
+            }
         tool_call = llm.ToolInput(
             id=ulid.ulid_now(),
             tool_name=LIVE_CONTEXT_TOOL_NAME,
@@ -1210,11 +1220,29 @@ class LLMGatewayConversationEntity(
                 return (
                     dict(result)
                     if isinstance(result, dict)
-                    else {"error": "invalid_GetLiveContext_result"}
+                    else {
+                        "error": "invalid_GetLiveContext_result",
+                        "code": "invalid_tool_result",
+                        "retryable": False,
+                    }
                 )
+        except TimeoutError:
+            return {
+                "error": "GetLiveContext_timeout",
+                "code": "timeout",
+                "retryable": True,
+            }
         except (HomeAssistantError, ValueError) as err:
-            return {"error": type(err).__name__}
-        return {"error": "missing_GetLiveContext_result"}
+            return {
+                "error": type(err).__name__,
+                "code": "tool_execution_error",
+                "retryable": False,
+            }
+        return {
+            "error": "missing_GetLiveContext_result",
+            "code": "missing_tool_result",
+            "retryable": False,
+        }
 
     async def _async_try_local_live_context(  # noqa: PLR0913, PLR0917
         self,
@@ -1443,7 +1471,7 @@ class LLMGatewayConversationEntity(
             turn_token,
         )
 
-    async def _async_try_multi_intent(  # noqa: PLR0911, PLR0913, PLR0917
+    async def _async_handle_multi_intent(  # noqa: PLR0911, PLR0913, PLR0917
         self,
         user_input: conversation.ConversationInput,
         chat_log: conversation.ChatLog,
@@ -1453,23 +1481,44 @@ class LLMGatewayConversationEntity(
         multi_intent_plan: MultiIntentPlan,
         run_id: str,
         turn_token: TurnToken,
-    ) -> conversation.ConversationResult | None:
-        """Execute supported local subtasks and compose one short spoken answer."""
+    ) -> conversation.ConversationResult:
+        """Complete every supported local subtask or request separate turns."""
         runtime = self.entry.runtime_data
-        if not _multi_intent_is_local(multi_intent_plan):
-            return None
-        if any(
-            subtask.route_decision.next_action == "call_tool_then_local_render"
-            for subtask in multi_intent_plan.subtasks
-        ) and not _chat_log_has_tool(chat_log, LIVE_CONTEXT_TOOL_NAME):
-            return None
-
         self._mark_run(
             runtime,
             run_id,
             "multi_intent_plan",
             attrs=multi_intent_plan.as_dict(),
         )
+        if not _multi_intent_is_local(multi_intent_plan):
+            return await self._async_clarify_multi_intent(
+                user_input,
+                chat_log,
+                started,
+                first_response,
+                route_decision,
+                multi_intent_plan,
+                run_id,
+                turn_token,
+                reason="requires_separate_turns",
+                completed_subtasks=0,
+            )
+        if any(
+            subtask.route_decision.next_action == "call_tool_then_local_render"
+            for subtask in multi_intent_plan.subtasks
+        ) and not _chat_log_has_tool(chat_log, LIVE_CONTEXT_TOOL_NAME):
+            return await self._async_clarify_multi_intent(
+                user_input,
+                chat_log,
+                started,
+                first_response,
+                route_decision,
+                multi_intent_plan,
+                run_id,
+                turn_token,
+                reason="live_context_required",
+                completed_subtasks=0,
+            )
         final_must_cover = _final_must_cover(multi_intent_plan)
         subanswers: list[str] = []
         subtask_traces: list[dict[str, Any]] = []
@@ -1478,7 +1527,18 @@ class LLMGatewayConversationEntity(
             if decision.task_type in INVENTORY_TASK_TYPES:
                 inventory = render_device_inventory(subtask.text, chat_log.content)
                 if inventory is None:
-                    return None
+                    return await self._async_clarify_multi_intent(
+                        user_input,
+                        chat_log,
+                        started,
+                        first_response,
+                        route_decision,
+                        multi_intent_plan,
+                        run_id,
+                        turn_token,
+                        reason="inventory_context_required",
+                        completed_subtasks=len(subtask_traces),
+                    )
                 self._mark_run(
                     runtime,
                     run_id,
@@ -1494,8 +1554,20 @@ class LLMGatewayConversationEntity(
                 continue
 
             if decision.next_action != "call_tool_then_local_render":
-                return None
+                return await self._async_clarify_multi_intent(
+                    user_input,
+                    chat_log,
+                    started,
+                    first_response,
+                    route_decision,
+                    multi_intent_plan,
+                    run_id,
+                    turn_token,
+                    reason="requires_separate_turns",
+                    completed_subtasks=len(subtask_traces),
+                )
             tool_args = _local_live_context_tool_args(subtask.text, decision)
+            operation_id = f"{run_id}:GetLiveContext:{subtask.index}"
             tool_call = llm.ToolInput(
                 id=ulid.ulid_now(),
                 tool_name=LIVE_CONTEXT_TOOL_NAME,
@@ -1508,6 +1580,8 @@ class LLMGatewayConversationEntity(
                 attrs={
                     "name": LIVE_CONTEXT_TOOL_NAME,
                     "args": tool_args,
+                    "iteration": 0,
+                    "operation_id": operation_id,
                     "subtask_index": subtask.index,
                     "subtask_text": subtask.text,
                     "llm_used": False,
@@ -1516,7 +1590,18 @@ class LLMGatewayConversationEntity(
             )
             llm_api = chat_log.llm_api
             if llm_api is None:
-                return None
+                return await self._async_clarify_multi_intent(
+                    user_input,
+                    chat_log,
+                    started,
+                    first_response,
+                    route_decision,
+                    multi_intent_plan,
+                    run_id,
+                    turn_token,
+                    reason="live_context_required",
+                    completed_subtasks=len(subtask_traces),
+                )
             try:
                 result = await llm_api.async_call_tool(tool_call)
             except (HomeAssistantError, ValueError) as err:
@@ -1528,12 +1613,24 @@ class LLMGatewayConversationEntity(
                     attrs={
                         "name": LIVE_CONTEXT_TOOL_NAME,
                         "iteration": 0,
+                        "operation_id": operation_id,
                         "local_live_context": True,
                         "subtask_index": subtask.index,
                         "error": type(err).__name__,
                     },
                 )
-                return None
+                return await self._async_clarify_multi_intent(
+                    user_input,
+                    chat_log,
+                    started,
+                    first_response,
+                    route_decision,
+                    multi_intent_plan,
+                    run_id,
+                    turn_token,
+                    reason="live_context_error",
+                    completed_subtasks=len(subtask_traces),
+                )
             self._mark_run(
                 runtime,
                 run_id,
@@ -1542,6 +1639,7 @@ class LLMGatewayConversationEntity(
                 attrs={
                     "name": LIVE_CONTEXT_TOOL_NAME,
                     "iteration": 0,
+                    "operation_id": operation_id,
                     "local_live_context": True,
                     "subtask_index": subtask.index,
                 },
@@ -1555,7 +1653,18 @@ class LLMGatewayConversationEntity(
                     route_decision=decision,
                 )
             if rendered is None:
-                return None
+                return await self._async_clarify_multi_intent(
+                    user_input,
+                    chat_log,
+                    started,
+                    first_response,
+                    route_decision,
+                    multi_intent_plan,
+                    run_id,
+                    turn_token,
+                    reason="state_evidence_required",
+                    completed_subtasks=len(subtask_traces),
+                )
             self._mark_run(
                 runtime,
                 run_id,
@@ -1567,12 +1676,36 @@ class LLMGatewayConversationEntity(
                     "subtask_text": subtask.text,
                 },
             )
+            if not rendered.answerable:
+                return await self._async_clarify_multi_intent(
+                    user_input,
+                    chat_log,
+                    started,
+                    first_response,
+                    route_decision,
+                    multi_intent_plan,
+                    run_id,
+                    turn_token,
+                    reason="target_evidence_required",
+                    completed_subtasks=len(subtask_traces),
+                )
             subanswers.append(rendered.speech)
             subtask_traces.append(subtask.as_dict())
 
         speech = _compose_spoken_subanswers(subanswers)
         if not speech:
-            return None
+            return await self._async_clarify_multi_intent(
+                user_input,
+                chat_log,
+                started,
+                first_response,
+                route_decision,
+                multi_intent_plan,
+                run_id,
+                turn_token,
+                reason="spoken_answer_required",
+                completed_subtasks=len(subtask_traces),
+            )
         self._mark_run(
             runtime,
             run_id,
@@ -1604,6 +1737,70 @@ class LLMGatewayConversationEntity(
                         "multi_intent": True,
                         "subtasks": subtask_traces,
                         "final_must_cover": final_must_cover,
+                    },
+                },
+            },
+            run_id,
+            turn_token,
+        )
+
+    async def _async_clarify_multi_intent(  # noqa: PLR0913, PLR0917
+        self,
+        user_input: conversation.ConversationInput,
+        chat_log: conversation.ChatLog,
+        started: float,
+        first_response: FirstResponseDecision,
+        route_decision: RouteDecision,
+        multi_intent_plan: MultiIntentPlan,
+        run_id: str,
+        turn_token: TurnToken,
+        *,
+        reason: str,
+        completed_subtasks: int,
+    ) -> conversation.ConversationResult:
+        """Request separate turns with exact completion evidence."""
+        self._mark_run(
+            self.entry.runtime_data,
+            run_id,
+            "multi_intent_split_required",
+            status="warning",
+            attrs={
+                **multi_intent_plan.as_dict(),
+                "reason": reason,
+                "completed_subtasks": completed_subtasks,
+            },
+        )
+        await self._speak(
+            chat_log,
+            "这个请求包含多个任务，请分开说，我会逐项准确处理。",
+        )
+        return await self._async_finalize_turn(
+            user_input,
+            chat_log,
+            started,
+            {
+                **_local_route_trace(
+                    "local_multi_intent_clarify",
+                    "multi_intent_planner",
+                    first_response,
+                    route_decision,
+                ),
+                "terminal_outcome": "clarify",
+                "outcome_verdict": {
+                    "answerable": False,
+                    "reason": reason,
+                    "completed_subtasks": completed_subtasks,
+                },
+                "route_decision": {
+                    **route_decision.as_dict(),
+                    "metadata": {
+                        **dict(route_decision.metadata),
+                        "multi_intent": True,
+                        "subtasks": [
+                            subtask.as_dict() for subtask in multi_intent_plan.subtasks
+                        ],
+                        "completed_subtasks": completed_subtasks,
+                        "clarification_reason": reason,
                     },
                 },
             },
@@ -2606,6 +2803,11 @@ def _local_route_trace(
     route_decision: RouteDecision,
 ) -> dict[str, Any]:
     """Return trace metadata for local capability routes."""
+    clarification = route_decision.next_action in {
+        "ask_confirmation",
+        "ask_location_permission",
+        "clarify",
+    }
     return {
         "kind": kind,
         "model": model,
@@ -2614,6 +2816,11 @@ def _local_route_trace(
         "async_deep_task": False,
         "first_response": first_response.as_dict(),
         "route_decision": route_decision.as_dict(),
+        "terminal_outcome": "clarify" if clarification else "complete",
+        "outcome_verdict": {
+            "answerable": not clarification,
+            "reason": "clarification_required" if clarification else "completed",
+        },
     }
 
 

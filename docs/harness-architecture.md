@@ -47,7 +47,9 @@ A loop returns either `TurnLoopContinuation`, `TurnLoopResult`, or `None` when
 it cannot own the turn. The driver records `harness_step_start` and
 `harness_step_end`, carries continuation reasons, and enforces a two-step voice
 budget. A terminal result includes `stop_reason`, `step_count`, and an
-`outcome_verdict`.
+`outcome_verdict`. Continuations carry an immutable `TurnLoopState`; the driver
+assigns the step number, records phase transitions and durations, and rejects a
+continuation that changes the route decision selected at the safety boundary.
 
 Device-state reads are the first fully migrated query loop. The capability
 router resolves a target domain and hint, `GetLiveContext` receives that domain,
@@ -56,9 +58,41 @@ target before it may answer. A successful HTTP/tool call is therefore not
 treated as a successful turn when, for example, a fan question returns only
 temperature sensors.
 
+The device-state recovery policy is deliberately bounded:
+
+1. query the target domain;
+2. retry the same read once after a structured transient tool error, or remove
+   only the area filter once when the requested target is absent while keeping
+   the capability domain fixed;
+3. stop with an answer, an actionable clarification, or a failure verdict.
+
+Every continuation remains a read and retains the original route and risk
+decision.
+
+Retries keep one `operation_id` and increment `iteration`, so the inspection
+API presents them as attempts of one logical read. Mixed multi-intent turns
+use an atomic capability preflight. Fully supported local children compose one
+answer; other combinations request separate turns before action dispatch.
+
 Weather and generic environmental summaries keep their established providers
-and renderers. They will migrate one route family at a time so the loop boundary
-does not silently change their fallback semantics.
+and renderers. Migrating one route family at a time preserves their fallback
+semantics.
+
+## Path ownership roadmap
+
+Paths migrate by capability family, not by utterance. The intended ownership
+order is:
+
+1. device state and its bounded read recovery;
+2. weather provider → live-context fallback;
+3. indoor environment metric coverage;
+4. device actions plus post-action state verification;
+5. multi-intent composition over child loop results;
+6. model/tool iteration, without forcing durable deep tasks into the voice-step
+   budget.
+
+Inventory and stable local answers can use single-step adapters later. Deep
+tasks remain a separate durable lifecycle because they outlive the voice turn.
 
 ## DSH patterns that fit this project
 

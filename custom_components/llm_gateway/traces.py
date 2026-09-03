@@ -160,6 +160,10 @@ class TraceStore:
                 "timeout_s": turn.route.get("timeout_s"),
                 "provider": turn.route.get("provider"),
                 "provider_attempts": turn.route.get("provider_attempts") or [],
+                "terminal_outcome": str(turn.route.get("terminal_outcome") or ""),
+                "outcome_verdict": _bound_value(
+                    turn.route.get("outcome_verdict") or {}, limit=800, depth=2
+                ),
                 "harness_loop": _bound_value(
                     turn.route.get("harness_loop") or {}, limit=1200, depth=3
                 ),
@@ -890,6 +894,7 @@ def _tool_calls_by_iteration(
             "tool_call_suppressed",
             "tool_policy_block",
             "forced_final",
+            "local_live_context_call",
         }:
             continue
         attrs = _mapping_value(span.get("attrs"))
@@ -914,8 +919,8 @@ def _tool_calls_by_iteration(
             "attrs": attrs,
         }
         group["events"].append(compact_event)
-        if stage == "tool_call":
-            names = _list_value(attrs.get("names"))
+        if stage in {"tool_call", "local_live_context_call"}:
+            names = _list_value(attrs.get("names")) or [attrs.get("name")]
             group["calls"].extend(str(name) for name in names if name)
         elif stage in {"tool_result", "search_result"}:
             group["results"].append(

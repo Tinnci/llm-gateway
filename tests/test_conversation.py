@@ -1326,6 +1326,80 @@ async def test_device_state_uses_targeted_harness_loop_without_model(
     assert trace["route"]["harness_loop"]["stop_reason"] == "answered"
 
 
+async def test_device_state_loop_expands_scope_after_unrelated_observation(
+    hass, aioclient_mock, mock_config_entry
+):
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {
+            CONF_LLM_HASS_API: "assist",
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
+        },
+    )
+    tool_args: list[dict[str, str]] = []
+
+    class FakeLiveContextApi:
+        custom_serializer = None
+        tools: ClassVar = [SimpleNamespace(name=LIVE_CONTEXT_TOOL_NAME)]
+
+        async def async_call_tool(self, tool_input: llm.ToolInput):
+            tool_args.append(tool_input.tool_args)
+            if len(tool_args) == 1:
+                return {
+                    "success": True,
+                    "result": (
+                        "Live Context:\n- names: 温度\n  domain: sensor\n  state: 26\n"
+                    ),
+                }
+            return {
+                "success": True,
+                "result": (
+                    "Live Context:\n- names: 米家循环扇 风扇\n"
+                    "  domain: fan\n  state: off\n  areas: 卧室\n"
+                ),
+            }
+
+    async def provide_live_context_api(self, *_args: object, **_kwargs: object) -> None:
+        self.llm_api = FakeLiveContextApi()
+        self.content.append(conversation.SystemContent(content=STATIC_CONTEXT))
+
+    with (
+        patch(
+            "homeassistant.components.conversation.ChatLog.async_provide_llm_data",
+            provide_live_context_api,
+        ),
+        patch(
+            "custom_components.llm_gateway.conversation."
+            "async_chat_completion_with_fallback",
+        ) as completion,
+    ):
+        result = await conversation.async_converse(
+            hass,
+            "卧室风扇现在是开着的还是关着的？",
+            None,
+            Context(),
+            agent_id=agent_id,
+        )
+
+    completion.assert_not_called()
+    assert result.response.speech["plain"]["speech"] == "米家循环扇 风扇现在关着。"
+    assert tool_args == [
+        {"domain": "fan", "area": "卧室"},
+        {"domain": "fan"},
+    ]
+    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+    loop = trace["route"]["harness_loop"]
+    assert loop["step_count"] == 2
+    assert loop["final_phase"] == "relax_area"
+    assert loop["continuation_reasons"] == ["relax_area_filter"]
+    assert loop["outcome_verdict"]["target_covered"] is True
+
+
 async def test_climate_temperature_read_uses_local_live_context_without_model(
     hass, aioclient_mock, mock_config_entry
 ):
@@ -1546,6 +1620,88 @@ async def test_multi_intent_temperature_and_humidity_answers_both_metrics(
         "indoor_environment_query:0",
         "indoor_environment_query:1",
     ]
+
+
+async def test_mixed_multi_intent_keeps_device_state_unchanged(
+    hass, aioclient_mock, mock_config_entry
+):
+    calls: list[dict] = []
+
+    async def turn_off(call):
+        calls.append(dict(call.data))
+
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    hass.states.async_set("light.living_room", "on", {"friendly_name": "客厅灯"})
+    hass.services.async_register("light", "turn_off", turn_off)
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {
+            CONF_DIAGNOSTIC_TRACES: True,
+            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
+        },
+    )
+
+    with patch(
+        "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
+    ) as completion:
+        result = await conversation.async_converse(
+            hass,
+            "关闭客厅灯，然后告诉我卧室温度。",
+            None,
+            Context(),
+            agent_id=agent_id,
+        )
+
+    completion.assert_not_called()
+    assert calls == []
+    assert "逐项准确处理" in result.response.speech["plain"]["speech"]
+    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+    assert trace["route"]["kind"] == "local_multi_intent_clarify"
+    assert trace["route"]["terminal_outcome"] == "clarify"
+    assert trace["route"]["outcome_verdict"]["answerable"] is False
+    assert trace["route_decision"]["metadata"]["completed_subtasks"] == 0
+    clarification = next(
+        span
+        for span in trace["timeline_spans"]
+        if span["stage"] == "multi_intent_split_required"
+    )
+    assert clarification["attrs"]["reason"] == "requires_separate_turns"
+
+
+async def test_compound_runtime_control_requests_separate_turns_before_dispatch(
+    hass, aioclient_mock, mock_config_entry
+):
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {CONF_DIAGNOSTIC_TRACES: True},
+    )
+
+    with (
+        patch(
+            "custom_components.llm_gateway.conversation.async_handle_voice_runtime_command",
+        ) as runtime_control,
+        patch(
+            "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
+        ) as completion,
+    ):
+        result = await conversation.async_converse(
+            hass,
+            "暂停语音并打开客厅灯。",
+            None,
+            Context(),
+            agent_id=agent_id,
+        )
+
+    runtime_control.assert_not_called()
+    completion.assert_not_called()
+    assert "逐项准确处理" in result.response.speech["plain"]["speech"]
 
 
 async def test_weather_query_uses_local_context_path_without_forced_search(

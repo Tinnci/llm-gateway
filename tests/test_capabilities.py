@@ -66,6 +66,22 @@ def test_multi_intent_planner_splits_temperature_and_humidity_with_area():
     )
 
 
+def test_multi_intent_planner_keeps_unsupported_subtasks_and_connectors():
+    plan = plan_multi_intent("关闭客厅灯，然后告诉我卧室温度。讲个笑话")
+
+    assert plan.is_multi_intent
+    assert [subtask.text for subtask in plan.subtasks] == [
+        "关闭客厅灯",
+        "卧室温度",
+        "讲个笑话",
+    ]
+    assert [subtask.route_decision.task_family for subtask in plan.subtasks] == [
+        "home_control",
+        "home_state",
+        "content_generation",
+    ]
+
+
 def test_typed_semantic_plan_exposes_required_frame_fields():
     plan = plan_typed_semantic("你现在我们家里有哪些设备？家里的温度是什么样的？")
 
@@ -373,6 +389,19 @@ def test_device_state_query_has_a_targeted_read_contract() -> None:
 
     assert decide_route("打开风扇").task_family == "home_control"
     assert decide_route("门锁锁着吗？").task_type == "device_state_query"
+
+
+def test_negated_and_ambiguous_actions_are_stopped_before_execution() -> None:
+    negated = decide_route("不要打开客厅灯")
+    ambiguous = decide_route("打开灯还是关灯？")
+
+    assert negated.route == "local_clarify"
+    assert negated.next_action == "clarify"
+    assert negated.metadata["reason"] == "negated_action"
+    assert negated.user_visible_prompt == "好的，保持当前状态。"
+    assert ambiguous.route == "local_clarify"
+    assert ambiguous.metadata["reason"] == "ambiguous_action"
+    assert "HassTurnOn" in ambiguous.forbidden_tools
 
 
 def test_colloquial_home_control_routes_to_control_capability():

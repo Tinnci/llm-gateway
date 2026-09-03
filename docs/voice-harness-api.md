@@ -67,7 +67,9 @@ The detail response includes the stored trace, timeline, route evidence,
 diagnostics, and bounded tool metadata. Raw messages are omitted by default.
 For migrated loops, `route.harness_loop` shows the selected loop, step count,
 continuation reasons, stop reason, answerability, and target coverage. The event
-stream exposes the complete ordered step chain.
+stream exposes the complete ordered step chain. `final_phase` distinguishes a
+targeted result from `retry_targeted`, `relax_area`, and invariant
+failure outcomes; `total_duration_ms` measures the complete local loop.
 Pass `include_raw=true` only during an active investigation and only when the
 raw-message trace option was enabled at capture time:
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from homeassistant.components import conversation
 
 from custom_components.llm_gateway.capabilities import decide_route
@@ -329,3 +331,27 @@ def test_home_temperature_summary_lists_areas_and_skips_unavailable() -> None:
     trace = result.trace_attrs()
     assert trace["metrics"] == ["temperature"]
     assert trace["skipped_entities"] == ["厨房温度"]
+
+
+def test_device_state_renderer_rejects_a_different_named_target() -> None:
+    route = replace(
+        decide_route("风扇开着吗？"),
+        metadata={"domain": "fan", "device_hint": "吊扇", "area": ""},
+    )
+    result = render_scalar_state_answer(
+        "吊扇开着吗？",
+        {
+            "success": True,
+            "result": (
+                "Live Context:\n- names: 客厅循环扇\n"
+                "  domain: fan\n  state: on\n  areas: 客厅\n"
+            ),
+        },
+        task_type="device_state_query",
+        route_decision=route,
+    )
+
+    assert result is not None
+    assert result.answerable is False
+    assert result.target_covered is False
+    assert result.outcome_reason == "requested_target_missing"

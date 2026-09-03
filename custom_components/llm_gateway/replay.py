@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
-from .capabilities import decide_route
+from .capabilities import RouteDecision, decide_route
 from .capability_executor import LocalCapabilityResult, local_action_candidate
 from .traces import TraceTurn
 from .turn_loops import (
@@ -20,12 +20,11 @@ from .voice_runs import VoiceRunRecorder
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
-    from .capabilities import RouteDecision
     from .traces import TraceStore
 
 MAX_PROMPT_OVERRIDE_CHARS = 1200
 SUPPORTED_LOOPS = {"deterministic_capability"}
-SUPPORTED_ROUTES = {"recorded", "local_action"}
+SUPPORTED_ROUTES = {"recorded", "reclassify", "local_action"}
 
 
 class ReplayError(ValueError):
@@ -65,6 +64,11 @@ class ReplayOverrides:
             raise ReplayError("unsupported_route", f"unsupported route: {route}")
         if len(prompt) > MAX_PROMPT_OVERRIDE_CHARS:
             raise ReplayError("prompt_too_long", "prompt override is too long")
+        if prompt:
+            raise ReplayError(
+                "unsupported_prompt",
+                "prompt overrides are not supported by deterministic replay",
+            )
         return cls(loop=loop, route=route, prompt=prompt)
 
     def as_dict(self) -> dict[str, str]:
@@ -88,7 +92,7 @@ async def async_replay_turn(
     if not user_text:
         raise ReplayError("missing_input", "source run has no replayable input")
 
-    decision = _replay_route(user_text, overrides)
+    decision = _replay_route(user_text, source, overrides)
     context = TurnLoopContext(text=user_text, route_decision=decision)
     loop = select_turn_loop((DeterministicCapabilityLoop(),), context)
     if loop is None or loop.name != overrides.loop:
@@ -133,6 +137,9 @@ async def async_replay_turn(
             "stop_reason": result.stop_reason,
             "continuation_reasons": list(result.continuation_reasons),
             "outcome_verdict": dict(result.outcome_verdict),
+            "terminal_outcome": result.status,
+            "total_duration_ms": result.total_duration_ms,
+            "final_phase": result.final_phase,
         },
     )
     timeline = recorder.finish(fork_id, status="complete", route="replay")
@@ -160,9 +167,12 @@ async def async_replay_turn(
                     "stop_reason": result.stop_reason,
                     "continuation_reasons": list(result.continuation_reasons),
                     "outcome_verdict": dict(result.outcome_verdict),
+                    "terminal_outcome": result.status,
+                    "total_duration_ms": result.total_duration_ms,
+                    "final_phase": result.final_phase,
                 },
             },
-            latency_ms=int(timeline[-1].get("t_ms") or 0),
+            latency_ms=int(timeline[-1].get("monotonic_ms") or 0),
             status="complete",
             raw_payload={
                 "input": {"text": user_text},
@@ -181,8 +191,15 @@ async def async_replay_turn(
     return record
 
 
-def _replay_route(text: str, overrides: ReplayOverrides) -> RouteDecision:
-    decision = decide_route(text)
+def _replay_route(
+    text: str,
+    source: dict[str, Any],
+    overrides: ReplayOverrides,
+) -> RouteDecision:
+    if overrides.route == "recorded":
+        decision = _recorded_route_decision(source)
+    else:
+        decision = decide_route(text)
     if overrides.route == "local_action":
         return replace(
             decision,
@@ -191,6 +208,40 @@ def _replay_route(text: str, overrides: ReplayOverrides) -> RouteDecision:
             requires_llm=False,
         )
     return decision
+
+
+def _recorded_route_decision(source: dict[str, Any]) -> RouteDecision:
+    value = source.get("route_decision")
+    if not isinstance(value, dict) or not value.get("task_family"):
+        raise ReplayError(
+            "missing_route_decision",
+            "source run has no recorded route decision; use reclassify instead",
+        )
+    return RouteDecision(
+        task_family=value["task_family"],
+        task_type=value.get("task_type") or "unknown",
+        confidence=float(value.get("confidence") or 0),
+        requires_location=bool(value.get("requires_location")),
+        requires_live_home_context=bool(value.get("requires_live_home_context")),
+        requires_external_info=bool(value.get("requires_external_info")),
+        requires_user_confirmation=bool(value.get("requires_user_confirmation")),
+        requires_llm=bool(value.get("requires_llm")),
+        allowed_tools=tuple(str(item) for item in value.get("allowed_tools") or ()),
+        forbidden_tools=tuple(str(item) for item in value.get("forbidden_tools") or ()),
+        next_action=value.get("next_action") or "answer_with_llm",
+        user_visible_prompt=str(value.get("user_visible_prompt") or ""),
+        route=str(value.get("route") or "fast"),
+        risk=value.get("risk") or "low",
+        missing_requirements=tuple(
+            str(item) for item in value.get("missing_requirements") or ()
+        ),
+        matched_capability=str(value.get("matched_capability") or ""),
+        scope=value.get("scope") or "",
+        time_horizon=value.get("time_horizon") or "",
+        forecast_required=bool(value.get("forecast_required")),
+        location_hint=str(value.get("location_hint") or ""),
+        metadata=dict(value.get("metadata") or {}),
+    )
 
 
 async def _async_dry_run_capability(

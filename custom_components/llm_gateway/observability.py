@@ -37,42 +37,59 @@ def run_summary(record: dict[str, Any]) -> dict[str, Any]:
     harness_loop = (
         route.get("harness_loop") if isinstance(route.get("harness_loop"), dict) else {}
     )
-    verdict = (
-        harness_loop.get("outcome_verdict")
-        if isinstance(harness_loop.get("outcome_verdict"), dict)
-        else {}
-    )
+    verdict_value = harness_loop.get("outcome_verdict") or route.get("outcome_verdict")
+    verdict = verdict_value if isinstance(verdict_value, dict) else {}
     answerable = verdict.get("answerable")
+    terminal_outcome = str(
+        harness_loop.get("terminal_outcome") or route.get("terminal_outcome") or ""
+    )
+    record_status = str(record.get("status") or "")
+    terminal_failure = terminal_outcome in {"blocked", "error", "failed"} or (
+        not terminal_outcome
+        and record_status in {"blocked", "error", "failed", "stale"}
+    )
     outcome = (
         "answered"
         if answerable is True
         else "not_answered"
         if answerable is False
-        else str(record.get("status") or "")
+        else terminal_outcome or str(record.get("status") or "")
     )
     failure_stage = (
-        str(harness_loop.get("stop_reason") or verdict.get("reason") or "")
+        str(
+            harness_loop.get("stop_reason")
+            or verdict.get("reason")
+            or route.get("failure_stage")
+            or ""
+        )
         if answerable is False
         else ""
+    )
+    provider = route.get("provider")
+    provider_name = (
+        str(provider.get("name") or "")
+        if isinstance(provider, dict)
+        else str(provider or "")
     )
     return {
         "schema_version": int(record.get("schema_version") or 0),
         "run_id": str(record.get("run_id") or record.get("id") or ""),
         "created_at": str(record.get("created_at") or ""),
         "conversation_id": str(record.get("conversation_id") or ""),
-        "status": str(record.get("status") or ""),
+        "status": record_status,
         "user_text": str(record.get("user_text") or ""),
         "assistant_text": str(record.get("assistant_text") or ""),
         "final_speech_text": str(record.get("final_speech_text") or ""),
         "route": {
             "kind": str(route.get("kind") or turn.get("route") or ""),
             "model": str(route.get("model") or ""),
-            "provider": str(route.get("provider") or ""),
+            "provider": provider_name,
         },
         "task_family": str(turn.get("task_family") or ""),
         "task_type": str(turn.get("task_type") or ""),
         "capability": str(turn.get("matched_capability") or ""),
         "outcome": outcome,
+        "terminal_outcome": terminal_outcome,
         "failure_stage": failure_stage,
         "harness_loop": {
             "name": str(harness_loop.get("name") or ""),
@@ -80,10 +97,14 @@ def run_summary(record: dict[str, Any]) -> dict[str, Any]:
             "stop_reason": str(harness_loop.get("stop_reason") or ""),
             "answerable": answerable,
             "target_covered": verdict.get("target_covered"),
+            "total_duration_ms": int(harness_loop.get("total_duration_ms") or 0),
+            "final_phase": str(harness_loop.get("final_phase") or ""),
         },
         "latency_ms": int(record.get("latency_ms") or 0),
         "tools": [str(tool) for tool in tools[:20]],
         "error_count": len(errors),
+        "terminal_error_count": len(errors) if terminal_failure else 0,
+        "recovered_error_count": 0 if terminal_failure else len(errors),
         "error_types": sorted(
             {
                 str(error.get("type") or "unknown")
@@ -121,7 +142,7 @@ def query_runs(  # noqa: PLR0912 - each field is an independent API filter.
             continue
         if (
             query.has_error is not None
-            and (summary["error_count"] > 0) != query.has_error
+            and (summary["terminal_error_count"] > 0) != query.has_error
         ):
             continue
         if (
@@ -205,6 +226,22 @@ def compare_runs(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
         "reply_changed": (
             left_summary["assistant_text"] != right_summary["assistant_text"]
         ),
+        "outcome": {
+            "left": left_summary["outcome"],
+            "right": right_summary["outcome"],
+            "changed": left_summary["outcome"] != right_summary["outcome"],
+        },
+        "terminal_outcome": {
+            "left": left_summary["terminal_outcome"],
+            "right": right_summary["terminal_outcome"],
+            "changed": left_summary["terminal_outcome"]
+            != right_summary["terminal_outcome"],
+        },
+        "harness_loop": {
+            "left": left_summary["harness_loop"],
+            "right": right_summary["harness_loop"],
+            "changed": left_summary["harness_loop"] != right_summary["harness_loop"],
+        },
         "tools": {
             "added": sorted(right_tools - left_tools),
             "removed": sorted(left_tools - right_tools),

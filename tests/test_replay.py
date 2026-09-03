@@ -2,6 +2,7 @@
 
 import pytest
 
+from custom_components.llm_gateway.capabilities import decide_route
 from custom_components.llm_gateway.const import CONF_DIAGNOSTIC_TRACES
 from custom_components.llm_gateway.replay import (
     ReplayError,
@@ -20,7 +21,11 @@ async def _source_turn(hass) -> tuple[TraceStore, str]:
             conversation_id="conv-replay",
             user_text="打开所有灯。",
             assistant_text="已打开所有灯。",
-            route={"kind": "local_action", "model": "capability_executor"},
+            route={
+                "kind": "local_action",
+                "model": "capability_executor",
+                "route_decision": decide_route("打开所有灯。").as_dict(),
+            },
             latency_ms=30,
             status="complete",
             raw_payload={"input": {"text": "打开所有灯。"}},
@@ -44,7 +49,7 @@ async def test_replay_records_fork_without_calling_live_service(hass) -> None:
         store,
         {CONF_DIAGNOSTIC_TRACES: True},
         source_run_id,
-        ReplayOverrides(prompt="candidate-b"),
+        ReplayOverrides(),
     )
 
     assert calls == []
@@ -55,7 +60,7 @@ async def test_replay_records_fork_without_calling_live_service(hass) -> None:
         "overrides": {
             "loop": "deterministic_capability",
             "route": "recorded",
-            "prompt": "candidate-b",
+            "prompt": "",
         },
     }
     assert record["proposed_actions"] == [
@@ -77,6 +82,7 @@ async def test_replay_records_fork_without_calling_live_service(hass) -> None:
     )
     assert record["causal_chain"]["complete"] is False
     assert record["causal_chain"]["evidence_mode"] == "none"
+    assert record["latency_ms"] == record["event_stream"][-1]["monotonic_ms"]
 
 
 async def test_replay_rejects_missing_source(hass) -> None:
@@ -100,3 +106,10 @@ def test_replay_rejects_unsupported_override() -> None:
         ReplayOverrides.from_payload({"temperature": 1})
 
     assert error.value.code == "unsupported_override"
+
+
+def test_replay_rejects_unused_prompt_override() -> None:
+    with pytest.raises(ReplayError, match="prompt overrides") as error:
+        ReplayOverrides.from_payload({"prompt": "candidate-b"})
+
+    assert error.value.code == "unsupported_prompt"
