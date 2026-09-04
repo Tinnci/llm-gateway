@@ -17,8 +17,8 @@ Home Assistant conversation request
     -> bounded Trace Store
     -> Harness API projections
     -> Voice Harness panel
-        -> registered top-level view
-        -> registered diagnostic drawer tab
+        -> statically composed top-level views
+        -> statically composed diagnostic drawer tabs
         -> Replay Inspector
 ```
 
@@ -104,16 +104,15 @@ trajectories, and replay comparisons from those facts.
 The provider receives a bounded history projection. The Home Assistant chat log
 remains complete for its own retention policy.
 
-### Register capabilities at a composition root
+### Compose capabilities at a composition root
 
-Turn Loop adapters use a backend registry. Top-level Harness views and
-diagnostic drawer tabs use frontend registries.
+The conversation kernel selects Turn Loop adapters from its explicit built-in
+set. Top-level Harness views and diagnostic drawer tabs use validated static
+definitions at the frontend composition root.
 
-Each registration has a stable key. Duplicate keys fail immediately. A
-registration returns a disposer for tests and future lifecycle management.
-
-The consumer reads a detached registry snapshot. It does not contain a switch
-statement for each capability.
+Each definition has a stable key. Duplicate keys fail immediately and the
+result is immutable. Consumers iterate the composed definition instead of
+containing a switch statement for each capability.
 
 ### Keep channels separate
 
@@ -164,8 +163,8 @@ A diagnostic drawer registration contains:
 - `order`
 - `render(panel, record, context)`
 
-Both registries reject malformed entries and duplicate IDs. Both return a
-disposer.
+Both definition helpers reject malformed entries and duplicate IDs, preserve
+stable ordering, and return immutable collections.
 
 The panel and its ES module dependencies share one versioned asset namespace.
 The entry module loads from `/assets/<version>/`, so every relative import

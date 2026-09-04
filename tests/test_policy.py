@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from homeassistant.helpers import llm
 
+from custom_components.llm_gateway.capabilities import decide_route
 from custom_components.llm_gateway.policy import (
     should_allow_search,
     should_force_search_in_voice_path,
@@ -127,3 +130,24 @@ def test_explicit_location_search_is_allowed():
     )
 
     assert validate_tool_call(call, "上海静安附近最近的麦当劳在哪里？").allowed
+
+
+def test_tool_policy_uses_committed_route_decision() -> None:
+    call = llm.ToolInput(
+        id="search-committed",
+        tool_name="search_web",
+        tool_args={"query": "附近 麦当劳"},
+        external=True,
+    )
+    committed = replace(
+        decide_route("上海静安附近最近的麦当劳在哪里？"),
+        missing_requirements=("location",),
+    )
+
+    decision = validate_tool_call(
+        call,
+        "上海静安附近最近的麦当劳在哪里？",
+        committed,
+    )
+
+    assert decision.reason == "missing_user_slot"

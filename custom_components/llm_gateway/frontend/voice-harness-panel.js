@@ -24,12 +24,10 @@ import {
 } from "./voice-harness-api.js";
 import { resolveReplayPair } from "./voice-harness-components.js";
 import {
-  diagnosticTabRenderers,
-  registerDiagnosticTab,
+  defineDiagnosticTabs,
 } from "./voice-harness-diagnostic-tabs.js";
 import {
-  harnessViews,
-  registerHarnessView,
+  defineHarnessViews,
 } from "./voice-harness-view-registry.js";
 import {
   escapeHtml,
@@ -60,7 +58,7 @@ import {
  * @typedef {{ primary?: ProviderProfile, fallbacks?: ProviderProfile[], fallback_enabled?: boolean, config_error?: string }} ProviderStatus
  * @typedef {{ provider?: string, route?: string, failures?: number, cooldown_remaining_s?: number, last_error?: string }} ProviderHealth
  * @typedef {{ latest_display?: Record<string, any> | null, display_events?: Array<Record<string, any>>, earcon_events?: Array<Record<string, any>> }} FeedbackStatus
- * @typedef {{ entry_id: string, title: string, state: string, base_url?: string, options: HarnessOptions, routes: RouteStatus[], trace: TraceOptions, traces?: { records?: Array<Record<string, any>>, storage?: Record<string, any> }, voice_runs?: Array<Record<string, any>>, feedback?: FeedbackStatus, feedback_policy?: FeedbackPolicyStatus, first_response_audio?: FirstResponseAudioStatus, memory?: any, search?: { providers?: string[] }, model_providers?: ProviderStatus, provider_health?: ProviderHealth[], model_candidates?: string[] }} HarnessEntry
+ * @typedef {{ entry_id: string, title: string, state: string, base_url?: string, options: HarnessOptions, routes: RouteStatus[], trace: TraceOptions, traces?: { records?: Array<Record<string, any>>, storage?: Record<string, any> }, voice_runs?: Array<Record<string, any>>, deep_tasks?: Array<Record<string, any>>, feedback?: FeedbackStatus, feedback_policy?: FeedbackPolicyStatus, first_response_audio?: FirstResponseAudioStatus, memory?: any, search?: { providers?: string[] }, model_providers?: ProviderStatus, provider_health?: ProviderHealth[], model_candidates?: string[] }} HarnessEntry
  * @typedef {{ model: string, ok: boolean, ttft_ms?: number | null, tokens?: number, tps?: number | null, total_ms?: number | null, error?: string | null }} LatencySample
  * @typedef {{ routing_modes: RouteKind[], models?: string[], max_tokens: { min: number, max: number }, timeouts: { min: number, max: number }, trace_max_runs: { min: number, max: number }, trace_retention_hours: { min: number, max: number }, first_response_playback_adapters?: FirstResponsePlaybackAdapter[] }} EditableSchema
  * @typedef {{ id: string, risk?: string, title?: string, title_i18n?: Record<string, string>, spoken?: string, spoken_i18n?: Record<string, string>, rules?: string[] }} PromptPolicy
@@ -74,9 +72,9 @@ import {
  * @typedef {{ user: string, response: string, expected: string }} ScenarioDraft
  */
 
-// This is the UI composition root. The panel consumer reads a registry
-// snapshot; each view owns its metadata and dispatch function.
-[
+// This is the UI composition root. Each view owns its metadata and dispatch
+// function; navigation consumes the validated static definition.
+const HARNESS_VIEWS = defineHarnessViews([
   {
     id: "overview",
     labelKey: "tab.overview",
@@ -105,7 +103,7 @@ import {
     order: 40,
     render: (panel, entries) => panel._renderSettings(entries),
   },
-].forEach((view) => registerHarnessView(view));
+]);
 
 const DEFAULT_EXPECTED = {
   must_search: false,
@@ -1134,9 +1132,28 @@ class VoiceHarnessPanel extends HTMLElement {
     this._error = "";
     this._render();
     try {
-      this._data = /** @type {HarnessStatus} */ (parseHarnessStatus(
+      const status = /** @type {HarnessStatus} */ (parseHarnessStatus(
         await this._api("GET", "llm_gateway/harness/status"),
       ));
+      await Promise.all(status.entries.map(async (entry) => {
+        const entryId = encodeURIComponent(entry.entry_id);
+        const [runtime, runs] = await Promise.all([
+          this._api("GET", `llm_gateway/harness/runtime?entry_id=${entryId}`),
+          this._api("GET", `llm_gateway/harness/runs?entry_id=${entryId}&limit=30`),
+        ]);
+        entry.memory = runtime.memory;
+        entry.feedback = runtime.feedback;
+        entry.deep_tasks = runtime.deep_tasks;
+        entry.voice_runs = runtime.voice_runs;
+        entry.provider_health = runtime.provider_health;
+        entry.traces = {
+          records: Array.isArray(runs.records) ? runs.records : [],
+          storage: runtime.trace_storage || {},
+        };
+        const firstRunId = this._runId(entry.traces.records[0]);
+        if (firstRunId) await this._loadRunDetail(entry, firstRunId);
+      }));
+      this._data = status;
     } catch (err) {
       this._error = err.message || String(err);
     } finally {
@@ -2271,7 +2288,7 @@ class VoiceHarnessPanel extends HTMLElement {
   }
 
   _visibleHarnessViews() {
-    return harnessViews().filter((view) => !view.visible || view.visible(this));
+    return HARNESS_VIEWS.filter((view) => !view.visible || view.visible(this));
   }
 
   _wireRunLists(entries) {
@@ -2291,9 +2308,11 @@ class VoiceHarnessPanel extends HTMLElement {
         title: this._formatTime(record.created_at),
       }));
       list.selected = selected ? this._runId(selected) : "";
-      list.addEventListener("harness-run-select", (event) => {
+      list.addEventListener("harness-run-select", async (event) => {
         if (!(event instanceof CustomEvent)) return;
-        this._selectedRuns[entryId] = String(event.detail?.id || "");
+        const runId = String(event.detail?.id || "");
+        this._selectedRuns[entryId] = runId;
+        await this._loadRunDetail(entry, runId);
         this._render();
       });
     }
@@ -2306,6 +2325,22 @@ class VoiceHarnessPanel extends HTMLElement {
   _selectedRunRecord(entryId, records) {
     const selectedId = this._selectedRuns[entryId] || "";
     return records.find((record) => this._runId(record) === selectedId) || records[0] || null;
+  }
+
+  async _loadRunDetail(entry, runId) {
+    if (!entry || !runId) return;
+    const records = entry.traces?.records || [];
+    const index = records.findIndex((record) => this._runId(record) === runId);
+    if (index < 0 || records[index]?._detail_loaded) return;
+    try {
+      const detail = await this._api(
+        "GET",
+        `llm_gateway/harness/runs/${encodeURIComponent(runId)}?entry_id=${encodeURIComponent(entry.entry_id)}`,
+      );
+      if (detail.record) records[index] = { ...detail.record, _detail_loaded: true };
+    } catch (err) {
+      this._error = err.message || String(err);
+    }
   }
 
   _renderLoading() {
@@ -3708,9 +3743,7 @@ class VoiceHarnessPanel extends HTMLElement {
       rawMeta,
       causalChain,
     };
-    // Tabs come from the keyed renderer registry: a new diagnostic section is
-    // one registerDiagnosticTab() call at mount time, not a drawer edit.
-    const tabs = diagnosticTabRenderers()
+    const tabs = DIAGNOSTIC_TABS
       .map((entry) => ({
         id: entry.id,
         label: this._t(entry.labelKey),
@@ -7324,10 +7357,9 @@ const styles = `
   }
 `;
 
-// Diagnostic drawer tabs are a keyed renderer registry: each entry below is
-// the whole mount-time story for one section. Adding a section means adding
-// an entry here (plus its renderer method) — the drawer itself never changes.
-const DIAGNOSTIC_TAB_ENTRIES = /** @type {const} */ ([
+// Diagnostic drawer tabs remain a keyed module boundary. The composition root
+// defines the complete static set while the drawer only consumes renderers.
+const DIAGNOSTIC_TABS = defineDiagnosticTabs([
   {
     id: "overview",
     labelKey: "runs.diag_overview",
@@ -7366,9 +7398,6 @@ const DIAGNOSTIC_TAB_ENTRIES = /** @type {const} */ ([
     render: (panel, record) => panel._diagnosticRawTab(record),
   },
 ]);
-for (const entry of DIAGNOSTIC_TAB_ENTRIES) {
-  registerDiagnosticTab(entry);
-}
 
 try {
   if (!customElements.get("voice-harness-panel")) {

@@ -55,13 +55,12 @@ records whether the requested target was actually covered.
 
 ## Diagnostic drawer rendering
 
-The Voice Harness panel renders trace diagnostics through a keyed renderer
-registry (`voice-harness-diagnostic-tabs.js`). Tabs are registered once at
-module mount with `{ id, labelKey, order, render }`; the drawer iterates the
-registry, renders only sections whose body is non-empty, and remembers the
-selected tab per record by tab id. Adding a diagnostic section is one
-`registerDiagnosticTab()` call plus its render function — the drawer itself
-never changes, mirroring the kernel's capability-registry direction.
+The Voice Harness panel renders trace diagnostics through a validated static
+definition (`voice-harness-diagnostic-tabs.js`). The composition root defines
+each tab once with `{ id, labelKey, order, render }`; the drawer iterates the
+immutable collection, renders sections whose body is non-empty, and remembers
+the selected tab per record by tab id. Adding a diagnostic section requires one
+tab definition plus its render function while the drawer remains unchanged.
 Record fields no panel consumes fall through a generic raw-tab fallback, so a
 new backend diagnostic field is visible without any frontend change. Records
 persisted before `schema_version` existed are versioned as `0` on read and get

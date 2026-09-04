@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
+from custom_components.llm_gateway.capabilities import decide_route
 from custom_components.llm_gateway.first_response import (
     FAST_PROCESSING_CUE_DELAY_S,
     decide_first_response,
@@ -33,6 +36,19 @@ def test_first_response_keeps_stable_fact_off_search_path():
 
     assert decision.task_type == "stable_fact"
     assert decision.cue == "none"
+
+
+def test_first_response_uses_committed_route_decision() -> None:
+    committed = replace(
+        decide_route("打开灯"),
+        task_family="external_current_info",
+        task_type="search_needed",
+        next_action="search",
+    )
+
+    decision = decide_first_response("打开灯", committed)
+
+    assert decision.task_type == "search_needed"
 
 
 def test_first_response_simple_stable_fact_does_not_say_look_it_up():

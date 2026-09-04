@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from .capabilities import decide_route
+from .capabilities import RouteDecision, decide_route
 from .const import (
     CONF_CHAT_MODEL,
     CONF_CHAT_TIMEOUT,
@@ -94,7 +94,11 @@ class ModelRoute:
     async_deep_task: bool = False
 
 
-def select_model_route(text: str, options: dict[str, Any]) -> ModelRoute:
+def select_model_route(
+    text: str,
+    options: dict[str, Any],
+    route_decision: RouteDecision | None = None,
+) -> ModelRoute:
     """Choose the route and settings for one user turn."""
     mode = options.get(CONF_ROUTING_MODE, ROUTING_MODE_AUTO)
     if mode == ROUTING_MODE_FAST:
@@ -104,7 +108,7 @@ def select_model_route(text: str, options: dict[str, Any]) -> ModelRoute:
     elif mode == ROUTING_MODE_DEEP:
         kind = "deep"
     else:
-        kind = classify_route(text)
+        kind = classify_route(text, route_decision)
 
     return _route_from_options(kind, options)
 
@@ -124,13 +128,16 @@ def select_verifier_route(options: dict[str, Any]) -> ModelRoute:
     )
 
 
-def classify_route(text: str) -> RouteKind:  # noqa: PLR0911
+def classify_route(  # noqa: PLR0911
+    text: str,
+    route_decision: RouteDecision | None = None,
+) -> RouteKind:
     """Classify a user turn into fast/mid/deep."""
     normalized = text.strip().lower()
     if not normalized:
         return "fast"
 
-    decision = decide_route(text)
+    decision = route_decision or decide_route(text)
     if decision.route == "deep" or decision.next_action == "plan_async":
         return "deep"
     if decision.requires_external_info and decision.next_action == "search":

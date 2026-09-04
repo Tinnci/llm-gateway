@@ -57,11 +57,7 @@ async def test_replay_records_fork_without_calling_live_service(hass) -> None:
         "replay_of": source_run_id,
         "fork_id": record["run_id"],
         "mode": "dry_run",
-        "overrides": {
-            "loop": "deterministic_capability",
-            "route": "recorded",
-            "prompt": "",
-        },
+        "overrides": {"route": "recorded"},
     }
     assert record["proposed_actions"] == [
         {
@@ -108,8 +104,8 @@ def test_replay_rejects_unsupported_override() -> None:
     assert error.value.code == "unsupported_override"
 
 
-def test_replay_rejects_unused_prompt_override() -> None:
-    with pytest.raises(ReplayError, match="prompt overrides") as error:
+def test_replay_rejects_removed_prompt_override() -> None:
+    with pytest.raises(ReplayError, match="unsupported overrides") as error:
         ReplayOverrides.from_payload({"prompt": "candidate-b"})
 
-    assert error.value.code == "unsupported_prompt"
+    assert error.value.code == "unsupported_override"

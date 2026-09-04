@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from http import HTTPStatus
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
@@ -84,6 +82,7 @@ from .const import (
     ROUTING_MODE_AUTO,
     ROUTING_MODES,
 )
+from .earcons import EARCON_PACK, earcon_manifest
 from .feedback import QUIET_HOURS_END, QUIET_HOURS_START
 from .first_response_audio import first_response_audio_status
 from .harness import evaluate_scenario
@@ -105,14 +104,11 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
     from .router import ModelRoute
+    from .runtime import LLMGatewayRuntimeData
 
 API_BASE = f"/api/{DOMAIN}"
 STATIC_BASE = f"/{DOMAIN}/static"
-EARCON_PACK = "ha_voice_minimal_v0"
 MAX_MODEL_ID_LENGTH = 256
-EARCON_MANIFEST = (
-    Path(__file__).parent / "frontend" / "earcons" / EARCON_PACK / "manifest.json"
-)
 
 PROMPT_POLICIES: list[dict[str, Any]] = [
     {
@@ -449,6 +445,7 @@ SAMPLE_SCENARIOS: list[dict[str, Any]] = [
 def async_register_views(hass: HomeAssistant) -> None:
     """Register Voice Harness API views."""
     hass.http.register_view(HarnessStatusView)
+    hass.http.register_view(HarnessRuntimeView)
     hass.http.register_view(HarnessRunsView)
     hass.http.register_view(HarnessRunsCompareView)
     hass.http.register_view(HarnessRunDetailView)
@@ -494,6 +491,26 @@ class HarnessStatusView(HomeAssistantView):
                 "sample_scenarios": SAMPLE_SCENARIOS,
             }
         )
+
+
+class HarnessRuntimeView(HomeAssistantView):
+    """Return mutable runtime collections for one config entry."""
+
+    name = f"api:{DOMAIN}:harness:runtime"
+    url = f"{API_BASE}/harness/runtime"
+
+    @require_admin
+    async def get(self, request: web.Request) -> web.Response:
+        """Handle entry runtime detail requests."""
+        hass: HomeAssistant = request.app["hass"]
+        entry = _select_entry(hass, request.query.get("entry_id"))
+        if entry is None:
+            return self.json_message(
+                "No LLM Gateway config entry found",
+                HTTPStatus.NOT_FOUND,
+                "entry_not_found",
+            )
+        return self.json({"api_version": 1, **_entry_runtime(entry)})
 
 
 class HarnessRunsView(HomeAssistantView):
@@ -672,11 +689,7 @@ class HarnessHealthView(HomeAssistantView):
         snapshots = []
         for entry in entries:
             runtime = getattr(entry, "runtime_data", None)
-            storage = (
-                runtime.trace_store.snapshot(include_raw=False).get("storage", {})
-                if runtime
-                else {}
-            )
+            storage = runtime.trace_store.storage_status() if runtime else {}
             provider_health = runtime.provider_selector.snapshot() if runtime else []
             snapshots.append(
                 {
@@ -1272,7 +1285,6 @@ def _query_datetime(value: str | None) -> datetime | None:
 
 def _entry_status(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
     runtime = getattr(entry, "runtime_data", None)
-    feedback = getattr(runtime, "feedback", None) if runtime else None
     options = entry.options
     return {
         **_entry_meta(entry),
@@ -1295,23 +1307,53 @@ def _entry_status(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
         },
         "model_providers": _model_provider_status(entry),
         "model_candidates": _model_candidates(options, entry),
-        "provider_health": (runtime.provider_selector.snapshot() if runtime else []),
+        "provider_health_summary": _provider_health_summary(runtime),
+        "trace": _trace_status(options),
+        "runtime_available": runtime is not None,
+    }
+
+
+def _entry_runtime(entry: ConfigEntry) -> dict[str, Any]:
+    """Return detailed mutable collections separately from coarse status."""
+    runtime = getattr(entry, "runtime_data", None)
+    feedback = getattr(runtime, "feedback", None) if runtime else None
+    return {
+        "entry_id": entry.entry_id,
+        "trace_storage": (
+            runtime.trace_store.storage_status()
+            if runtime
+            else {"encoding": "json+zlib+base64", "records": 0}
+        ),
+        "voice_runs": runtime.voice_runs.snapshot() if runtime else [],
+        "provider_health": runtime.provider_selector.snapshot() if runtime else [],
         "memory": (
             runtime.memory.snapshot() if runtime else {"facts": [], "sessions": []}
         ),
-        "trace": _trace_status(options),
-        "traces": (
-            runtime.trace_store.snapshot(include_raw=False)
-            if runtime
-            else {"records": [], "storage": {"encoding": "json+zlib+base64"}}
-        ),
-        "voice_runs": runtime.voice_runs.snapshot() if runtime else [],
         "feedback": (
             feedback.snapshot()
             if feedback
-            else {"latest_display": None, "display_events": [], "earcon_events": []}
+            else {
+                "latest_display": None,
+                "display_events": [],
+                "earcon_events": [],
+                "first_response_audio": [],
+            }
         ),
         "deep_tasks": runtime.deep_tasks.snapshot() if runtime else [],
+    }
+
+
+def _provider_health_summary(
+    runtime: LLMGatewayRuntimeData | None,
+) -> dict[str, int]:
+    """Return bounded provider-health counts for coarse status."""
+    rows = runtime.provider_selector.snapshot() if runtime else []
+    return {
+        "providers": len(rows),
+        "failures": sum(int(row.get("failures") or 0) for row in rows),
+        "in_cooldown": sum(
+            int(row.get("cooldown_remaining_s") or 0) > 0 for row in rows
+        ),
     }
 
 
@@ -1957,15 +1999,7 @@ def _actual_from_payload(payload: dict[str, Any], response_text: str) -> dict[st
 
 
 def _earcon_pack_status() -> dict[str, Any]:
-    try:
-        data = json.loads(EARCON_MANIFEST.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {
-            "pack": EARCON_PACK,
-            "base_url": f"{STATIC_BASE}/earcons/{EARCON_PACK}",
-            "files": {},
-        }
-
+    data = earcon_manifest()
     base_url = f"{STATIC_BASE}/earcons/{data.get('pack') or EARCON_PACK}"
     files = data.get("files") if isinstance(data.get("files"), dict) else {}
     return {

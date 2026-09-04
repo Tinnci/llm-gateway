@@ -22,8 +22,6 @@ if TYPE_CHECKING:
 
     from .traces import TraceStore
 
-MAX_PROMPT_OVERRIDE_CHARS = 1200
-SUPPORTED_LOOPS = {"deterministic_capability"}
 SUPPORTED_ROUTES = {"recorded", "reclassify", "local_action"}
 
 
@@ -39,9 +37,7 @@ class ReplayError(ValueError):
 class ReplayOverrides:
     """Bounded replay choices recorded in fork lineage."""
 
-    loop: str = "deterministic_capability"
     route: str = "recorded"
-    prompt: str = ""
 
     @classmethod
     def from_payload(cls, payload: object) -> ReplayOverrides:
@@ -49,30 +45,19 @@ class ReplayOverrides:
             return cls()
         if not isinstance(payload, dict):
             raise ReplayError("invalid_overrides", "overrides must be an object")
-        unknown = set(payload) - {"loop", "route", "prompt"}
+        unknown = set(payload) - {"route"}
         if unknown:
             raise ReplayError(
                 "unsupported_override",
                 f"unsupported overrides: {', '.join(sorted(unknown))}",
             )
-        loop = str(payload.get("loop") or "deterministic_capability")
         route = str(payload.get("route") or "recorded")
-        prompt = str(payload.get("prompt") or "")
-        if loop not in SUPPORTED_LOOPS:
-            raise ReplayError("unsupported_loop", f"unsupported loop: {loop}")
         if route not in SUPPORTED_ROUTES:
             raise ReplayError("unsupported_route", f"unsupported route: {route}")
-        if len(prompt) > MAX_PROMPT_OVERRIDE_CHARS:
-            raise ReplayError("prompt_too_long", "prompt override is too long")
-        if prompt:
-            raise ReplayError(
-                "unsupported_prompt",
-                "prompt overrides are not supported by deterministic replay",
-            )
-        return cls(loop=loop, route=route, prompt=prompt)
+        return cls(route=route)
 
     def as_dict(self) -> dict[str, str]:
-        return {"loop": self.loop, "route": self.route, "prompt": self.prompt}
+        return {"route": self.route}
 
 
 async def async_replay_turn(
@@ -95,7 +80,7 @@ async def async_replay_turn(
     decision = _replay_route(user_text, source, overrides)
     context = TurnLoopContext(text=user_text, route_decision=decision)
     loop = select_turn_loop((DeterministicCapabilityLoop(),), context)
-    if loop is None or loop.name != overrides.loop:
+    if loop is None:
         raise ReplayError(
             "loop_not_applicable", "selected loop does not match the turn"
         )

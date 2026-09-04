@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import time
 
 from custom_components.llm_gateway.const import (
     CONF_SEARCH_ENABLED,
@@ -55,10 +54,15 @@ async def test_execute_is_coroutine_factory():
 
 async def test_execute_external_tools_runs_concurrently_in_order():
     started: list[str] = []
+    executor_started: list[str] = []
     finished: list[str] = []
+    both_started = asyncio.Event()
 
     async def slow_execute(_session, _options, call):
-        await asyncio.sleep(0.04)
+        executor_started.append(call.tool_name)
+        if len(executor_started) == 2:
+            both_started.set()
+        await asyncio.wait_for(both_started.wait(), timeout=1)
         return {"ok": call.tool_name}
 
     def make_call(name):
@@ -82,7 +86,6 @@ async def test_execute_external_tools_runs_concurrently_in_order():
         ),
     )
 
-    started_at = time.monotonic()
     results = await execute_external_tools(
         calls,
         None,
@@ -90,9 +93,8 @@ async def test_execute_external_tools_runs_concurrently_in_order():
         on_start=lambda call: started.append(call.tool_name),
         on_result=lambda call, _result: finished.append(call.tool_name),
     )
-    elapsed = time.monotonic() - started_at
 
-    assert elapsed < 0.08
     assert [call.tool_name for call, _result in results] == ["a", "b"]
     assert started == ["a", "b"]
+    assert executor_started == ["a", "b"]
     assert set(finished) == {"a", "b"}

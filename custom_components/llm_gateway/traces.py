@@ -246,14 +246,18 @@ class TraceStore:
                 _record_for_panel(record, include_raw=include_raw)
                 for record in self._records
             ],
-            "storage": {
-                "encoding": TRACE_ENCODING,
-                "records": len(self._records),
-                "compressed_bytes": sum(
-                    int((record.get("raw_payload") or {}).get("compressed_bytes") or 0)
-                    for record in self._records
-                ),
-            },
+            "storage": self.storage_status(),
+        }
+
+    def storage_status(self) -> dict[str, Any]:
+        """Return aggregate trace storage metadata without projecting records."""
+        return {
+            "encoding": TRACE_ENCODING,
+            "records": len(self._records),
+            "compressed_bytes": sum(
+                int((record.get("raw_payload") or {}).get("compressed_bytes") or 0)
+                for record in self._records
+            ),
         }
 
     def list_runs(self, *, limit: int = 30) -> list[dict[str, Any]]:

@@ -106,12 +106,15 @@ class PolicyDecision:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-def should_allow_search(text: str) -> bool:
+def should_allow_search(
+    text: str,
+    route_decision: RouteDecision | None = None,
+) -> bool:
     """Return whether the assistant may use web search for this user turn."""
     normalized = text.strip().lower()
     if not normalized:
         return False
-    route = decide_route(text)
+    route = route_decision or decide_route(text)
     if route.task_family in {"location_dependent_query", "external_current_info"}:
         return "search_web" in route.allowed_tools and not route.missing_requirements
     if route.task_family in {
@@ -129,34 +132,42 @@ def should_allow_search(text: str) -> bool:
     return False
 
 
-def should_require_search(text: str) -> bool:
+def should_require_search(
+    text: str,
+    route_decision: RouteDecision | None = None,
+) -> bool:
     """Return whether the assistant should ground the turn with web search."""
     normalized = text.strip().lower()
-    return should_allow_search(normalized) and any(
+    return should_allow_search(normalized, route_decision) and any(
         keyword in normalized for keyword in _SEARCH_REQUIRE_KEYWORDS
     )
 
 
-def should_force_search_in_voice_path(text: str) -> bool:
+def should_force_search_in_voice_path(
+    text: str,
+    route_decision: RouteDecision | None = None,
+) -> bool:
     """Return whether search should be forced before the first model answer."""
     normalized = text.strip().lower()
     if not normalized:
         return False
-    route = decide_route(text)
+    route = route_decision or decide_route(text)
     if route.task_family == "location_dependent_query":
         return route.next_action == "search"
     if route.task_family == "external_current_info":
         return route.next_action == "search" and not route.missing_requirements
-    return should_allow_search(normalized) and any(
+    return should_allow_search(normalized, route) and any(
         keyword in normalized for keyword in _VOICE_PATH_SEARCH_KEYWORDS
     )
 
 
 def validate_tool_call(  # noqa: PLR0911
-    tool_call: llm.ToolInput, user_text: str
+    tool_call: llm.ToolInput,
+    user_text: str,
+    route_decision: RouteDecision | None = None,
 ) -> PolicyDecision:
     """Validate a proposed tool call before execution."""
-    route = decide_route(user_text)
+    route = route_decision or decide_route(user_text)
     if tool_call.external and tool_call.tool_name == "search_web":
         if route.missing_requirements:
             return PolicyDecision(
@@ -169,7 +180,10 @@ def validate_tool_call(  # noqa: PLR0911
                     policy_name="external_search_policy",
                 ),
             )
-        if should_allow_search(user_text) and "search_web" in route.allowed_tools:
+        if (
+            should_allow_search(user_text, route)
+            and "search_web" in route.allowed_tools
+        ):
             return PolicyDecision(allowed=True, metadata=_policy_metadata(route))
         return PolicyDecision(
             allowed=False,

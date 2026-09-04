@@ -19,6 +19,19 @@ Authorization: Bearer <home-assistant-token>
 Every endpoint requires a Home Assistant administrator. When more than one LLM
 Gateway config entry exists, pass `entry_id` to select one.
 
+## Status and runtime state
+
+```http
+GET /api/llm_gateway/harness/status
+GET /api/llm_gateway/harness/runtime?entry_id={entry_id}
+```
+
+Status contains stable configuration, provider availability, bundled assets,
+and satellite summaries. It excludes per-turn traces and mutable runtime
+collections. Runtime detail contains short memory, feedback events, active
+voice runs, deep tasks, and aggregate trace-storage metadata for one entry.
+Recent completed replies remain in the paginated run query below.
+
 ## Coarse query
 
 ```http

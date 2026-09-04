@@ -59,34 +59,6 @@ _LOCATION_MARKERS = (
 
 
 @dataclass(slots=True)
-class PendingTask:
-    """A short-lived task waiting for user-supplied slots."""
-
-    id: str
-    task_type: str
-    required_user_slots: tuple[str, ...]
-    filled_slots: dict[str, Any] = field(default_factory=dict)
-    allowed_tools: tuple[str, ...] = ()
-    user_visible_prompt: str = ""
-    expires_after_turns: int = 2
-    turns_seen: int = 0
-    route_decision: dict[str, Any] = field(default_factory=dict)
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "task_type": self.task_type,
-            "required_user_slots": list(self.required_user_slots),
-            "filled_slots": dict(self.filled_slots),
-            "allowed_tools": list(self.allowed_tools),
-            "user_visible_prompt": self.user_visible_prompt,
-            "expires_after_turns": self.expires_after_turns,
-            "turns_seen": self.turns_seen,
-            "route_decision": dict(self.route_decision),
-        }
-
-
-@dataclass(slots=True)
 class DialogueFrame:
     """A transactional frame waiting for referents, confirmation, or correction."""
 
@@ -211,31 +183,6 @@ class DialogueFrameStack:
 
 
 @dataclass(frozen=True, slots=True)
-class PendingResolution:
-    """Result of resolving a user utterance against a pending task."""
-
-    relation: DialogueRelation
-    pending_task: PendingTask | None = None
-    slot_updates: dict[str, Any] = field(default_factory=dict)
-    effective_text: str = ""
-    prompt: str = ""
-    interaction_state: InteractionState = "classifying"
-    expired: bool = False
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "dialogue_relation": self.relation,
-            "target_pending_task_id": self.pending_task.id if self.pending_task else "",
-            "slot_updates": dict(self.slot_updates),
-            "effective_text": self.effective_text,
-            "prompt": self.prompt,
-            "interaction_state": self.interaction_state,
-            "expired": self.expired,
-            "pending_task": self.pending_task.as_dict() if self.pending_task else {},
-        }
-
-
-@dataclass(frozen=True, slots=True)
 class DialogueTransaction:
     """Resolved relationship between the new utterance and the frame stack."""
 
@@ -345,20 +292,6 @@ def dialogue_frame_from_local_capability(
     )
 
 
-def pending_task_from_route(turn_id: str, route: RouteDecision) -> PendingTask | None:
-    """Create a pending task for routes that need user-supplied slots."""
-    if "location_hint" not in route.missing_requirements:
-        return None
-    return PendingTask(
-        id=f"{turn_id}:weather_location",
-        task_type=route.task_type,
-        required_user_slots=("location_hint",),
-        allowed_tools=route.allowed_tools,
-        user_visible_prompt=route.user_visible_prompt,
-        route_decision=route.as_dict(),
-    )
-
-
 def resolve_dialogue_transaction(  # noqa: PLR0911 - explicit transaction states aid audit.
     text: str,
     stack: DialogueFrameStack,
@@ -458,47 +391,6 @@ def resolve_dialogue_transaction(  # noqa: PLR0911 - explicit transaction states
         target_frame=frame,
         prompt=frame.last_prompt,
         interaction_state="awaiting_user_info",
-    )
-
-
-def resolve_pending_task(text: str, pending: PendingTask | None) -> PendingResolution:
-    """Resolve a short follow-up utterance before normal routing."""
-    if pending is None:
-        return PendingResolution("new_task")
-    stack = DialogueFrameStack(
-        [
-            DialogueFrame(
-                id=pending.id,
-                frame_type="weather_forecast",
-                operation="forecast",
-                status="awaiting_referent",
-                missing_referents=tuple(
-                    "location"
-                    if item == "location_hint"
-                    else str(item).removesuffix("_hint")
-                    for item in pending.required_user_slots
-                ),
-                filled_referents=dict(pending.filled_slots),
-                last_prompt=pending.user_visible_prompt,
-                allowed_tools=pending.allowed_tools,
-                expires_after_turns=pending.expires_after_turns,
-                turns_seen=pending.turns_seen,
-                route_decision=dict(pending.route_decision),
-            )
-        ]
-    )
-    transaction = resolve_dialogue_transaction(text, stack)
-    if transaction.target_frame:
-        pending.turns_seen = transaction.target_frame.turns_seen
-        pending.filled_slots.update(transaction.slot_updates)
-    return PendingResolution(
-        transaction.relation,
-        pending_task=pending if transaction.relation != "new_task" else None,
-        slot_updates=transaction.slot_updates,
-        effective_text=transaction.effective_text,
-        prompt=transaction.prompt,
-        interaction_state=transaction.interaction_state,
-        expired=transaction.expired,
     )
 
 
@@ -677,10 +569,6 @@ def _home_control_effective_text(operation: str, target_name: str) -> str:
         "volume_mute": "静音",
     }.get(operation, "操作")
     return f"{verb}已确认的{target_name}"
-
-
-def _weather_effective_text(pending: PendingTask, location: str) -> str:
-    return _weather_effective_text_from_route(pending.route_decision, location)
 
 
 def _weather_effective_text_from_route(route: dict[str, Any], location: str) -> str:

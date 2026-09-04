@@ -8,7 +8,6 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Protocol
 
-from .action_plan import ActionPlan, ActionPlanResult, async_execute_action_plan
 from .capability_executor import (
     LocalCapabilityResult,
     async_try_execute_local_capability,
@@ -102,9 +101,6 @@ class TurnLoopServices:
         [HomeAssistant, str, RouteDecision],
         Awaitable[LocalCapabilityResult | None],
     ] = async_try_execute_local_capability
-    execute_action_plan: Callable[
-        [HomeAssistant, ActionPlan], Awaitable[ActionPlanResult]
-    ] = async_execute_action_plan
     plan_live_context: (
         Callable[[str, RouteDecision], tuple[dict[str, Any], dict[str, str]]] | None
     ) = None
@@ -188,7 +184,7 @@ async def run_turn_loop(  # noqa: PLR0913 - explicit policy overrides aid tests.
             )
             return None
         if isinstance(decision, TurnLoopContinuation):
-            if committed_route.next_action in {"execute_local", "execute_plan"}:
+            if committed_route.next_action == "execute_local":
                 return _loop_invariant_failure(
                     loop,
                     events,
@@ -653,51 +649,6 @@ class ClarificationDialogueLoop:
                 ),
             ),
             dialogue_frame=dialogue_frame_from_route(context.turn_id, decision),
-        )
-
-
-class ActionPlanLoop:
-    """Execute one validated declarative compound plan."""
-
-    name = "action_plan"
-
-    def matches(self, context: TurnLoopContext) -> bool:
-        return context.route_decision.next_action == "execute_plan" and isinstance(
-            context.route_decision.metadata.get("action_plan"), dict
-        )
-
-    async def run(
-        self,
-        hass: HomeAssistant,
-        context: TurnLoopContext,
-        services: TurnLoopServices,
-    ) -> TurnLoopResult:
-        plan = ActionPlan.from_payload(context.route_decision.metadata["action_plan"])
-        result = await services.execute_action_plan(hass, plan)
-        return TurnLoopResult(
-            status=result.status,
-            speech=result.speech,
-            route_kind="local_action_plan",
-            route_model="typed_action_plan",
-            proposed_actions=tuple(item.as_dict() for item in plan.actions),
-            trace_events=(
-                TurnLoopTraceEvent(
-                    stage="action_plan_execute",
-                    status=(
-                        "warning"
-                        if result.status in {"partial", "blocked", "error"}
-                        else "ok"
-                    ),
-                    attrs={
-                        "status": result.status,
-                        "reason": result.reason,
-                        "reads": dict(result.reads),
-                        "actions": list(result.actions),
-                        "failed_actions": list(result.failed_actions),
-                        "policy": list(result.policy),
-                    },
-                ),
-            ),
         )
 
 

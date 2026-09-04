@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
-
-import yaml
 
 from .capabilities import decide_route
 from .policy import should_allow_search
@@ -23,16 +20,6 @@ class HarnessResult:
 
     passed: bool
     violations: list[str] = field(default_factory=list)
-
-
-def load_yaml_scenarios(path: str | Path) -> list[dict[str, Any]]:
-    """Load YAML scenarios from disk."""
-    data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or []
-    if isinstance(data, dict):
-        data = data.get("scenarios", [])
-    if not isinstance(data, list):
-        raise TypeError("Scenario YAML must contain a list or a scenarios list")
-    return [item for item in data if isinstance(item, dict)]
 
 
 def evaluate_scenario(  # noqa: PLR0912 - compact rule list for harness reporting.

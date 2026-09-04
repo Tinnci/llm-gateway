@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
+from custom_components.llm_gateway.capabilities import decide_route
 from custom_components.llm_gateway.const import (
     CONF_CHAT_MODEL,
     CONF_DEEP_EXTRA_BODY,
@@ -35,6 +38,18 @@ def test_select_model_route_defaults():
     assert select_model_route("打开灯", {}).model == RECOMMENDED_FAST_MODEL
     assert select_model_route("查一下最新固件", {}).model == RECOMMENDED_MID_MODEL
     assert select_model_route("深度分析一下", {}).model == RECOMMENDED_DEEP_MODEL
+
+
+def test_select_model_route_uses_committed_route_decision() -> None:
+    committed = replace(
+        decide_route("打开灯"),
+        route="deep",
+        next_action="plan_async",
+    )
+
+    route = select_model_route("打开灯", {}, committed)
+
+    assert route.kind == "deep"
 
 
 def test_select_model_route_legacy_chat_model_is_fast_fallback():

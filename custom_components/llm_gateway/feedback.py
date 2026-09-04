@@ -9,6 +9,8 @@ from typing import Any, Literal
 from homeassistant.util import dt as dt_util
 from homeassistant.util import ulid
 
+from .earcons import earcon_library
+
 DisplayState = Literal[
     "listening",
     "captured",
@@ -33,72 +35,7 @@ QUIET_HOURS_END = 7
 QUIET_SUPPRESS_PRIORITY_BELOW = 70
 SHORT_TEXT_LIMIT = 120
 
-EARCON_LIBRARY: dict[str, dict[str, Any]] = {
-    "wake": {
-        "semantic_state": "listening",
-        "duration_ms": 150,
-        "priority": 90,
-        "can_play_while_listening": True,
-        "quiet_hours_behavior": "attenuate",
-        "trace_event_name": "earcon_wake",
-    },
-    "captured": {
-        "semantic_state": "captured",
-        "duration_ms": 148,
-        "priority": 40,
-        "can_play_while_listening": True,
-        "quiet_hours_behavior": "suppress_noncritical",
-        "trace_event_name": "earcon_captured",
-    },
-    "thinking": {
-        "semantic_state": "thinking",
-        "duration_ms": 340,
-        "priority": 20,
-        "can_play_while_listening": False,
-        "quiet_hours_behavior": "suppress_noncritical",
-        "trace_event_name": "earcon_thinking",
-    },
-    "search": {
-        "semantic_state": "searching",
-        "duration_ms": 194,
-        "priority": 50,
-        "can_play_while_listening": False,
-        "quiet_hours_behavior": "attenuate",
-        "trace_event_name": "earcon_search",
-    },
-    "confirmation": {
-        "semantic_state": "confirming",
-        "duration_ms": 170,
-        "priority": 90,
-        "can_play_while_listening": False,
-        "quiet_hours_behavior": "attenuate",
-        "trace_event_name": "earcon_confirmation",
-    },
-    "success": {
-        "semantic_state": "done",
-        "duration_ms": 136,
-        "priority": 50,
-        "can_play_while_listening": False,
-        "quiet_hours_behavior": "suppress_noncritical",
-        "trace_event_name": "earcon_success",
-    },
-    "failure": {
-        "semantic_state": "failed",
-        "duration_ms": 246,
-        "priority": 80,
-        "can_play_while_listening": False,
-        "quiet_hours_behavior": "attenuate",
-        "trace_event_name": "earcon_failure",
-    },
-    "cancel": {
-        "semantic_state": "cancelled",
-        "duration_ms": 152,
-        "priority": 60,
-        "can_play_while_listening": True,
-        "quiet_hours_behavior": "attenuate",
-        "trace_event_name": "earcon_cancel",
-    },
-}
+EARCON_LIBRARY = earcon_library()
 
 PIPELINE_EARCONS = {
     "wake_word_detected": "wake",

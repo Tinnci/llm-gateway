@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-from .capabilities import decide_route
+from .capabilities import RouteDecision, decide_route
 
 TaskType = Literal[
     "home_control",
@@ -72,7 +72,10 @@ class FirstResponseDecision:
         }
 
 
-def decide_first_response(text: str) -> FirstResponseDecision:  # noqa: PLR0911, PLR0912
+def decide_first_response(  # noqa: PLR0911, PLR0912
+    text: str,
+    route_decision: RouteDecision | None = None,
+) -> FirstResponseDecision:
     """Return local first-response policy for a user utterance."""
     normalized = str(text or "").strip()
     if not normalized:
@@ -93,7 +96,7 @@ def decide_first_response(text: str) -> FirstResponseDecision:  # noqa: PLR0911,
             "local_stable_knowledge",
         )
 
-    route = decide_route(normalized)
+    route = route_decision or decide_route(normalized)
     if route.task_family in {"home_inventory", "home_capability"}:
         return _decision(
             route.task_type,

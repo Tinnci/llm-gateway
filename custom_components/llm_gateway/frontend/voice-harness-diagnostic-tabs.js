@@ -1,17 +1,15 @@
 // @ts-check
 
 /**
- * Keyed renderer registry for the Voice Harness diagnostic drawer tabs.
+ * Static renderer composition for the Voice Harness diagnostic drawer tabs.
  *
  * This mirrors the Cordis pattern the kernel uses elsewhere: sections are
- * registered into a table instead of being hard-coded into one consumer. The
- * drawer iterates this registry, so a new diagnostic section is one
- * `registerDiagnosticTab()` call plus its render function — no drawer edits,
- * and unknown backend fields already fall through the generic raw-tab panels.
+ * defined in a table instead of being hard-coded into one consumer. The drawer
+ * iterates the composed definition, and unknown backend fields already fall
+ * through the generic raw-tab panels.
  *
- * Registration validates each entry in full before anything is stored, and a
- * duplicate id throws instead of silently replacing: a broken registration is
- * a loud failure at mount time, never a silent gap at render time.
+ * Composition validates every entry, and a duplicate id throws instead of
+ * silently replacing a renderer.
  *
  * @module voice-harness-diagnostic-tabs
  */
@@ -42,56 +40,43 @@
  *   Returns the tab body HTML; returning only whitespace hides the tab.
  */
 
-/** @type {Array<DiagnosticTabEntry>} */
-const RENDERERS = [];
-
 /**
- * Register one diagnostic tab renderer.
+ * Define the complete diagnostic tab renderer set.
  *
- * @param {DiagnosticTabEntry} entry The renderer to add.
- * @returns {() => void} A disposer removing the registration.
+ * @param {ReadonlyArray<DiagnosticTabEntry>} entries Tab metadata and renderers.
+ * @returns {ReadonlyArray<Readonly<DiagnosticTabEntry>>} Validated tabs in render order.
  */
-export function registerDiagnosticTab(entry) {
-  if (!entry || typeof entry !== "object") {
-    throw new TypeError("registerDiagnosticTab requires an entry object");
+export function defineDiagnosticTabs(entries) {
+  if (!Array.isArray(entries)) {
+    throw new TypeError("defineDiagnosticTabs requires an array");
   }
-  const id = String(entry.id || "");
-  if (!id) {
-    throw new TypeError("registerDiagnosticTab requires a non-empty id");
-  }
-  if (RENDERERS.some((existing) => existing.id === id)) {
-    throw new Error(`diagnostic tab "${id}" is already registered`);
-  }
-  const labelKey = String(entry.labelKey || "");
-  if (!labelKey) {
-    throw new TypeError(`diagnostic tab "${id}" requires a non-empty labelKey`);
-  }
-  if (typeof entry.render !== "function") {
-    throw new TypeError(`diagnostic tab "${id}" requires a render function`);
-  }
-  const numericOrder = Number(entry.order);
-  const order = Number.isFinite(numericOrder) ? numericOrder : Number.MAX_SAFE_INTEGER;
-  const stored = { id, labelKey, order, render: entry.render };
-  // Insert then stable-sort: entries sharing an order keep registration order,
-  // so mounting the same set always yields the same tab sequence.
-  RENDERERS.push(stored);
-  RENDERERS.sort((left, right) => left.order - right.order);
-  return () => {
-    const index = RENDERERS.indexOf(stored);
-    if (index >= 0) RENDERERS.splice(index, 1);
-  };
-}
-
-/**
- * Snapshot of registered renderers in render order.
- *
- * @returns {Array<DiagnosticTabEntry>} Detached copies in ascending order.
- */
-export function diagnosticTabRenderers() {
-  return RENDERERS.map((entry) => ({ ...entry }));
-}
-
-/** Remove every registration. Intended for test isolation. */
-export function resetDiagnosticTabRenderers() {
-  RENDERERS.length = 0;
+  const ids = new Set();
+  const tabs = entries.map((entry, index) => {
+    if (!entry || typeof entry !== "object") {
+      throw new TypeError("defineDiagnosticTabs requires entry objects");
+    }
+    const id = String(entry.id || "");
+    if (!id) {
+      throw new TypeError("diagnostic tab requires a non-empty id");
+    }
+    if (ids.has(id)) {
+      throw new Error(`diagnostic tab "${id}" is already defined`);
+    }
+    ids.add(id);
+    const labelKey = String(entry.labelKey || "");
+    if (!labelKey) {
+      throw new TypeError(`diagnostic tab "${id}" requires a non-empty labelKey`);
+    }
+    if (typeof entry.render !== "function") {
+      throw new TypeError(`diagnostic tab "${id}" requires a render function`);
+    }
+    const numericOrder = Number(entry.order);
+    const order = Number.isFinite(numericOrder) ? numericOrder : Number.MAX_SAFE_INTEGER;
+    return {
+      index,
+      tab: Object.freeze({ id, labelKey, order, render: entry.render }),
+    };
+  });
+  tabs.sort((left, right) => left.tab.order - right.tab.order || left.index - right.index);
+  return Object.freeze(tabs.map(({ tab }) => tab));
 }

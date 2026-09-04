@@ -126,6 +126,7 @@ options remain valid Fast-tier fallbacks.
 The panel route is `voice-harness`. It uses these integration endpoints:
 
 - `GET /api/llm_gateway/harness/status`
+- `GET /api/llm_gateway/harness/runtime?entry_id=...`
 - `GET /api/llm_gateway/harness/health`
 - `GET /api/llm_gateway/harness/runs`
 - `GET /api/llm_gateway/harness/runs/{run_id}`
@@ -134,10 +135,13 @@ The panel route is `voice-harness`. It uses these integration endpoints:
 - `POST /api/llm_gateway/harness/evaluate`
 - `/api/llm_gateway/static/...`
 
-The run endpoints form one layered inspection API. Use the lightweight list
-query to filter recent replies. Then fetch a selected run's detail or event
-stream. Raw messages are excluded unless detail explicitly requests
-`include_raw=true`. See [Voice Harness inspection API](docs/voice-harness-api.md).
+The status endpoint returns configuration and availability summaries. Mutable
+memory, feedback, active-run, and deep-task collections are isolated in the
+entry runtime endpoint. The run endpoints form a layered inspection API: use
+the lightweight list query to filter recent replies, then fetch a selected
+run's detail or event stream. Raw messages are excluded unless detail
+explicitly requests `include_raw=true`. See
+[Voice Harness inspection API](docs/voice-harness-api.md).
 
 The list query also supports `capability`, `outcome`, and `failure_stage` so an
 agent can find semantic failures without downloading full turns. Device-state

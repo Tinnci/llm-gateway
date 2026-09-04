@@ -661,6 +661,54 @@ async def test_harness_status_api_reports_first_response_audio_route(
     )
 
 
+async def test_harness_status_keeps_runtime_collections_in_detail_endpoint(
+    hass, hass_client, mock_config_entry
+):
+    """Coarse status excludes mutable collections exposed by runtime detail."""
+    assert await async_setup_component(hass, "http", {})
+    mock_config_entry.add_to_hass(hass)
+    trace_store = TraceStore(hass, mock_config_entry.entry_id)
+    await trace_store.async_load()
+    mock_config_entry.runtime_data = SimpleNamespace(
+        provider_selector=SimpleNamespace(snapshot=list),
+        trace_store=trace_store,
+        voice_runs=SimpleNamespace(snapshot=lambda: [{"id": "active-turn"}]),
+        memory=SimpleNamespace(
+            snapshot=lambda: {"facts": [], "sessions": [{"conversation_id": "c1"}]}
+        ),
+        feedback=SimpleNamespace(
+            snapshot=lambda: {
+                "latest_display": {"state": "thinking"},
+                "display_events": [],
+                "earcon_events": [],
+                "first_response_audio": [],
+            }
+        ),
+        deep_tasks=SimpleNamespace(snapshot=lambda: [{"id": "deep-1"}]),
+    )
+    await async_setup_panel(hass)
+    client = await hass_client()
+
+    status_response = await client.get("/api/llm_gateway/harness/status")
+    runtime_response = await client.get(
+        f"/api/llm_gateway/harness/runtime?entry_id={mock_config_entry.entry_id}"
+    )
+
+    assert status_response.status == 200
+    entry = (await status_response.json())["entries"][0]
+    assert entry["runtime_available"] is True
+    for field in ("traces", "voice_runs", "memory", "feedback", "deep_tasks"):
+        assert field not in entry
+    assert runtime_response.status == 200
+    runtime = await runtime_response.json()
+    assert runtime["entry_id"] == mock_config_entry.entry_id
+    assert runtime["trace_storage"]["records"] == 0
+    assert runtime["voice_runs"] == [{"id": "active-turn"}]
+    assert runtime["memory"]["sessions"][0]["conversation_id"] == "c1"
+    assert runtime["feedback"]["latest_display"]["state"] == "thinking"
+    assert runtime["deep_tasks"] == [{"id": "deep-1"}]
+
+
 async def test_harness_evaluate_api(hass, hass_client):
     """The ad hoc scenario API evaluates policy and spoken text."""
     assert await async_setup_component(hass, "http", {})
@@ -1034,8 +1082,7 @@ async def test_harness_replay_api_creates_side_effect_free_fork(
     record = (await response.json())["record"]
     assert calls == []
     assert record["lineage"]["replay_of"] == "source-replay"
-    assert record["lineage"]["overrides"]["route"] == "local_action"
-    assert record["lineage"]["overrides"]["prompt"] == ""
+    assert record["lineage"]["overrides"] == {"route": "local_action"}
     assert record["proposed_actions"][0]["target_scope"] == "all"
 
 

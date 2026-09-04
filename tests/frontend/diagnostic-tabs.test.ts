@@ -1,63 +1,54 @@
 import { expect, test } from "bun:test";
 
 import {
-  diagnosticTabRenderers,
-  registerDiagnosticTab,
-  resetDiagnosticTabRenderers,
+  defineDiagnosticTabs,
 } from "../../custom_components/llm_gateway/frontend/voice-harness-diagnostic-tabs";
 
 const noopRender = () => "";
 
-test("registers tabs in ascending order with stable ties", () => {
-  resetDiagnosticTabRenderers();
-  registerDiagnosticTab({ id: "raw", labelKey: "runs.diag_raw", order: 60, render: noopRender });
-  registerDiagnosticTab({ id: "overview", labelKey: "runs.diag_overview", order: 10, render: noopRender });
-  registerDiagnosticTab({ id: "extra", labelKey: "runs.diag_raw", order: 10, render: noopRender });
+test("defines tabs in ascending order with stable ties", () => {
+  const tabs = defineDiagnosticTabs([
+    { id: "raw", labelKey: "runs.diag_raw", order: 60, render: noopRender },
+    { id: "overview", labelKey: "runs.diag_overview", order: 10, render: noopRender },
+    { id: "extra", labelKey: "runs.diag_raw", order: 10, render: noopRender },
+  ]);
 
-  expect(diagnosticTabRenderers().map((entry) => entry.id)).toEqual([
+  expect(tabs.map((entry) => entry.id)).toEqual([
     "overview",
     "extra",
     "raw",
   ]);
+  expect(Object.isFrozen(tabs)).toBe(true);
+  expect(Object.isFrozen(tabs[0])).toBe(true);
 });
 
 test("entries without an explicit order sort last", () => {
-  resetDiagnosticTabRenderers();
-  registerDiagnosticTab({ id: "late", labelKey: "runs.diag_raw", render: noopRender });
-  registerDiagnosticTab({ id: "first", labelKey: "runs.diag_overview", order: 5, render: noopRender });
+  const tabs = defineDiagnosticTabs([
+    { id: "late", labelKey: "runs.diag_raw", render: noopRender },
+    { id: "first", labelKey: "runs.diag_overview", order: 5, render: noopRender },
+  ]);
 
-  expect(diagnosticTabRenderers().map((entry) => entry.id)).toEqual(["first", "late"]);
+  expect(tabs.map((entry) => entry.id)).toEqual(["first", "late"]);
 });
 
 test("duplicate ids throw instead of silently replacing", () => {
-  resetDiagnosticTabRenderers();
-  const disposer = registerDiagnosticTab({
-    id: "overview",
-    labelKey: "runs.diag_overview",
-    order: 10,
-    render: noopRender,
-  });
-
   expect(() =>
-    registerDiagnosticTab({ id: "overview", labelKey: "runs.diag_overview", order: 99, render: noopRender }),
-  ).toThrow("already registered");
-
-  // A refused duplicate leaves the current registration serving.
-  expect(diagnosticTabRenderers()).toHaveLength(1);
-  expect(diagnosticTabRenderers()[0].order).toBe(10);
-  disposer();
-  expect(diagnosticTabRenderers()).toHaveLength(0);
+    defineDiagnosticTabs([
+      { id: "overview", labelKey: "runs.diag_overview", order: 10, render: noopRender },
+      { id: "overview", labelKey: "runs.diag_overview", order: 99, render: noopRender },
+    ]),
+  ).toThrow("already defined");
 });
 
-test("malformed entries throw at registration time", () => {
-  resetDiagnosticTabRenderers();
+test("malformed entries throw at composition time", () => {
   // @ts-expect-error exercising runtime validation
-  expect(() => registerDiagnosticTab(null)).toThrow(TypeError);
+  expect(() => defineDiagnosticTabs(null)).toThrow(TypeError);
   // @ts-expect-error exercising runtime validation
-  expect(() => registerDiagnosticTab({ labelKey: "k", render: noopRender })).toThrow("non-empty id");
+  expect(() => defineDiagnosticTabs([null])).toThrow(TypeError);
   // @ts-expect-error exercising runtime validation
-  expect(() => registerDiagnosticTab({ id: "x", render: noopRender })).toThrow("labelKey");
+  expect(() => defineDiagnosticTabs([{ labelKey: "k", render: noopRender }])).toThrow("non-empty id");
   // @ts-expect-error exercising runtime validation
-  expect(() => registerDiagnosticTab({ id: "x", labelKey: "k" })).toThrow("render");
-  expect(diagnosticTabRenderers()).toHaveLength(0);
+  expect(() => defineDiagnosticTabs([{ id: "x", render: noopRender }])).toThrow("labelKey");
+  // @ts-expect-error exercising runtime validation
+  expect(() => defineDiagnosticTabs([{ id: "x", labelKey: "k" }])).toThrow("render");
 });

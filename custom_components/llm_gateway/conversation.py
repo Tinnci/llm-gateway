@@ -90,7 +90,6 @@ from .tools_registry import (
 )
 from .traces import TraceTurn
 from .turn_loops import (
-    ActionPlanLoop,
     ClarificationDialogueLoop,
     DeterministicCapabilityLoop,
     LocalLiveContextLoop,
@@ -297,13 +296,14 @@ def _is_action_tool(tool_name: str) -> bool:
     return tool_name.startswith("Hass")
 
 
-def _tool_choice_for_turn(
+def _tool_choice_for_turn(  # noqa: PLR0913
     user_text: str,
     tools: list[dict[str, Any]] | None,
     *,
     force_tool_call: bool,
     force_live_context: bool = False,
     require_grounding: bool = True,
+    route_decision: RouteDecision | None = None,
 ) -> ToolChoice | None:
     """Return a narrow tool choice for turns that need deterministic grounding."""
     if force_tool_call:
@@ -312,7 +312,7 @@ def _tool_choice_for_turn(
         return {"type": "function", "function": {"name": LIVE_CONTEXT_TOOL_NAME}}
     if (
         require_grounding
-        and should_force_search_in_voice_path(user_text)
+        and should_force_search_in_voice_path(user_text, route_decision)
         and _has_tool(tools, SEARCH_TOOL_NAME)
     ):
         return {"type": "function", "function": {"name": SEARCH_TOOL_NAME}}
@@ -839,7 +839,7 @@ class LLMGatewayConversationEntity(
             else:
                 self._dialogue_frames.pop(pending_key, None)
 
-        first_response = decide_first_response(effective_text)
+        first_response = decide_first_response(effective_text, route_decision)
         self._mark_run(
             runtime,
             run_id,
@@ -888,7 +888,6 @@ class LLMGatewayConversationEntity(
         )
         selected_loop = select_turn_loop(
             (
-                ActionPlanLoop(),
                 DeterministicCapabilityLoop(),
                 ClarificationDialogueLoop(),
                 LocalLiveContextLoop(),
@@ -1111,7 +1110,7 @@ class LLMGatewayConversationEntity(
             if weather_result is not None:
                 return weather_result
 
-        route = select_model_route(effective_text, options)
+        route = select_model_route(effective_text, options, route_decision)
         self._mark_run(
             runtime,
             run_id,
@@ -1180,6 +1179,7 @@ class LLMGatewayConversationEntity(
                 run_id,
                 first_response,
                 turn_token,
+                route_decision,
             )
 
         return await self._async_finalize_turn(
@@ -1189,6 +1189,8 @@ class LLMGatewayConversationEntity(
             _route_trace(route, provider_runs, route_decision),
             run_id,
             turn_token,
+            first_response,
+            route_decision,
         )
 
     async def _async_execute_live_context_tool(
@@ -1816,6 +1818,8 @@ class LLMGatewayConversationEntity(
         route_trace: dict[str, Any],
         run_id: str,
         turn_token: TurnToken,
+        committed_first_response: FirstResponseDecision | None = None,
+        committed_route_decision: RouteDecision | None = None,
     ) -> conversation.ConversationResult:
         """Build the HA result, clean TTS, and record diagnostics."""
         options = self.entry.options
@@ -1831,9 +1835,8 @@ class LLMGatewayConversationEntity(
             )
         result = conversation.async_get_result_from_chat_log(user_input, chat_log)
         raw_spoken = result.response.speech.get("plain", {}).get("speech", "")
-        first_response = decide_first_response(user_input.text)
-        if not raw_spoken.strip():
-            fallback_spoken = _empty_response_fallback(first_response)
+        if not raw_spoken.strip() and committed_first_response is not None:
+            fallback_spoken = _empty_response_fallback(committed_first_response)
             if fallback_spoken:
                 raw_spoken = fallback_spoken
                 result.response.async_set_speech(raw_spoken)
@@ -1843,7 +1846,7 @@ class LLMGatewayConversationEntity(
                     "fallback_final",
                     attrs={
                         "reason": "empty_response",
-                        "task_type": first_response.task_type,
+                        "task_type": committed_first_response.task_type,
                     },
                 )
 
@@ -1894,6 +1897,7 @@ class LLMGatewayConversationEntity(
                 run_id,
                 output_reason,
                 assistant_text,
+                committed_route_decision,
             )
             if repaired_text:
                 repaired_safe, repaired_modified, repaired_reason = (
@@ -2009,18 +2013,19 @@ class LLMGatewayConversationEntity(
         runtime.turn_controller.finish(turn_token)
         return result
 
-    async def _async_repair_output_contract(
+    async def _async_repair_output_contract(  # noqa: PLR0913, PLR0917
         self,
         user_input: conversation.ConversationInput,
         chat_log: conversation.ChatLog,
         run_id: str,
         unsafe_reason: str,
         unsafe_text: str,
+        route_decision: RouteDecision | None,
     ) -> str:
         """Run one bounded repair pass for unsafe final speech."""
         runtime = self.entry.runtime_data
         options = self.entry.options
-        base_route = select_model_route(user_input.text, options)
+        base_route = select_model_route(user_input.text, options, route_decision)
         route = _output_repair_route(base_route)
         messages = _output_contract_repair_messages(
             user_input.text,
@@ -2313,6 +2318,7 @@ class LLMGatewayConversationEntity(
         run_id: str,
         first_response: FirstResponseDecision,
         turn_token: TurnToken,
+        route_decision: RouteDecision,
     ) -> list[dict[str, Any]]:
         """Drive the model, executing tool calls until it returns a final answer."""
         runtime = self.entry.runtime_data
@@ -2334,7 +2340,6 @@ class LLMGatewayConversationEntity(
                 for spec in declaration.build_specs(options)
             ]
             tools = [*(tools or []), *specs]
-        route_decision = decide_route(user_text)
         tools = _filter_visible_tools(tools, route_decision)
         self._mark_run(
             runtime,
@@ -2406,6 +2411,7 @@ class LLMGatewayConversationEntity(
                             and iteration == 1
                         ),
                         require_grounding=iteration == 1,
+                        route_decision=route_decision,
                     )
                 )
                 fallback_result = await async_chat_completion_with_fallback(
@@ -2551,7 +2557,11 @@ class LLMGatewayConversationEntity(
                     )
                     continue
 
-                policy_block = self._policy_block(content.tool_calls, user_text)
+                policy_block = self._policy_block(
+                    content.tool_calls,
+                    user_text,
+                    route_decision,
+                )
                 if policy_block:
                     prompt, block_attrs = policy_block
                     self._mark_run(
@@ -2681,11 +2691,14 @@ class LLMGatewayConversationEntity(
         return provider_runs
 
     def _policy_block(
-        self, tool_calls: list[llm.ToolInput], user_text: str
+        self,
+        tool_calls: list[llm.ToolInput],
+        user_text: str,
+        route_decision: RouteDecision,
     ) -> tuple[str, dict[str, Any]] | None:
         """Return a spoken block prompt if any tool call violates policy."""
         for tool_call in tool_calls:
-            decision = validate_tool_call(tool_call, user_text)
+            decision = validate_tool_call(tool_call, user_text, route_decision)
             if decision.allowed:
                 continue
             LOGGER.info(
