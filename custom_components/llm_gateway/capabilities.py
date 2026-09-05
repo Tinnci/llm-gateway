@@ -151,7 +151,9 @@ _HOME_CONTROL_RE = re.compile(
 _HOME_STATE_RE = re.compile(r"(多少|是不是|现在|开着吗|关着吗|锁了吗|温度|湿度|状态)")
 _DEVICE_STATE_QUESTION_RE = re.compile(
     r"(状态|开着|关着|开没开|关没关|打开了吗|关闭了吗|"
-    r"是不是.{0,6}(开|关|锁)|有没有开|在运行吗|运行着吗|锁着吗|锁了吗)"
+    r"是不是.{0,6}(开|关|锁)|有没有开|在运行吗|运行着吗|锁着吗|锁了吗|"
+    r"是吗|是否|(?:速度|风速|档位|亮度|音量).{0,6}(?:多少|几|什么)|"
+    r"(?:多少|几).{0,3}(?:档|挡))"
 )
 _DEVICE_STATE_DOMAINS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("media_player", ("播放器", "音箱", "电视")),
@@ -792,6 +794,7 @@ def decide_route(text: str) -> RouteDecision:  # noqa: C901, PLR0911, PLR0912
 
     if device_state := _device_state_target(value):
         domain, target_hint = device_state
+        attribute = device_state_attribute(value, domain)
         return RouteDecision(
             task_family="home_state",
             task_type="device_state_query",
@@ -804,9 +807,12 @@ def decide_route(text: str) -> RouteDecision:  # noqa: C901, PLR0911, PLR0912
             metadata={
                 "domain": domain,
                 "device_hint": target_hint,
+                "requested_attribute": attribute,
                 "area": _area_hint(value),
                 "operation": "read_state",
-                "data_requirement": "entity_state",
+                "data_requirement": "entity_state"
+                if attribute == "state"
+                else attribute,
                 "capability_contract": _contract_metadata("device_state_query"),
             },
         )
@@ -1061,6 +1067,22 @@ def _local_home_control_route(candidate: LocalActionCandidate) -> RouteDecision:
             "target_temperature": candidate.target_temperature,
         },
     )
+
+
+def device_state_attribute(text: str, domain: str) -> str:
+    """Name the HA attribute required by a device-property question."""
+    properties = {
+        "fan": (
+            ("percentage", ("速度", "风速")),
+            ("preset_mode", ("档位", "几档", "几挡")),
+        ),
+        "light": (("brightness", ("亮度",)),),
+        "media_player": (("volume_level", ("音量",)),),
+    }
+    for attribute, terms in properties.get(domain, ()):
+        if any(term in text for term in terms):
+            return attribute
+    return "state"
 
 
 def task_family_for_text(text: str) -> TaskFamily:

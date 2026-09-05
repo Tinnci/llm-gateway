@@ -1706,78 +1706,30 @@ async def test_compound_runtime_control_requests_separate_turns_before_dispatch(
     assert "逐项准确处理" in result.response.speech["plain"]["speech"]
 
 
-async def test_weather_query_uses_local_context_path_without_forced_search(
+async def test_weather_query_reports_missing_evidence_without_model(
     hass, aioclient_mock, mock_config_entry
 ):
-    aioclient_mock.get(
-        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
-    )
     agent_id = await _setup_agent(
         hass,
         mock_config_entry,
         {
             CONF_LLM_HASS_API: "assist",
-            CONF_SEARCH_ENABLED: True,
-            CONF_TAVILY_API_KEY: "tvly-test",
             CONF_DIAGNOSTIC_TRACES: True,
             CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
         },
     )
-    requests = []
-    responses = iter(
-        [
-            {
-                "role": "assistant",
-                "tool_calls": [
-                    {
-                        "id": "live-1",
-                        "type": "function",
-                        "function": {
-                            "name": LIVE_CONTEXT_TOOL_NAME,
-                            "arguments": "{}",
-                        },
-                    }
-                ],
-            },
-            {"role": "assistant", "content": "暂时没有本地天气数据。"},
-        ]
-    )
-
-    async def fake_completion(**kwargs: object):
-        requests.append(kwargs)
-        return SimpleNamespace(
-            message=next(responses),
-            provider={"name": "primary", "fallback_used": False},
-            attempts=[],
-        )
-
     with patch(
-        "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
-        side_effect=fake_completion,
-    ):
+        "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback"
+    ) as completion:
         result = await conversation.async_converse(
             hass, "今天天气。", None, Context(), agent_id=agent_id
         )
-
+    completion.assert_not_called()
     assert result.response.speech["plain"]["speech"] == "暂时没有本地天气数据。"
-    assert requests[0].get("tool_choice") != {
-        "type": "function",
-        "function": {"name": "search_web"},
-    }
     trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
-    assert (
-        trace["first_response_decision"]["task_type"] == "outdoor_current_weather_query"
-    )
-    assert trace["search_gate"]["decision"] == "local_weather_first"
-    assert not trace["search_debug"]["searched"]
-    assert trace["weather_context_path"]["path"] == "GetLiveContext"
-    live_context_calls = [
-        tool
-        for tool in trace["tools"]
-        if tool["phase"] == "call" and tool["name"] == LIVE_CONTEXT_TOOL_NAME
-    ]
-    assert live_context_calls
-    assert len(live_context_calls) == 1
+    assert trace["route"]["terminal_outcome"] == "failed"
+    assert trace["route"]["outcome_verdict"]["answerable"] is False
+    assert trace["route"]["harness_loop"]["step_count"] == 1
 
 
 async def test_weather_query_prefers_ha_weather_entity_over_live_sensor_context(
@@ -1997,125 +1949,6 @@ async def test_weather_forecast_uses_ha_weather_forecast_service_before_search(
     assert trace["weather_context_path"]["path"] == "weather_entity"
 
 
-async def test_weather_query_suppresses_repeated_live_context_call(
-    hass, aioclient_mock, mock_config_entry
-):
-    aioclient_mock.get(
-        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
-    )
-    agent_id = await _setup_agent(
-        hass,
-        mock_config_entry,
-        {
-            CONF_LLM_HASS_API: "assist",
-            CONF_DIAGNOSTIC_TRACES: True,
-            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
-        },
-    )
-    responses = iter(
-        [
-            {
-                "role": "assistant",
-                "tool_calls": [
-                    {
-                        "id": "live-1",
-                        "type": "function",
-                        "function": {
-                            "name": LIVE_CONTEXT_TOOL_NAME,
-                            "arguments": "{}",
-                        },
-                    }
-                ],
-            },
-            {
-                "role": "assistant",
-                "tool_calls": [
-                    {
-                        "id": "live-2",
-                        "type": "function",
-                        "function": {
-                            "name": LIVE_CONTEXT_TOOL_NAME,
-                            "arguments": '{"name":"静安天气"}',
-                        },
-                    }
-                ],
-            },
-            {"role": "assistant", "content": "已有信息不足。"},
-        ]
-    )
-
-    async def fake_completion(**kwargs: object):
-        return SimpleNamespace(
-            message=next(responses),
-            provider={"name": "primary", "fallback_used": False},
-            attempts=[],
-        )
-
-    with patch(
-        "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
-        side_effect=fake_completion,
-    ):
-        result = await conversation.async_converse(
-            hass, "今天天气。", None, Context(), agent_id=agent_id
-        )
-
-    assert result.response.speech["plain"]["speech"] == "已有信息不足。"
-    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
-    live_calls = [
-        tool
-        for tool in trace["tools"]
-        if tool["phase"] == "call" and tool["name"] == LIVE_CONTEXT_TOOL_NAME
-    ]
-    suppressed = [
-        span
-        for span in trace["timeline_spans"]
-        if span["stage"] == "tool_call_suppressed"
-    ]
-    assert len(live_calls) == 1
-    assert suppressed[0]["attrs"]["reason"] == "duplicate_live_context"
-    assert trace["duplicate_tool_suppressions"][0]["reason"] == (
-        "duplicate_live_context"
-    )
-    assert trace["weather_context_path"]["duplicate_live_context_suppressed"] is True
-
-
-async def test_weather_query_empty_final_gets_local_context_fallback(
-    hass, aioclient_mock, mock_config_entry
-):
-    aioclient_mock.get(
-        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
-    )
-    agent_id = await _setup_agent(
-        hass,
-        mock_config_entry,
-        {
-            CONF_LLM_HASS_API: "assist",
-            CONF_DIAGNOSTIC_TRACES: True,
-            CONF_TRACE_INCLUDE_RAW_MESSAGES: True,
-        },
-    )
-
-    async def fake_completion(**kwargs: object):
-        return SimpleNamespace(
-            message={"role": "assistant", "content": ""},
-            provider={"name": "primary", "fallback_used": False},
-            attempts=[],
-        )
-
-    with patch(
-        "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
-        side_effect=fake_completion,
-    ):
-        result = await conversation.async_converse(
-            hass, "今天天气。", None, Context(), agent_id=agent_id
-        )
-
-    assert result.response.speech["plain"]["speech"] == "暂时没有本地天气数据。"
-    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
-    assert trace["final_speech_text"] == "暂时没有本地天气数据。"
-    assert any(span["stage"] == "fallback_final" for span in trace["timeline_spans"])
-
-
 async def test_explicit_web_weather_can_search_without_repeating_live_context(
     hass, aioclient_mock, mock_config_entry
 ):
@@ -2267,7 +2100,7 @@ async def test_converse_records_high_risk_confirmation_feedback(
     ]
 
 
-async def test_home_state_empty_final_gets_status_fallback(
+async def test_home_state_missing_tool_reports_failed_query(
     hass, aioclient_mock, mock_config_entry
 ):
     aioclient_mock.get(
@@ -2301,7 +2134,8 @@ async def test_home_state_empty_final_gets_status_fallback(
     trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
     assert trace["first_response_decision"]["task_type"] == "indoor_environment_query"
     assert trace["final_speech_text"] == "暂时没有本地状态数据。"
-    assert any(span["stage"] == "fallback_final" for span in trace["timeline_spans"])
+    assert trace["route"]["terminal_outcome"] == "failed"
+    assert trace["route"]["outcome_verdict"]["answerable"] is False
 
 
 async def test_high_risk_empty_final_gets_confirmation_fallback(
@@ -2347,12 +2181,6 @@ async def test_converse_records_plain_feedback_without_search_overplay(
     aioclient_mock.get(
         MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
     )
-    aioclient_mock.post(
-        CHAT_URL,
-        json={
-            "choices": [{"message": {"role": "assistant", "content": "卧室 24 度。"}}]
-        },
-    )
     agent_id = await _setup_agent(
         hass,
         mock_config_entry,
@@ -2362,15 +2190,20 @@ async def test_converse_records_plain_feedback_without_search_overplay(
         },
     )
 
-    await conversation.async_converse(
+    result = await conversation.async_converse(
         hass, "卧室现在多少度", None, Context(), agent_id=agent_id
     )
 
+    # No live-context evidence is available, so the honest local answer is
+    # spoken once and the model is never asked to fabricate a reading.
+    assert result.response.speech["plain"]["speech"] == "暂时没有本地状态数据。"
     trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
     names = [event["earcon_name"] for event in trace["earcons"]]
-    assert names == ["captured"]
+    assert names == ["captured", "failure"]
     assert "search" not in names
     assert "thinking" not in names
+    assert trace["route"]["terminal_outcome"] == "failed"
+    assert trace["route"]["outcome_verdict"]["answerable"] is False
     assert trace["display_status"]["latest"]["state"] == "done"
 
 

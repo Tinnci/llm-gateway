@@ -906,10 +906,9 @@ def _target_scope(text: str, *, domain: str) -> TargetScope:
     if any(
         phrase in normalized
         for phrase in (
-            f"所有{label}",
-            f"全部{label}",
-            f"每个{label}",
-            f"每一{label}",
+            f"{quantifier}{particle}{label}"
+            for quantifier in ("所有", "全部", "每个", "每一")
+            for particle in ("", "的")
         )
     ):
         return "all"

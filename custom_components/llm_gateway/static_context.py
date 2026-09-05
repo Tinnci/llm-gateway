@@ -27,9 +27,7 @@ InventoryTaskType = Literal[
 EntitySource = Literal["static_context", "live_context", "ha_registry"]
 
 _DEVICE_START_RE = re.compile(r"^\s*-\s*names:\s*(?P<names>.+?)\s*$")
-_FIELD_RE = re.compile(
-    r"^\s*(?P<key>domain|areas|state|unit_of_measurement|current_temperature|temperature):\s*(?P<value>.*?)\s*$"
-)
+_FIELD_RE = re.compile(r"^\s*(?P<key>[a-z_]+):\s*(?P<value>.*?)\s*$")
 _TEXT_NORMALIZE_RE = re.compile(r"[\s《》「」『』“”\"'`·.。,:：，、_\-—!?！？]+")
 
 CONTROLLABLE_DOMAINS = {
@@ -538,6 +536,8 @@ def render_scalar_state_answer(  # noqa: PLR0911
         )
 
     metrics = _state_metrics_from_text(text)
+    if not metrics and getattr(route_decision, "scope", "") != "home_summary":
+        return None
     if _is_home_temperature_summary(route_decision, metrics):
         return _render_home_temperature_summary(
             entities,
@@ -548,8 +548,16 @@ def render_scalar_state_answer(  # noqa: PLR0911
 
     candidate_entities = entities
     if _requires_outdoor_weather(route_decision):
+        location = _normalize_query_text(getattr(route_decision, "location_hint", ""))
         candidate_entities = tuple(
-            entity for entity in entities if _is_outdoor_weather_entity(entity)
+            entity
+            for entity in entities
+            if _is_outdoor_weather_entity(entity)
+            and (
+                not location
+                or location
+                in _normalize_query_text(f"{entity.name} {' '.join(entity.areas)}")
+            )
         )
         if not candidate_entities:
             return ScalarStateRenderResult(
@@ -565,6 +573,16 @@ def render_scalar_state_answer(  # noqa: PLR0911
                 available_data=available_data,
             )
 
+    area = str(
+        (getattr(route_decision, "metadata", {}) or {}).get("area")
+        or _area_from_common(text)
+    )
+    if area:
+        candidate_entities = tuple(
+            entity
+            for entity in candidate_entities
+            if area in entity.areas or area in entity.name
+        )
     selected = _select_state_entities(candidate_entities, metrics)
     if not selected:
         if _requires_outdoor_weather(route_decision):
@@ -583,6 +601,13 @@ def render_scalar_state_answer(  # noqa: PLR0911
         return None
 
     speech = _render_scalar_state_summary(text, selected, metrics)
+    supplied = {
+        _metric_for_entity(entity)
+        for entity in selected
+        if _state_metric_is_available(entity, _metric_for_entity(entity))
+    }
+    missing = tuple(metric for metric in metrics if metric not in supplied)
+    answerable = bool(supplied) and not missing
     return ScalarStateRenderResult(
         speech=speech,
         task_type=task_type,
@@ -592,6 +617,9 @@ def render_scalar_state_answer(  # noqa: PLR0911
         metrics=metrics,
         required_data=required_data,
         available_data=available_data,
+        answerable=answerable,
+        missing_requirements=missing,
+        outcome_reason="answered" if answerable else "requested_metric_missing",
     )
 
 
@@ -627,7 +655,10 @@ def _required_data(route_decision: RouteDecision | None) -> tuple[str, ...]:
     if getattr(route_decision, "task_type", "") == "home_temperature_summary":
         return ("temperature_by_area",)
     if getattr(route_decision, "task_type", "") == "device_state_query":
-        return ("entity_state",)
+        attribute = str(
+            (route_decision.metadata or {}).get("requested_attribute") or "state"
+        )
+        return ("entity_state" if attribute == "state" else attribute,)
     return ("current_sensor_snapshot",)
 
 
@@ -658,6 +689,14 @@ def _available_data(entities: tuple[ExposedEntity, ...]) -> tuple[str, ...]:
         for entity in entities
     ):
         available.append("entity_state")
+    available.extend(
+        attribute
+        for attribute in ("percentage", "preset_mode", "brightness", "volume_level")
+        if any(
+            _state_is_available(_entity_attribute(entity, attribute))
+            for entity in entities
+        )
+    )
     return tuple(_dedup_names(available))
 
 
@@ -670,6 +709,7 @@ def _render_device_state_query(
     available_data: tuple[str, ...],
 ) -> ScalarStateRenderResult:
     metadata = getattr(route_decision, "metadata", {}) or {}
+    attribute = str(metadata.get("requested_attribute") or "state")
     domain = str(metadata.get("domain") or "")
     area = str(metadata.get("area") or "")
     target_hint = _normalize_query_text(str(metadata.get("device_hint") or ""))
@@ -705,7 +745,7 @@ def _render_device_state_query(
             target_covered=False,
             outcome_reason="requested_target_missing",
         )
-    if len(candidates) > 1 and not area:
+    if len(candidates) > 1:
         names = "、".join(entity.name for entity in candidates[:3])
         return ScalarStateRenderResult(
             speech=f"找到多个{label}：{names}。你想问哪一个？",
@@ -722,6 +762,7 @@ def _render_device_state_query(
             outcome_reason="ambiguous_target",
         )
     selected = candidates[0]
+    available_data = _available_data((selected,))
     if selected.state in {"unknown", "unavailable"}:
         return ScalarStateRenderResult(
             speech=f"{selected.name}当前状态不可用。",
@@ -737,18 +778,66 @@ def _render_device_state_query(
             target_covered=True,
             outcome_reason="state_unavailable",
         )
+    value = (
+        _entity_attribute(selected, attribute)
+        if attribute != "state"
+        else selected.state
+    )
+    if not _state_is_available(value):
+        return ScalarStateRenderResult(
+            speech=f"我能看到{selected.name}的开关状态，但还没有它的{_device_attribute_label(attribute)}数据。",
+            task_type=task_type,
+            source="GetLiveContext",
+            entity_count=1,
+            entities=(selected,),
+            metrics=(attribute,),
+            answerable=False,
+            missing_requirements=(attribute,),
+            required_data=(attribute,),
+            available_data=available_data,
+            target_covered=True,
+            outcome_reason="requested_attribute_missing",
+        )
+    speech = (
+        f"{selected.name}现在{_spoken_device_state(selected)}。"
+        if attribute == "state"
+        else _render_device_attribute(selected, attribute, value)
+    )
     return ScalarStateRenderResult(
-        speech=f"{selected.name}现在{_spoken_device_state(selected)}。",
+        speech=speech,
         task_type=task_type,
         source="GetLiveContext",
         entity_count=1,
         entities=(selected,),
-        metrics=("state",),
+        metrics=(attribute,),
         required_data=required_data,
         available_data=available_data,
         target_covered=True,
         outcome_reason="answered",
     )
+
+
+def _device_attribute_label(attribute: str) -> str:
+    return {
+        "percentage": "速度百分比",
+        "preset_mode": "预设模式",
+        "brightness": "亮度",
+        "volume_level": "音量",
+    }.get(attribute, attribute)
+
+
+def _render_device_attribute(entity: ExposedEntity, attribute: str, value: str) -> str:
+    label = _device_attribute_label(attribute)
+    if attribute in {"percentage", "brightness", "volume_level"}:
+        try:
+            number = float(value)
+            scale = {"percentage": 1, "brightness": 100 / 255, "volume_level": 100}[
+                attribute
+            ]
+            value = f"{number * scale:g}%"
+        except ValueError:
+            pass
+    return f"{entity.name}当前{label}是 {value}。"
 
 
 def _spoken_device_state(entity: ExposedEntity) -> str:
@@ -909,7 +998,14 @@ def parse_static_devices(
                 current_state = value
             elif key == "unit_of_measurement":
                 current_unit = value
-            elif key in {"current_temperature", "temperature"}:
+            elif key in {
+                "current_temperature",
+                "temperature",
+                "percentage",
+                "preset_mode",
+                "brightness",
+                "volume_level",
+            }:
                 current_attributes[key] = _clean_state_value(value)
     flush()
     return entities
@@ -1080,7 +1176,7 @@ def _state_metrics_from_text(text: str) -> tuple[str, ...]:
     if "湿度" in normalized:
         metrics.append("humidity")
     if "天气" in normalized:
-        metrics.extend(("weather", "temperature", "humidity", "pm25"))
+        metrics.append("weather")
     return _ordered_metrics(metrics)
 
 

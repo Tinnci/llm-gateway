@@ -63,12 +63,35 @@ budget. A terminal result includes `stop_reason`, `step_count`, and an
 assigns the step number, records phase transitions and durations, and rejects a
 continuation that changes the route decision selected at the safety boundary.
 
-Device-state reads are the first fully migrated query loop. The capability
-router resolves a target domain and hint, `GetLiveContext` receives that domain,
-and the renderer must prove that the returned entity covers the requested
-target before it may answer. A successful HTTP/tool call is therefore not
-treated as a successful turn when, for example, a fan question returns only
-temperature sensors.
+## Current-state query ownership
+
+Device properties, indoor measurements, and current weather share
+`LocalLiveContextLoop`. The same loop also executes each read-only child of a
+multi-intent request. The conversation kernel commits its result; it has one
+owner for speech and outcome evidence.
+
+The existing types carry each responsibility:
+
+- `RouteDecision`: operation, domain, target hint, area, scope and requested
+  attribute. A state question stays a read even when it contains “打开”.
+- `WeatherContextProvider` / the HA `GetLiveContext` adapter: obtain current
+  data. Current weather prefers the HA weather entity, then a weather-scoped
+  read. An explicit location must match the data source.
+- `ScalarStateRenderResult`: speech, actual available data, missing attributes,
+  target coverage and answerability. Fan percentage, light brightness and media
+  volume use their own attributes. An on/off state is not speed evidence.
+- `TurnLoopResult`: answered, clarification or failure, with the renderer's
+  verdict. Successful transport alone does not produce an answered outcome.
+
+The loop uses the query's requirements throughout selection and rendering.
+Weather requests select weather data; a PM2.5 result cannot substitute for it.
+Named indoor areas stay attached to their readings. Missing or unavailable
+requested metrics produce a non-answerable result, including when a partial
+spoken summary is useful.
+
+The old kernel-local state executor and the model-loop scalar-render shortcut
+were removed. Model-led turns retain their own tool-to-model response cycle;
+deterministic state reads finish through the query loop.
 
 The device-state recovery policy is deliberately bounded:
 
@@ -86,22 +109,25 @@ API presents them as attempts of one logical read. Mixed multi-intent turns
 use an atomic capability preflight. Fully supported local children compose one
 answer; other combinations request separate turns before action dispatch.
 
-Weather and generic environmental summaries keep their established providers
-and renderers. Migrating one route family at a time preserves their fallback
-semantics.
+Forecast requests retain the existing weather-service and explicit-search
+policy, including location clarification. They are separate from current-state
+reads. Device writes retain exposure filtering, target resolution, confirmation,
+and post-action verification. Quantifiers such as “所有的灯” and “所有灯” select
+the same explicit all-target scope.
 
 ## Path ownership roadmap
 
 Paths migrate by capability family, not by utterance. The intended ownership
 order is:
 
-1. device state and its bounded read recovery;
-2. weather provider → live-context fallback;
-3. indoor environment metric coverage;
-4. device actions plus post-action state verification;
-5. multi-intent composition over child loop results;
-6. model/tool iteration, without forcing durable deep tasks into the voice-step
-   budget.
+Current-state reads and read-only multi-intent children now share the query
+loop. Remaining work is forecast/search composition and write-result composition.
+Model/tool iteration and durable deep tasks keep their distinct lifecycles.
+
+Regression checks start from reported utterances and pass through the real
+router, planner, loop and renderer. They exercise unrelated data, missing
+attributes, weather-source selection, and read/control intent separation.
+These checks use fake HA data and make no physical device changes.
 
 Inventory and stable local answers can use single-step adapters later. Deep
 tasks remain a separate durable lifecycle because they outlive the voice turn.

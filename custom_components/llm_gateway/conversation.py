@@ -82,7 +82,7 @@ from .search import (
     SEARCH_TOOL_NAME,
     mark_external_tool_calls,
 )
-from .static_context import render_device_inventory, render_scalar_state_answer
+from .static_context import render_device_inventory
 from .tools_registry import (
     enabled_external_tools,
     execute_external_tools,
@@ -451,6 +451,8 @@ def _local_live_context_slots(
     routed_domain = str(metadata.get("domain") or "")
     if routed_domain:
         domain = routed_domain
+    elif route_decision is not None and route_decision.scope == "outdoor_weather":
+        domain = "weather"
     elif "空调" in text:
         domain = "climate"
         device_hint = device_hint or "空调"
@@ -1022,18 +1024,6 @@ class LLMGatewayConversationEntity(
                 run_id,
                 turn_token,
             )
-        if route_decision.next_action == "call_tool_then_local_render":
-            local_context_result = await self._async_try_local_live_context(
-                user_input,
-                chat_log,
-                started,
-                first_response,
-                route_decision,
-                run_id,
-                turn_token,
-            )
-            if local_context_result is not None:
-                return local_context_result
         if first_response.task_type in INVENTORY_TASK_TYPES:
             inventory = render_device_inventory(
                 effective_text,
@@ -1246,150 +1236,6 @@ class LLMGatewayConversationEntity(
             "retryable": False,
         }
 
-    async def _async_try_local_live_context(  # noqa: PLR0913, PLR0917
-        self,
-        user_input: conversation.ConversationInput,
-        chat_log: conversation.ChatLog,
-        started: float,
-        first_response: FirstResponseDecision,
-        route_decision: RouteDecision,
-        run_id: str,
-        turn_token: TurnToken,
-    ) -> conversation.ConversationResult | None:
-        """Execute GetLiveContext locally and render scalar state without an LLM."""
-        runtime = self.entry.runtime_data
-        if not _chat_log_has_tool(chat_log, LIVE_CONTEXT_TOOL_NAME):
-            self._mark_run(
-                runtime,
-                run_id,
-                "local_live_context_unavailable",
-                attrs={
-                    "reason": "missing_GetLiveContext_tool",
-                    "llm_used": False,
-                    "route": route_decision.route,
-                },
-            )
-            return None
-
-        tool_args = _local_live_context_tool_args(user_input.text, route_decision)
-        slots = _local_live_context_slots(user_input.text, route_decision)
-        tool_call = llm.ToolInput(
-            id=ulid.ulid_now(),
-            tool_name=LIVE_CONTEXT_TOOL_NAME,
-            tool_args=tool_args,
-        )
-        self._mark_run(
-            runtime,
-            run_id,
-            "local_live_context_call",
-            attrs={
-                "name": LIVE_CONTEXT_TOOL_NAME,
-                "args": tool_args,
-                "slots": slots,
-                "llm_used": False,
-                "tools_used": [LIVE_CONTEXT_TOOL_NAME],
-            },
-        )
-        try:
-            async for tool_result in chat_log.async_add_assistant_content(
-                conversation.AssistantContent(
-                    agent_id=self.entity_id,
-                    content=None,
-                    tool_calls=[tool_call],
-                )
-            ):
-                result = tool_result.tool_result
-                self._mark_run(
-                    runtime,
-                    run_id,
-                    "tool_result",
-                    status="error" if "error" in result else "ok",
-                    attrs={
-                        "name": tool_result.tool_name,
-                        "iteration": 0,
-                        "local_live_context": True,
-                    },
-                )
-                if "error" in result:
-                    self._mark_run(
-                        runtime,
-                        run_id,
-                        "local_live_context_failed",
-                        status="error",
-                        attrs={
-                            "error": str(result.get("error") or ""),
-                            "llm_used": False,
-                        },
-                    )
-                    break
-                local_state = render_scalar_state_answer(
-                    user_input.text,
-                    result,
-                    task_type=first_response.task_type,
-                    route_decision=route_decision,
-                )
-                if local_state is not None:
-                    self._mark_run(
-                        runtime,
-                        run_id,
-                        "local_state_render",
-                        attrs=local_state.trace_attrs(),
-                    )
-                    await self._speak(chat_log, local_state.speech)
-
-                    return await self._async_finalize_turn(
-                        user_input,
-                        chat_log,
-                        started,
-                        _local_route_trace(
-                            "local_live_context",
-                            "live_context_renderer",
-                            first_response,
-                            route_decision,
-                        ),
-                        run_id,
-                        turn_token,
-                    )
-        except (HomeAssistantError, ValueError) as err:
-            self._mark_run(
-                runtime,
-                run_id,
-                "local_live_context_failed",
-                status="error",
-                attrs={
-                    "error": type(err).__name__,
-                    "llm_used": False,
-                },
-            )
-
-        fallback = _empty_response_fallback(first_response)
-        self._mark_run(
-            runtime,
-            run_id,
-            "local_state_render",
-            status="error",
-            attrs={
-                "reason": "no_renderable_state",
-                "llm_final_used": False,
-                "source": "GetLiveContext",
-            },
-        )
-        await self._speak(chat_log, fallback)
-
-        return await self._async_finalize_turn(
-            user_input,
-            chat_log,
-            started,
-            _local_route_trace(
-                "local_live_context",
-                "live_context_renderer",
-                first_response,
-                route_decision,
-            ),
-            run_id,
-            turn_token,
-        )
-
     async def _async_try_weather_context(  # noqa: PLR0913, PLR0917
         self,
         user_input: conversation.ConversationInput,
@@ -1568,117 +1414,34 @@ class LLMGatewayConversationEntity(
                     reason="requires_separate_turns",
                     completed_subtasks=len(subtask_traces),
                 )
-            tool_args = _local_live_context_tool_args(subtask.text, decision)
-            operation_id = f"{run_id}:GetLiveContext:{subtask.index}"
-            tool_call = llm.ToolInput(
-                id=ulid.ulid_now(),
-                tool_name=LIVE_CONTEXT_TOOL_NAME,
-                tool_args=tool_args,
-            )
-            self._mark_run(
-                runtime,
-                run_id,
-                "local_live_context_call",
-                attrs={
-                    "name": LIVE_CONTEXT_TOOL_NAME,
-                    "args": tool_args,
-                    "iteration": 0,
-                    "operation_id": operation_id,
-                    "subtask_index": subtask.index,
-                    "subtask_text": subtask.text,
-                    "llm_used": False,
-                    "tools_used": [LIVE_CONTEXT_TOOL_NAME],
-                },
-            )
-            llm_api = chat_log.llm_api
-            if llm_api is None:
-                return await self._async_clarify_multi_intent(
-                    user_input,
-                    chat_log,
-                    started,
-                    first_response,
-                    route_decision,
-                    multi_intent_plan,
-                    run_id,
-                    turn_token,
-                    reason="live_context_required",
-                    completed_subtasks=len(subtask_traces),
-                )
-            try:
-                result = await llm_api.async_call_tool(tool_call)
-            except (HomeAssistantError, ValueError) as err:
-                self._mark_run(
-                    runtime,
-                    run_id,
-                    "tool_result",
-                    status="error",
-                    attrs={
-                        "name": LIVE_CONTEXT_TOOL_NAME,
-                        "iteration": 0,
-                        "operation_id": operation_id,
-                        "local_live_context": True,
-                        "subtask_index": subtask.index,
-                        "error": type(err).__name__,
-                    },
-                )
-                return await self._async_clarify_multi_intent(
-                    user_input,
-                    chat_log,
-                    started,
-                    first_response,
-                    route_decision,
-                    multi_intent_plan,
-                    run_id,
-                    turn_token,
-                    reason="live_context_error",
-                    completed_subtasks=len(subtask_traces),
-                )
-            self._mark_run(
-                runtime,
-                run_id,
-                "tool_result",
-                status="error" if "error" in result else "ok",
-                attrs={
-                    "name": LIVE_CONTEXT_TOOL_NAME,
-                    "iteration": 0,
-                    "operation_id": operation_id,
-                    "local_live_context": True,
-                    "subtask_index": subtask.index,
-                },
-            )
-            rendered = None
-            if "error" not in result:
-                rendered = render_scalar_state_answer(
-                    subtask.text,
-                    result,
-                    task_type=decision.task_type,
+            child = await run_turn_loop(
+                LocalLiveContextLoop(),
+                self.hass,
+                TurnLoopContext(
+                    text=subtask.text,
                     route_decision=decision,
-                )
-            if rendered is None:
-                return await self._async_clarify_multi_intent(
-                    user_input,
-                    chat_log,
-                    started,
-                    first_response,
-                    route_decision,
-                    multi_intent_plan,
-                    run_id,
-                    turn_token,
-                    reason="state_evidence_required",
-                    completed_subtasks=len(subtask_traces),
-                )
-            self._mark_run(
-                runtime,
-                run_id,
-                "local_state_render",
-                status="ok" if rendered.answerable else "error",
-                attrs={
-                    **rendered.trace_attrs(),
-                    "subtask_index": subtask.index,
-                    "subtask_text": subtask.text,
-                },
+                    turn_id=f"{run_id}:{subtask.index}",
+                ),
+                TurnLoopServices(
+                    plan_live_context=lambda text, route: (
+                        _local_live_context_tool_args(text, route),
+                        _local_live_context_slots(text, route),
+                    ),
+                    execute_live_context=lambda args: (
+                        self._async_execute_live_context_tool(chat_log, args)
+                    ),
+                ),
             )
-            if not rendered.answerable:
+            if child is not None:
+                for event in child.trace_events:
+                    self._mark_run(
+                        runtime,
+                        run_id,
+                        event.stage,
+                        status=event.status,
+                        attrs={**event.attrs, "subtask_index": subtask.index},
+                    )
+            if child is None or child.outcome_verdict.get("answerable") is not True:
                 return await self._async_clarify_multi_intent(
                     user_input,
                     chat_log,
@@ -1691,8 +1454,10 @@ class LLMGatewayConversationEntity(
                     reason="target_evidence_required",
                     completed_subtasks=len(subtask_traces),
                 )
-            subanswers.append(rendered.speech)
-            subtask_traces.append(subtask.as_dict())
+            subanswers.append(child.speech)
+            subtask_traces.append(
+                {**subtask.as_dict(), "outcome_verdict": child.outcome_verdict}
+            )
 
         speech = _compose_spoken_subanswers(subanswers)
         if not speech:
@@ -2621,21 +2386,6 @@ class LLMGatewayConversationEntity(
                     and tool_result.tool_name == LIVE_CONTEXT_TOOL_NAME
                     and "error" not in result
                 ):
-                    local_state = render_scalar_state_answer(
-                        user_text,
-                        result,
-                        task_type=first_response.task_type,
-                    )
-                    if local_state is not None:
-                        self._mark_run(
-                            runtime,
-                            run_id,
-                            "local_state_render",
-                            attrs=local_state.trace_attrs(),
-                        )
-                        await self._speak(chat_log, local_state.speech)
-
-                        return provider_runs
                     force_final = True
                     self._mark_run(
                         runtime,

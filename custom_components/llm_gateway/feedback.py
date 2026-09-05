@@ -579,6 +579,13 @@ class VoiceFeedbackPolicy:
     def _emit_failure(
         self, turn_id: str, t_ms: int, short_text: str
     ) -> tuple[dict[str, Any], dict[str, Any]]:
+        if any(
+            event.get("earcon_name") == "failure"
+            for event in self._store.earcons_for_turn(turn_id)
+        ):
+            # One audible failure cue per turn: repeat error stages of the
+            # same outcome stay trace-only so a bad turn cannot spam sounds.
+            return None, None
         earcon = self._store.emit_earcon(
             turn_id=turn_id,
             earcon_name="failure",

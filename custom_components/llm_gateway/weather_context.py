@@ -204,10 +204,18 @@ class WeatherContextProvider:
         )
 
     def _select_weather_state(self, *, location_hint: str) -> State | None:
+        requested_location = _normalize(location_hint)
         states = [
             state
             for state in self._hass.states.async_all(WEATHER_DOMAIN)
             if _state_is_available(state.state)
+            and (
+                not requested_location
+                or requested_location
+                in _normalize(
+                    f"{state.entity_id} {state.attributes.get('friendly_name', '')}"
+                )
+            )
         ]
         if not states:
             return None

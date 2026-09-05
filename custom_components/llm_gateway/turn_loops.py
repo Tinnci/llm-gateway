@@ -8,6 +8,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Protocol
 
+from .capabilities import environment_metric_from_text
 from .capability_executor import (
     LocalCapabilityResult,
     async_try_execute_local_capability,
@@ -18,6 +19,7 @@ from .dialogue import (
     dialogue_frame_from_route,
 )
 from .static_context import render_scalar_state_answer
+from .weather_context import WeatherContextProvider, render_weather_context_answer
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterable
@@ -348,17 +350,54 @@ class LocalLiveContextLoop:
     name = "local_live_context"
 
     def matches(self, context: TurnLoopContext) -> bool:
-        return (
-            context.route_decision.task_type == "device_state_query"
-            and context.route_decision.next_action == "call_tool_then_local_render"
-        )
+        return context.route_decision.next_action == "call_tool_then_local_render"
 
-    async def run(
+    async def run(  # noqa: PLR0911 - source selection and bounded read outcomes.
         self,
         _hass: HomeAssistant,
         context: TurnLoopContext,
         services: TurnLoopServices,
     ) -> TurnLoopDecision:
+        if context.route_decision.task_type == "outdoor_current_weather_query":
+            weather = await WeatherContextProvider(_hass).async_get_current(
+                location_hint=context.route_decision.location_hint,
+            )
+            if weather is not None:
+                metric = environment_metric_from_text(context.text) or "weather"
+                answerable = (
+                    bool(weather.current.condition)
+                    if metric == "weather"
+                    else getattr(weather.current, metric, None) is not None
+                )
+                verdict = {
+                    "answerable": answerable,
+                    "target_covered": True,
+                    "reason": "answered" if answerable else "requested_metric_missing",
+                    "required_data": [metric],
+                    "available_data": [metric] if answerable else [],
+                }
+                return TurnLoopResult(
+                    status="complete" if answerable else "failed",
+                    speech=render_weather_context_answer(
+                        weather,
+                        time_horizon=context.route_decision.time_horizon or "now",
+                        requested_metric=metric,
+                    ),
+                    route_kind="local_weather",
+                    route_model="weather_context_provider",
+                    stop_reason=verdict["reason"],
+                    outcome_verdict=verdict,
+                    trace_events=(
+                        TurnLoopTraceEvent(
+                            stage="weather_entity", attrs=weather.trace_attrs()
+                        ),
+                        TurnLoopTraceEvent(
+                            stage="outcome_evaluated",
+                            status="ok" if answerable else "warning",
+                            attrs=verdict,
+                        ),
+                    ),
+                )
         if services.plan_live_context is None or services.execute_live_context is None:
             return None
         tool_args, slots = services.plan_live_context(
@@ -370,6 +409,11 @@ class LocalLiveContextLoop:
                 key: value for key, value in tool_args.items() if key != "area"
             }
         slots = {**slots, "strategy": strategy}
+        unavailable_speech = (
+            "暂时没有本地天气数据。"
+            if context.route_decision.scope == "outdoor_weather"
+            else "暂时没有本地状态数据。"
+        )
         events = [
             TurnLoopTraceEvent(
                 stage="local_live_context_call",
@@ -425,7 +469,7 @@ class LocalLiveContextLoop:
             )
             return TurnLoopResult(
                 status="failed",
-                speech="暂时没有本地状态数据。",
+                speech=unavailable_speech,
                 route_kind="local_live_context",
                 route_model="live_context_renderer",
                 trace_events=tuple(events),
@@ -456,7 +500,7 @@ class LocalLiveContextLoop:
             )
             return TurnLoopResult(
                 status="failed",
-                speech="暂时没有本地状态数据。",
+                speech=unavailable_speech,
                 route_kind="local_live_context",
                 route_model="live_context_renderer",
                 trace_events=tuple(events),
@@ -492,7 +536,8 @@ class LocalLiveContextLoop:
         verdict = {
             "answerable": rendered.answerable,
             "target_covered": rendered.target_covered,
-            "reason": rendered.outcome_reason or "answered",
+            "reason": rendered.outcome_reason
+            or ("answered" if rendered.answerable else "required_data_missing"),
             "required_data": list(rendered.required_data),
             "available_data": list(rendered.available_data),
         }
