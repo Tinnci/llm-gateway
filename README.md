@@ -255,6 +255,7 @@ TypeScript contract checks use `tsgo` through
 ## Documentation
 
 - [Voice Harness architecture](docs/harness-architecture.md)
+- [Multi-turn voice implementation handoff](docs/voice-conversation-handoff.md)
 - [Voice Harness inspection API](docs/voice-harness-api.md)
 - [Pipeline architecture](docs/pipeline-architecture.md)
 - [Turn event stream](docs/turn-event-stream.md)

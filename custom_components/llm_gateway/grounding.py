@@ -7,8 +7,6 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from .policy import should_require_search
-
 GroundingStatus = Literal[
     "not_required",
     "no_answer",
@@ -71,7 +69,7 @@ def initial_grounding_result(
     search_results: list[dict[str, Any]],
 ) -> GroundingResult:
     """Return cheap source-grounding state for the voice critical path."""
-    if not _is_source_question(user_text) and not should_require_search(user_text):
+    if not _is_source_question(user_text):
         return GroundingResult(status="not_required", text=assistant_text)
     if not assistant_text:
         return GroundingResult(status="no_answer", text=assistant_text)

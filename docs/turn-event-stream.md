@@ -58,7 +58,7 @@ records whether the requested target was actually covered.
 The Voice Harness panel renders trace diagnostics through a validated static
 definition (`voice-harness-diagnostic-tabs.js`). The composition root defines
 each tab once with `{ id, labelKey, order, render }`; the drawer iterates the
-immutable collection, renders sections whose body is non-empty, and remembers
+ordered collection, renders sections whose body is non-empty, and remembers
 the selected tab per record by tab id. Adding a diagnostic section requires one
 tab definition plus its render function while the drawer remains unchanged.
 Record fields no panel consumes fall through a generic raw-tab fallback, so a

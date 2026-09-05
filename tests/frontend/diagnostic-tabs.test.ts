@@ -18,8 +18,6 @@ test("defines tabs in ascending order with stable ties", () => {
     "extra",
     "raw",
   ]);
-  expect(Object.isFrozen(tabs)).toBe(true);
-  expect(Object.isFrozen(tabs[0])).toBe(true);
 });
 
 test("entries without an explicit order sort last", () => {

@@ -74,9 +74,9 @@ export function defineDiagnosticTabs(entries) {
     const order = Number.isFinite(numericOrder) ? numericOrder : Number.MAX_SAFE_INTEGER;
     return {
       index,
-      tab: Object.freeze({ id, labelKey, order, render: entry.render }),
+      tab: { id, labelKey, order, render: entry.render },
     };
   });
   tabs.sort((left, right) => left.tab.order - right.tab.order || left.index - right.index);
-  return Object.freeze(tabs.map(({ tab }) => tab));
+  return tabs.map(({ tab }) => tab);
 }

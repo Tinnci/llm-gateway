@@ -13,50 +13,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  version-source-guard:
-    runs-on: ubuntu-latest
-    if: github.ref_type != 'tag'
-    steps:
-      - name: 📥 Checkout the repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: 🚦 Reject unsynchronized version changes
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          BEFORE_SHA: ${{ github.event.before }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          range=""
-          if [[ "${EVENT_NAME}" == "pull_request" ]]; then
-            range="${BASE_SHA}...${HEAD_SHA}"
-          elif [[ "${EVENT_NAME}" == "push" ]]; then
-            if [[ "${BEFORE_SHA}" =~ ^0+$ ]]; then
-              range="${HEAD_SHA}^..${HEAD_SHA}"
-            else
-              range="${BEFORE_SHA}..${HEAD_SHA}"
-            fi
-          fi
-
-          changed=""
-          if [[ -n "${range}" ]]; then
-            changed="$(git diff --name-only "${range}" -- \
-              pyproject.toml \
-              custom_components/llm_gateway/manifest.json \
-              uv.lock || true)"
-          fi
-
-          if [[ -z "${changed}" ]]; then
-            exit 0
-          fi
-
-          echo "Version files changed:" >&2
-          echo "${changed}" >&2
-          python3 scripts/check_version_sync.py
-
   version-sync-check:
     runs-on: ubuntu-latest
     steps:

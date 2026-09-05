@@ -61,16 +61,16 @@ export function defineHarnessViews(entries) {
     const order = Number.isFinite(numericOrder) ? numericOrder : Number.MAX_SAFE_INTEGER;
     return {
       index,
-      view: Object.freeze({
+      view: {
         id,
         labelKey,
         icon,
         order,
         render: entry.render,
         ...(entry.visible ? { visible: entry.visible } : {}),
-      }),
+      },
     };
   });
   views.sort((left, right) => left.view.order - right.view.order || left.index - right.index);
-  return Object.freeze(views.map(({ view }) => view));
+  return views.map(({ view }) => view);
 }

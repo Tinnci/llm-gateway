@@ -28,6 +28,18 @@ outside the kernel contract.
 
 ## Harness Loop lifecycle
 
+The committed `RouteDecision` owns tool scope and the next operation. Search
+availability reads `allowed_tools` and required slots from that decision;
+the initial model request selects search when `next_action` is `search`.
+Follow-up text therefore uses the same resolved decision for tool exposure
+and execution. Source-answer grounding inspects the question and captured
+search evidence directly.
+
+Execution boundaries retain admin authorization, high-risk action confirmation,
+target coverage, provider timeouts, and cancellation of superseded turns.
+Frontend composition uses readonly types, input validation, and stable ordering.
+CI checks version consistency once; release packaging also checks the tag.
+
 The runtime loop is a bounded decision cycle, not a synonym for the diagnostic
 page:
 
@@ -111,7 +123,7 @@ set. Top-level Harness views and diagnostic drawer tabs use validated static
 definitions at the frontend composition root.
 
 Each definition has a stable key. Duplicate keys fail immediately and the
-result is immutable. Consumers iterate the composed definition instead of
+result carries readonly types. Consumers iterate the composed definition instead of
 containing a switch statement for each capability.
 
 ### Keep channels separate
@@ -164,7 +176,7 @@ A diagnostic drawer registration contains:
 - `render(panel, record, context)`
 
 Both definition helpers reject malformed entries and duplicate IDs, preserve
-stable ordering, and return immutable collections.
+stable ordering, and return ordered collections.
 
 The panel and its ES module dependencies share one versioned asset namespace.
 The entry module loads from `/assets/<version>/`, so every relative import

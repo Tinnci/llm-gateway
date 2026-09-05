@@ -19,10 +19,10 @@ export type ReplayPair = {
   forkId: string;
 };
 
-export const TRACE_VIRTUALIZATION_THRESHOLD = Object.freeze({
+export const TRACE_VIRTUALIZATION_THRESHOLD = {
   turns: 200,
   eventsPerTurn: 1000,
-});
+} as const;
 
 export function shouldVirtualizeTrace(
   turnCount: number,

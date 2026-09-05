@@ -6,7 +6,7 @@ import {
 
 const render = () => "";
 
-test("defines views in stable order as an immutable collection", () => {
+test("defines views in stable order", () => {
   const views = defineHarnessViews([
     { id: "later", labelKey: "tab.config", icon: "mdi:cog", order: 20, render },
     { id: "first", labelKey: "tab.runs", icon: "mdi:play", order: 10, render },
@@ -14,8 +14,6 @@ test("defines views in stable order as an immutable collection", () => {
   ]);
 
   expect(views.map((entry) => entry.id)).toEqual(["first", "tie", "later"]);
-  expect(Object.isFrozen(views)).toBe(true);
-  expect(Object.isFrozen(views[0])).toBe(true);
 });
 
 test("rejects duplicate and malformed definitions", () => {

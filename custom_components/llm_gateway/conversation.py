@@ -1953,6 +1953,29 @@ class LLMGatewayConversationEntity(
                         "result": "repair_unavailable",
                     },
                 )
+        frame_stack = self._dialogue_frames.get(
+            dialogue_pending_key(
+                user_input.conversation_id,
+                getattr(user_input, "device_id", "") or "",
+                self.entry.entry_id,
+            )
+        )
+        awaiting_reply = bool(frame_stack and frame_stack.active_frame())
+        result.continue_conversation = bool(
+            assistant_text.strip()
+            and not output_modified
+            and (awaiting_reply or assistant_text.rstrip().endswith(("?", "？", ";")))
+        )
+        self._mark_run(
+            runtime,
+            run_id,
+            "conversation_continuation",
+            attrs={
+                "requested": result.continue_conversation,
+                "awaiting_reply": awaiting_reply,
+                "source": "final_speech_and_dialogue",
+            },
+        )
         await runtime.memory.async_record_turn(
             user_input.conversation_id,
             user_input.text,

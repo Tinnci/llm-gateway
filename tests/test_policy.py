@@ -10,7 +10,6 @@ from custom_components.llm_gateway.capabilities import decide_route
 from custom_components.llm_gateway.policy import (
     should_allow_search,
     should_force_search_in_voice_path,
-    should_require_search,
     validate_tool_call,
 )
 
@@ -21,18 +20,11 @@ def test_search_policy_gating():
     assert should_allow_search("上海静安附近最近的麦当劳在哪里？")
     assert not should_allow_search("附近最近的麦当劳在哪里？")
     assert should_allow_search("这个设备错误码是什么意思")
-    assert should_allow_search("关关雎鸠，在河之洲，这句话是出自哪里？")
+    assert not should_allow_search("关关雎鸠，在河之洲，这句话是出自哪里？")
     assert not should_allow_search("今天天气。")
     assert not should_allow_search("空气质量怎么样？")
     assert not should_allow_search("打开卧室灯")
     assert not should_allow_search("把它调暗一点")
-
-
-def test_search_policy_requires_grounding_for_source_questions():
-    assert should_require_search("关关雎鸠，在河之洲，这句话是出自哪里？")
-    assert should_require_search("这个典故的原文是什么？")
-    assert not should_require_search("查一下今天空气质量")
-    assert not should_require_search("打开卧室灯")
 
 
 def test_search_policy_only_forces_voice_path_for_current_or_explicit_search():
@@ -151,3 +143,26 @@ def test_tool_policy_uses_committed_route_decision() -> None:
     )
 
     assert decision.reason == "missing_user_slot"
+
+
+def test_search_uses_committed_tools_for_followup_without_search_keywords():
+    route = replace(
+        decide_route("上海静安附近最近的麦当劳在哪里？"),
+        task_family="stable_knowledge",
+    )
+    call = llm.ToolInput(
+        id="search-followup",
+        tool_name="search_web",
+        tool_args={"query": "上海静安 麦当劳 营业时间"},
+        external=True,
+    )
+
+    assert should_allow_search("那它几点营业？", route)
+    assert should_force_search_in_voice_path("那它几点营业？", route)
+    assert validate_tool_call(call, "那它几点营业？", route).allowed
+
+
+def test_search_keywords_preserve_committed_local_tool_scope():
+    route = decide_route("打开卧室灯")
+    assert not should_allow_search("网上搜索最新价格", route)
+    assert not should_force_search_in_voice_path("网上搜索最新价格", route)

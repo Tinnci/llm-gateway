@@ -798,9 +798,11 @@ async def test_new_person_task_suspends_weather_dialogue_frame_without_prompt_le
 
     completion.assert_not_called()
     assert "哪个地方" in first.response.speech["plain"]["speech"]
+    assert first.continue_conversation is True
     second_speech = second.response.speech["plain"]["speech"]
     assert "Virginia Hope" in second_speech
     assert "Virginia Woolf" in second_speech
+    assert second.continue_conversation is True
     assert "哪个地方" not in second_speech
 
     records = mock_config_entry.runtime_data.trace_store.snapshot()["records"]
@@ -2471,7 +2473,7 @@ async def test_converse_sanitizes_markdown_for_tts(
                 {
                     "message": {
                         "role": "assistant",
-                        "content": "这是 **重要** 内容。第二句。第三句。",
+                        "content": "这是 **重要** 内容。第二句。需要详细说明吗？",
                     }
                 }
             ]
@@ -2489,6 +2491,7 @@ async def test_converse_sanitizes_markdown_for_tts(
         hass, "说明一下", None, Context(), agent_id=agent_id
     )
     assert result.response.speech["plain"]["speech"] == "这是 重要 内容。第二句。"
+    assert result.continue_conversation is False
 
 
 async def test_converse_retries_unsafe_reasoning_repetition_output(

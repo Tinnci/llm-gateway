@@ -1976,10 +1976,6 @@ function tokenize(value, options) {
   return retLines;
 }
 // custom_components/llm_gateway/frontend/voice-harness-replay-diff.ts
-var TRACE_VIRTUALIZATION_THRESHOLD = Object.freeze({
-  turns: 200,
-  eventsPerTurn: 1000
-});
 function object(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }

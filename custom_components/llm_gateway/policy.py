@@ -32,69 +32,6 @@ HIGH_RISK_KEYWORDS = (
 )
 CONFIRMATION_KEYWORDS = ("确认", "确定", "是的", "对", "执行", "打开吧", "关掉吧")
 
-_SEARCH_ALLOW_KEYWORDS = (
-    "查一下",
-    "搜一下",
-    "搜索",
-    "网上",
-    "上网",
-    "联网",
-    "外网",
-    "最新",
-    "新闻",
-    "交通",
-    "说明书",
-    "错误码",
-    "固件",
-    "兼容",
-    "价格",
-    "电价",
-    "发布",
-    "出处",
-    "出自哪里",
-    "来源",
-    "典故",
-    "原文",
-)
-_SEARCH_REQUIRE_KEYWORDS = (
-    "出处",
-    "出自哪里",
-    "典故",
-    "原文",
-)
-_VOICE_PATH_SEARCH_KEYWORDS = (
-    "查一下",
-    "搜一下",
-    "搜索",
-    "网上",
-    "上网",
-    "联网",
-    "外网",
-    "最新",
-    "新闻",
-    "交通",
-    "说明书",
-    "错误码",
-    "固件",
-    "兼容",
-    "价格",
-    "电价",
-    "发布",
-)
-_SEARCH_FORBID_KEYWORDS = (
-    "打开",
-    "关",
-    "调暗",
-    "调亮",
-    "设置",
-    "温度",
-    "湿度",
-    "室温",
-    "刚才",
-    "那个",
-    "它",
-)
-
 
 @dataclass(frozen=True, slots=True)
 class PolicyDecision:
@@ -111,54 +48,17 @@ def should_allow_search(
     route_decision: RouteDecision | None = None,
 ) -> bool:
     """Return whether the assistant may use web search for this user turn."""
-    normalized = text.strip().lower()
-    if not normalized:
-        return False
     route = route_decision or decide_route(text)
-    if route.task_family in {"location_dependent_query", "external_current_info"}:
-        return "search_web" in route.allowed_tools and not route.missing_requirements
-    if route.task_family in {
-        "home_control",
-        "home_inventory",
-        "home_capability",
-        "home_state",
-        "conversation_control",
-    }:
-        return False
-    if any(keyword in normalized for keyword in _SEARCH_ALLOW_KEYWORDS):
-        return True
-    if any(keyword in normalized for keyword in _SEARCH_FORBID_KEYWORDS):
-        return False
-    return False
-
-
-def should_require_search(
-    text: str,
-    route_decision: RouteDecision | None = None,
-) -> bool:
-    """Return whether the assistant should ground the turn with web search."""
-    normalized = text.strip().lower()
-    return should_allow_search(normalized, route_decision) and any(
-        keyword in normalized for keyword in _SEARCH_REQUIRE_KEYWORDS
-    )
+    return "search_web" in route.allowed_tools and not route.missing_requirements
 
 
 def should_force_search_in_voice_path(
     text: str,
     route_decision: RouteDecision | None = None,
 ) -> bool:
-    """Return whether search should be forced before the first model answer."""
-    normalized = text.strip().lower()
-    if not normalized:
-        return False
+    """Request search first when the committed route selects that operation."""
     route = route_decision or decide_route(text)
-    if route.task_family == "location_dependent_query":
-        return route.next_action == "search"
-    if route.task_family == "external_current_info":
-        return route.next_action == "search" and not route.missing_requirements
-    return should_allow_search(normalized, route) and any(
-        keyword in normalized for keyword in _VOICE_PATH_SEARCH_KEYWORDS
-    )
+    return route.next_action == "search" and should_allow_search(text, route)
 
 
 def validate_tool_call(  # noqa: PLR0911
@@ -180,10 +80,7 @@ def validate_tool_call(  # noqa: PLR0911
                     policy_name="external_search_policy",
                 ),
             )
-        if (
-            should_allow_search(user_text, route)
-            and "search_web" in route.allowed_tools
-        ):
+        if should_allow_search(user_text, route):
             return PolicyDecision(allowed=True, metadata=_policy_metadata(route))
         return PolicyDecision(
             allowed=False,
