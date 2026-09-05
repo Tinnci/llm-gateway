@@ -67,15 +67,32 @@ pipeline 事件路径没有完成消费 continuation 请求的闭环。部署版
 
 ## 下一步建议，按依赖顺序执行
 
-1. 核对终端能力。读取目标设备运行版本、启动参数和文本事件。确认它能接收
-   continuation 意图、等待播放器 drain、重开命令窗口，并保留 HA conversation ID。
-   评估新终端时保留 PipeWire/AEC、Alexa、暂停/停止、声音路由和回退安装方法。
+1. ~~核对终端能力~~（2026-09-05 完成）。结论：现有链路两侧都缺一环 ——
+   HA 2026.6.3 的 wyoming 集成不转发 `INTENT_END`（含 `continue_conversation`/
+   `conversation_id`）、`Played` 后不重跑管道；wyoming-satellite 1.4.1
+   的 `WakeStreamingSatellite` 只能由本地唤醒词打开命令窗口，事件服务是单向的。
+   上游 v1.4.1 已是最终版（项目由 Linux Voice Assistant 接任）。
+   两个补丁已写好并经模拟验证（见下条），尚未部署：
+   - `repos/phosh-ha-status/home-assistant/wyoming-continuation/`：HA 侧
+     custom_components 覆盖 + 补丁 + 部署脚本（含 2026.6.x 版本门禁）。
+   - `repos/phosh-ha-status/satellite/wyoming-satellite-v1.4.1-continuation.patch`：
+     卫星在服务端发起 ASR 阶段（`Transcribe`）时重开命令窗口并触发 listening 提示。
+   - `lab/voice-pipeline-smoke/reports/satellite-continuation-simulation-2026-09-05.md`：
+     补丁版两轮闭环 PASS，未打补丁基线在窗口重开处 FAIL。
+   迁移评估：Linux Voice Assistant（OHF-Voice）经 ESPHome 协议原生支持
+   多轮（`--continue-conversation-delay`），支持 aarch64，但仍是 experimental；
+   作为后续评估路线，不阻塞补丁路径。评估时保留 PipeWire/AEC、Alexa、
+   暂停/停止、声音路由和回退安装方法。
    Gateway 负责意图，卫星负责音频生命周期，显示代理负责投影。
-2. 打通一条两轮路径。记录 reply requested → playback finished → capture started
-   → next transcript。把请求与实际 acknowledgement 分开。先做模拟，获授权后实测。
+2. 部署并打通一条两轮路径（需按 AGENTS.md 的备份/部署规则执行；HA 侧脚本
+   `apply-ha-wyoming-override.sh` 已含备份、版本门禁与回滚说明）。模拟已覆盖
+   replayed → capture started → next transcript 的协议层；实测需获用户授权。
+   重点关注 playback-end-to-listening 延迟、开头丢字、conversation ID 是否
+   真正保留（Gateway trace 里 `continue_conversation` 与同一 dialogue frame）。
 3. 处理乱序。当前 callback 缺少 turn/playback 关联，旧 ASR polling 可能覆盖新状态。
-   复用已有 conversation/request/turn ID，按轮次及生产者顺序接收事件；新 wake
-   使旧轮次失效。避免新增独立状态数据库或多套监听控制器。
+   补丁下续听窗口打开期间唤醒词检测被忽略（沿用既有运行期行为），"重新唤醒使
+   旧轮次失效"需在此步一并处理。复用已有 conversation/request/turn ID，按轮次及
+   生产者顺序接收事件。避免新增独立状态数据库或多套监听控制器。
 4. 改善显示生命周期。`voice_activity.py` 仍有 6 秒默认 TTL，长时间 listening /
    thinking 可能先过期，idle callback 也可能很快覆盖 no_input。
    用结束事件关闭活动态，把过期解释为遥测未知；明确 callback 与 ASR polling
