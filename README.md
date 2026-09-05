@@ -148,9 +148,10 @@ agent can find semantic failures without downloading full turns. Device-state
 queries run through a bounded Harness Loop that validates target coverage before
 speaking; its step and stop evidence is available in run detail and events.
 
-The panel can edit a small typed option list. It cannot edit API keys, provider
-secrets, the base URL, the system prompt, or exposed Home Assistant LLM APIs.
-Use the Home Assistant options flow for those values.
+The unified Settings page edits provider connections, models, prompts, tool
+access, and trace options through the authenticated configuration API. Saved
+secrets are redacted; a blank secret field preserves its current value. The HA
+options flow remains an alternative entry point for the same integration.
 
 ## Diagnostics and telemetry
 

@@ -1,6 +1,28 @@
 type RunRecord = Record<string, unknown>;
 type LiveRun = Record<string, unknown>;
 
+export type RunOutcome = "answered" | "clarification" | "failed" | "cancelled" | "running" | "unknown";
+
+export function runOutcome(record: RunRecord): RunOutcome {
+  const route = isRecord(record.route) ? record.route : {};
+  const loop = isRecord(record.harness_loop) ? record.harness_loop : isRecord(route.harness_loop) ? route.harness_loop : {};
+  const verdict = isRecord(loop.outcome_verdict) ? loop.outcome_verdict : isRecord(route.outcome_verdict) ? route.outcome_verdict : {};
+  const status = String(record.terminal_outcome || loop.terminal_outcome || route.terminal_outcome || record.status || "");
+  const reason = String(record.failure_stage || loop.stop_reason || verdict.reason || "");
+  if (["cancelled", "superseded", "interrupted"].includes(status)) return "cancelled";
+  if (["running", "pending"].includes(status)) return "running";
+  if (["error", "failed", "stale"].includes(status)) return "failed";
+  if (/(ambiguous|missing_requirement|clarif|confirmation)/.test(reason) || ["clarification", "confirm", "confirmation"].includes(status)) return "clarification";
+  if (status === "blocked" || record.outcome === "not_answered" || verdict.answerable === false || loop.answerable === false) return "failed";
+  if (record.outcome === "answered" || verdict.answerable === true || loop.answerable === true || ["complete", "completed", "ok", "success"].includes(status)) return "answered";
+  return "unknown";
+}
+
+export function runTone(record: RunRecord): "bad" | "ok" | "warning" {
+  const outcome = runOutcome(record);
+  return outcome === "failed" ? "bad" : outcome === "answered" ? "ok" : "warning";
+}
+
 export type RunSummary = {
   avgLatency: number;
   errors: number;
@@ -67,11 +89,7 @@ export function runSummary(records: RunRecord[], liveRuns: LiveRun[]): RunSummar
       : latestRoute;
   return {
     avgLatency,
-    errors: records.filter(
-      (record) =>
-        record.status === "error" ||
-        (Array.isArray(record.errors) && record.errors.length > 0)
-    ).length,
+    errors: records.filter((record) => runOutcome(record) === "failed").length,
     latestRoute: latestRouteKind || "",
     recorded: records.length,
     running: liveRuns.filter((run) => run.status === "running").length,

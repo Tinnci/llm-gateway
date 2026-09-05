@@ -6,6 +6,7 @@ import {
   diagnosticLayerCounts,
   harnessOverview,
   runSummary,
+  runTone,
   satelliteEntityTone,
   satelliteValue,
 } from "./voice-harness-model.js";
@@ -1049,7 +1050,12 @@ class VoiceHarnessPanel extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
-    this._activeTab = "overview";
+    this._activeTab = "runs";
+    /** @type {Record<string, Record<string, any>>} */
+    this._runDetails = {};
+    this._discardFormValues = false;
+    this._updatedAt = "";
+    this._listenersAttached = false;
     /** @type {HarnessStatus | null} */
     this._data = null;
     this._error = "";
@@ -1116,10 +1122,14 @@ class VoiceHarnessPanel extends HTMLElement {
   }
 
   connectedCallback() {
-    this.shadowRoot.addEventListener("click", (event) => this._onClick(event));
-    this.shadowRoot.addEventListener("input", (event) => this._onInput(event));
-    this.shadowRoot.addEventListener("submit", (event) => this._onSubmit(event));
-    this.shadowRoot.addEventListener("keydown", (event) => this._onKeydown(event));
+    if (!this._listenersAttached) {
+      this.shadowRoot.addEventListener("click", (event) => this._onClick(event));
+      this.shadowRoot.addEventListener("input", (event) => this._onInput(event));
+      this.shadowRoot.addEventListener("change", (event) => this._onInput(event));
+      this.shadowRoot.addEventListener("submit", (event) => this._onSubmit(event));
+      this.shadowRoot.addEventListener("keydown", (event) => this._onKeydown(event));
+      this._listenersAttached = true;
+    }
     this._render();
     this._load();
   }
@@ -1135,6 +1145,7 @@ class VoiceHarnessPanel extends HTMLElement {
       const status = /** @type {HarnessStatus} */ (parseHarnessStatus(
         await this._api("GET", "llm_gateway/harness/status"),
       ));
+      this._runDetails = {};
       await Promise.all(status.entries.map(async (entry) => {
         const entryId = encodeURIComponent(entry.entry_id);
         const [runtime, runs] = await Promise.all([
@@ -1150,10 +1161,11 @@ class VoiceHarnessPanel extends HTMLElement {
           records: Array.isArray(runs.records) ? runs.records : [],
           storage: runtime.trace_storage || {},
         };
-        const firstRunId = this._runId(entry.traces.records[0]);
-        if (firstRunId) await this._loadRunDetail(entry, firstRunId);
+        const selected = this._selectedRunRecord(entry.entry_id, entry.traces.records);
+        if (this._activeTab === "runs" && selected) await this._loadRunDetail(entry, this._runId(selected));
       }));
       this._data = status;
+      this._updatedAt = new Date().toISOString();
     } catch (err) {
       this._error = err.message || String(err);
     } finally {
@@ -1237,12 +1249,13 @@ class VoiceHarnessPanel extends HTMLElement {
       this._render();
       return;
     }
+    const minutes = this._satellitePauseMinutes();
+    const settings = this._readSatelliteConfigInputs();
     this._busy = true;
     this._error = "";
-      this._render();
+    this._render();
     try {
       if (action === "pause") {
-        const minutes = this._satellitePauseMinutes();
         await this.hass.callService("script", "kukui_voice_pause", {
           minutes,
           reason: "voice_harness",
@@ -1251,7 +1264,7 @@ class VoiceHarnessPanel extends HTMLElement {
         await this.hass.callService("script", "kukui_voice_resume", {});
       } else if (action === "save-minutes") {
         const entityId = this._data?.satellite?.states?.pause_minutes?.entity_id;
-        const value = this._satellitePauseMinutes();
+        const value = minutes;
         if (!entityId) {
           throw new Error(this._t("satellite.unavailable"));
         }
@@ -1260,7 +1273,7 @@ class VoiceHarnessPanel extends HTMLElement {
           value,
         });
       } else if (action === "save-config" || action === "apply-config") {
-        await this._saveSatelliteConfigInputs();
+        await this._saveSatelliteConfigInputs(settings);
         if (action === "apply-config") {
           await this.hass.callService("script", "kukui_voice_apply_config", {});
         }
@@ -1269,7 +1282,8 @@ class VoiceHarnessPanel extends HTMLElement {
       this._error = err.message || String(err);
     } finally {
       this._busy = false;
-      await this._load();
+      if (!this._error) await this._load();
+      else this._render();
     }
   }
 
@@ -1281,7 +1295,7 @@ class VoiceHarnessPanel extends HTMLElement {
     return 30;
   }
 
-  async _saveSatelliteConfigInputs() {
+  _readSatelliteConfigInputs() {
     const states = this._data?.satellite?.states || {};
     const keys = [
       "wake_threshold",
@@ -1299,15 +1313,19 @@ class VoiceHarnessPanel extends HTMLElement {
       if (!(input instanceof HTMLInputElement) || !entityId) {
         continue;
       }
-      calls.push(this.hass.callService("input_number", "set_value", {
+      calls.push({
         entity_id: entityId,
         value: Number(input.value),
-      }));
+      });
     }
+    return calls;
+  }
+
+  async _saveSatelliteConfigInputs(calls) {
     if (!calls.length) {
       throw new Error(this._t("satellite.unavailable"));
     }
-    await Promise.all(calls);
+    await Promise.all(calls.map((data) => this.hass.callService("input_number", "set_value", data)));
   }
 
   /** @returns {Promise<any>} */
@@ -1503,6 +1521,12 @@ class VoiceHarnessPanel extends HTMLElement {
     this._activeTab = tab;
     if (tab === "settings" && !this._configData) {
       this._loadConfig();
+    }
+    if (tab === "runs") {
+      for (const entry of this._data?.entries || []) {
+        const selected = this._selectedRunRecord(entry.entry_id, entry.traces?.records || []);
+        if (selected) this._loadRunDetail(entry, this._runId(selected)).then(() => this._render());
+      }
     }
     this._render();
   }
@@ -1710,17 +1734,20 @@ class VoiceHarnessPanel extends HTMLElement {
         };
       }
       this._configSaved = this._t("config.saved");
+      this._discardFormValues = true;
     } catch (err) {
       if (err.code === "revision_conflict") {
         this._error = this._t("config.revision_conflict");
-        // Drop the stale fence and pull the winning revision + values.
+        // Refresh the revision while preserving the user's draft for review.
         this._busy = false;
         await this._loadConfig();
         return;
       }
       this._error = err.message || String(err);
+      return;
     } finally {
       this._busy = false;
+      this._render();
     }
     await this._load();
     this._render();
@@ -2183,6 +2210,19 @@ class VoiceHarnessPanel extends HTMLElement {
   }
 
   _render() {
+    // Keep edits through loading and unrelated actions. Values remain in memory.
+    const formValues = this._discardFormValues ? [] : [.../** @type {NodeListOf<HTMLInputElement>} */ (this.shadowRoot.querySelectorAll(
+      'form[data-form="config"] input, form[data-form="config"] select, form[data-form="config"] textarea, [data-satellite-config], [data-satellite-minutes]',
+    ))].map((input) => ({
+      name: input.name,
+      entryId: input.closest("form")?.dataset.entryId,
+      satellite: input.dataset.satelliteConfig,
+      minutes: input.hasAttribute("data-satellite-minutes"),
+      value: input.value,
+      type: input.type,
+      checked: input.checked,
+    }));
+    this._discardFormValues = false;
     const entries = this._data?.entries || [];
     this._renderedReplayPair = null;
     this._renderedReplayLabels = null;
@@ -2261,6 +2301,20 @@ class VoiceHarnessPanel extends HTMLElement {
       });
     }
     this._wireRunLists(entries);
+    for (const saved of formValues) {
+      const input = [.../** @type {NodeListOf<HTMLInputElement>} */ (this.shadowRoot.querySelectorAll("input, select, textarea"))].find((candidate) => (
+        saved.minutes ? candidate.hasAttribute("data-satellite-minutes")
+          : saved.satellite ? candidate.dataset.satelliteConfig === saved.satellite
+            : saved.name && candidate.name === saved.name && candidate.closest("form")?.dataset.entryId === saved.entryId
+              && (!["checkbox", "radio"].includes(saved.type) || candidate.value === saved.value)
+      ));
+      if (input) {
+        input.value = saved.value;
+        if (saved.checked !== undefined) input.checked = saved.checked;
+        const pickerKey = input.closest("[data-picker-key]")?.getAttribute("data-picker-key");
+        if (saved.type === "hidden" && pickerKey) this._renderPicker(pickerKey);
+      }
+    }
     for (const card of this.shadowRoot.querySelectorAll("details[data-open-key]")) {
       if (card instanceof HTMLDetailsElement && openKeys.has(card.dataset.openKey || "")) {
         card.open = true;
@@ -2275,7 +2329,7 @@ class VoiceHarnessPanel extends HTMLElement {
     if (!entries.length) {
       return this._t("status.no_entries");
     }
-    return this._t("status.entries", { count: entries.length });
+    return `${this._t("status.entries", { count: entries.length })} · ${this._formatTime(this._updatedAt)}`;
   }
 
   _renderActive(entries) {
@@ -2301,11 +2355,9 @@ class VoiceHarnessPanel extends HTMLElement {
         id: this._runId(record),
         latency: `${Number(record.latency_ms || 0)} ms`,
         route: this._routeLabel(record.route?.kind || record.route || ""),
-        status: record.status === "error" || (record.errors || []).length
-          ? "bad"
-          : record.completion?.complete === false ? "warning" : "ok",
-        subtitle: String(record.user_text || record.conversation_id || ""),
-        title: this._formatTime(record.created_at),
+        status: runTone(record),
+        subtitle: `${this._formatTime(record.created_at)} · ${String(record.final_speech_text || "")}`,
+        title: String(record.user_text || record.conversation_id || ""),
       }));
       list.selected = selected ? this._runId(selected) : "";
       list.addEventListener("harness-run-select", async (event) => {
@@ -2324,20 +2376,22 @@ class VoiceHarnessPanel extends HTMLElement {
 
   _selectedRunRecord(entryId, records) {
     const selectedId = this._selectedRuns[entryId] || "";
-    return records.find((record) => this._runId(record) === selectedId) || records[0] || null;
+    const summary = records.find((record) => this._runId(record) === selectedId) || records[0] || null;
+    return this._runDetails[`${entryId}:${this._runId(summary)}`] || summary;
   }
 
   async _loadRunDetail(entry, runId) {
     if (!entry || !runId) return;
     const records = entry.traces?.records || [];
     const index = records.findIndex((record) => this._runId(record) === runId);
-    if (index < 0 || records[index]?._detail_loaded) return;
+    const key = `${entry.entry_id}:${runId}`;
+    if (index < 0 || this._runDetails[key]) return;
     try {
       const detail = await this._api(
         "GET",
         `llm_gateway/harness/runs/${encodeURIComponent(runId)}?entry_id=${encodeURIComponent(entry.entry_id)}`,
       );
-      if (detail.record) records[index] = { ...detail.record, _detail_loaded: true };
+      if (detail.record) this._runDetails[key] = { ...detail.record, _detail_loaded: true };
     } catch (err) {
       this._error = err.message || String(err);
     }
