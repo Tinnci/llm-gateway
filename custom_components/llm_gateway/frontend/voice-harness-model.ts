@@ -12,7 +12,7 @@ export function runOutcome(record: RunRecord): RunOutcome {
   if (["cancelled", "superseded", "interrupted"].includes(status)) return "cancelled";
   if (["running", "pending"].includes(status)) return "running";
   if (["error", "failed", "stale"].includes(status)) return "failed";
-  if (/(ambiguous|missing_requirement|clarif|confirmation)/.test(reason) || ["clarification", "confirm", "confirmation"].includes(status)) return "clarification";
+  if (/(ambiguous|missing_requirement|clarif|confirmation)/.test(reason) || ["clarify", "clarification", "confirm", "confirmation"].includes(status) || ["clarify", "clarification"].includes(String(record.outcome || ""))) return "clarification";
   if (status === "blocked" || record.outcome === "not_answered" || verdict.answerable === false || loop.answerable === false) return "failed";
   if (record.outcome === "answered" || verdict.answerable === true || loop.answerable === true || ["complete", "completed", "ok", "success"].includes(status)) return "answered";
   return "unknown";

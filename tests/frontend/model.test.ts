@@ -4,6 +4,7 @@ import { harnessOverview, runOutcome, runTone } from "../../custom_components/ll
 
 test("semantic outcome distinguishes clarification from execution failure", () => {
   expect(runOutcome({ status: "ok", route: { terminal_outcome: "failed" } })).toBe("failed");
+  expect(runOutcome({ status: "ok", terminal_outcome: "clarify", outcome: "clarify" })).toBe("clarification");
   expect(runOutcome({ status: "ok", outcome: "not_answered", failure_stage: "ambiguous_target" })).toBe("clarification");
   expect(runTone({ status: "ok", outcome: "not_answered" })).toBe("bad");
   expect(runTone({ status: "cancelled" })).toBe("warning");

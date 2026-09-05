@@ -11,7 +11,7 @@ function runOutcome(record) {
     return "running";
   if (["error", "failed", "stale"].includes(status))
     return "failed";
-  if (/(ambiguous|missing_requirement|clarif|confirmation)/.test(reason) || ["clarification", "confirm", "confirmation"].includes(status))
+  if (/(ambiguous|missing_requirement|clarif|confirmation)/.test(reason) || ["clarify", "clarification", "confirm", "confirmation"].includes(status) || ["clarify", "clarification"].includes(String(record.outcome || "")))
     return "clarification";
   if (status === "blocked" || record.outcome === "not_answered" || verdict.answerable === false || loop.answerable === false)
     return "failed";
