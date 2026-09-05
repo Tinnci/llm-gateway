@@ -5,11 +5,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from homeassistant.const import CONF_API_KEY, Platform
-from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .api import LLMGatewayAuthError, LLMGatewayClient, LLMGatewayError
+from .api import LLMGatewayClient
 from .const import CONF_BASE_URL, DEFAULT_BASE_URL, DOMAIN
 from .feedback import VoiceFeedbackStore
 from .first_response_audio import FirstResponsePlayer
@@ -45,14 +44,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: LLMGatewayConfigEntry) -
         entry.data[CONF_API_KEY],
     )
 
-    # Validate connectivity/credentials up front so the entry reflects reality.
-    try:
-        await client.async_list_models()
-    except LLMGatewayAuthError as err:
-        raise ConfigEntryNotReady(str(err)) from err
-    except LLMGatewayError as err:
-        raise ConfigEntryNotReady(str(err)) from err
-
+    # Configuration validates credentials; requests report provider availability.
+    # Local history and fallback routing remain available during provider outages.
     memory = VoiceMemory(hass, entry.entry_id)
     await memory.async_load()
     trace_store = TraceStore(hass, entry.entry_id)

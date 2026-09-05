@@ -3495,7 +3495,7 @@ class VoiceHarnessPanel extends HTMLElement {
           }))}</span>
         </div>
         ${this._runSummaryPanel(records, liveRuns)}
-        ${this._replayDiffInspector(records)}
+        ${this._replayDiffInspector(records.map((record) => this._runDetails[`${entry.entry_id}:${this._runId(record)}`] || record))}
         ${hasRecords ? `
           <div class="runInvestigator">
             <voice-harness-run-list data-entry-id="${escapeHtml(entry.entry_id)}"></voice-harness-run-list>
