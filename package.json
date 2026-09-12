@@ -5,8 +5,8 @@
     "build:frontend-modules": "bun run scripts/build_frontend_modules.ts",
     "build:panel": "bun run build:frontend-modules && bun build --target=browser custom_components/llm_gateway/frontend/voice-harness-panel.js --outfile=/tmp/voice-harness-panel.js",
     "typecheck": "bun run typecheck:all && bun run typecheck:strict",
-    "typecheck:all": "tsgo --noEmit -p tsconfig.json",
-    "typecheck:strict": "tsgo --noEmit -p tsconfig.strict.json"
+    "typecheck:all": "bun --bun tsgo --noEmit -p tsconfig.json",
+    "typecheck:strict": "bun --bun tsgo --noEmit -p tsconfig.strict.json"
   },
   "devDependencies": {
     "@typescript/native-preview": "7.0.0-dev.20260618.1",

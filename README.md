@@ -79,7 +79,7 @@ locale.
 
 ### Manual installation
 
-1. Copy `custom_components/llm_gateway` to `<ha-config>/custom_components/llm_gateway`.
+1. Extract the release's `llm_gateway.zip` directly into `<ha-config>/custom_components/llm_gateway`.
 2. Restart Home Assistant.
 
 ## Configuration
@@ -231,14 +231,14 @@ The satellite decides when and how to play these sounds.
 Use `uv` for Python and `bun` for the panel.
 
 ```bash
-uv sync --dev
-bun install
+uv sync --locked --group dev
+bun install --frozen-lockfile
 uv run pytest
 bun run typecheck
 bun run build:panel
 bun test
-uvx ruff check custom_components tests tools/ha-earcon/src tools/ha-earcon/tests scripts
-uvx ruff format --check custom_components tests tools/ha-earcon/src tools/ha-earcon/tests scripts
+uv run ruff check custom_components tests tools/ha-earcon/src tools/ha-earcon/tests scripts
+uv run ruff format --check custom_components tests tools/ha-earcon/src tools/ha-earcon/tests scripts
 git diff --check
 ```
 
@@ -255,6 +255,7 @@ TypeScript contract checks use `tsgo` through
 
 ## Documentation
 
+- [Release preparation / 发布准备](docs/releasing.md)
 - [Voice Harness architecture](docs/harness-architecture.md)
 - [Multi-turn voice implementation handoff](docs/voice-conversation-handoff.md)
 - [Voice Harness inspection API](docs/voice-harness-api.md)

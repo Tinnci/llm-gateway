@@ -1,61 +1,72 @@
-# Releasing LLM Gateway
+# Releasing LLM Gateway / 发布
 
 ## Version sources
 
-Every release version lives in exactly three files and must always agree:
+The next planned release is **0.4.0**, including the live-context loop,
+continuation and diagnostics changes since 0.3.48. Versions stay at 0.3.48 until
+the automatic workflow performs the bump.
 
 | File | Version field |
 |---|---|
 | `pyproject.toml` | `[project] version` |
 | `custom_components/llm_gateway/manifest.json` | `"version"` |
-| `uv.lock` | `[[package]] name = "llm-gateway"` / `version` |
+| `uv.lock` | root `llm-gateway` package version |
 
-`panel.py` reads `manifest.json` at runtime, so the browser cache key
-(`voice-harness-panel.js?v=...`) follows the integration version
-automatically.
+`panel.py` reads the installed manifest for the browser cache version.
 
-## Automatic release flow
+## Automatic release
 
-1. Merge the code change to `main` and let the `Validate` workflow pass.
-2. Go to **Actions → Release → Run workflow**.
-3. Choose the branch `main` and the bump segment:
-   - `patch`: `0.3.31` → `0.3.32`
-   - `minor`: `0.3.31` → `0.4.0`
-   - `major`: `0.3.31` → `1.0.0`
-4. GitHub Actions:
-   - verifies all three version sources are synchronized;
-   - runs `scripts/bump_version.py` to bump all three files;
-   - verifies the bumped files again;
-   - commits `Release vX.Y.Z` and pushes the tag `vX.Y.Z` to `main`;
-   - builds `llm_gateway.zip` and publishes the GitHub release.
+1. Review and merge the change to `main`.
+2. Run **Release** from `main`, choosing `minor` for 0.4.0.
+3. The reusable Validate workflow runs backend, earcon-tool and Bun tests,
+   Ruff, tsgo, frontend builds, Hassfest, HACS and stable/beta HA setup checks.
+4. The release job checks version sync, bumps all three files, checks the new
+   version and lockfile, and rebuilds frontend modules using Bun.
+5. It builds `llm_gateway.zip`, then pushes the release commit and tag atomically
+   and publishes the archive with generated notes.
 
-Pushing a `vX.Y.Z` tag directly also triggers the release zip build after the
-same version/tag consistency check.
+A direct `vX.Y.Z` tag also runs verification before packaging. Failed verification
+cannot publish a tag through the automatic bump path. The release job checks out
+the same event commit that Validate tested, even if `main` moves during the run.
 
-## How version mistakes are prevented
+The ZIP contains the component contents directly, with `manifest.json` at its
+root. `hacs.json` selects `llm_gateway.zip`. Bytecode and Finder metadata are
+excluded, including at the component root. An archive test executes the actual
+workflow command and verifies the extracted layout.
 
-- `scripts/check_version_sync.py` is the single verifier. It reads the three
-  sources with real parsers (`tomllib`/`json`) and fails when they differ or
-  are not `X.Y.Z`.
-- `scripts/bump_version.py` refuses to bump unless all three sources already
-  agree, rewrites all three together, and verifies them again. It never
-  commits by itself; the release workflow owns Git operations.
-- `.pre-commit-config.yaml` runs the verifier whenever `pyproject.toml`,
-  `manifest.json`, or `uv.lock` is staged.
-- The `Validate` workflow has:
-  - `version-source-guard`: when version files changed on push/pull_request,
-    runs the verifier and rejects the change if they are not synchronized;
-  - `version-sync-check`: runs the verifier on every push, PR, and tag;
-  - `uv lock --check`: ensures `uv.lock` matches `pyproject.toml`.
-- The `Release` workflow verifies version sync before bumping, after bumping,
-  and again against the release tag before publishing.
-
-## Recovering from a mismatch
+## Local checks
 
 ```sh
-python3 scripts/check_version_sync.py
-python3 scripts/bump_version.py --bump patch --dry-run
+uv sync --locked --group dev
+uv run python scripts/check_version_sync.py
+uv run python scripts/bump_version.py --bump minor --dry-run
+uv lock --check
+uv run pytest
+uv run ruff check custom_components tests tools/ha-earcon/src tools/ha-earcon/tests scripts
+bun install --frozen-lockfile
+bun test
+bun run typecheck
+bun run build:panel
 ```
 
-Then either run the Release workflow, or if you are intentionally doing local
-development, make the three files match before pushing.
+The version verifier is also used by pre-commit and CI. It reads real TOML/JSON
+values; changes to dependencies or metadata do not count as version changes.
+
+## HACS and brands / HACS 与品牌
+
+Hassfest is required again: the official image now discovers only integration
+manifests, so the old workaround deleting earcon manifests is removed.
+The release archive retains those audio-pack manifests.
+
+Local PNG assets under `brand/` are rendered from the repository's own
+`icon.svg`; they depict a conversation routed through a gateway and use no
+Home Assistant or model-vendor trademark. The normal HACS brands check is enabled.
+
+The existing PolyForm Noncommercial license remains in effect. GitHub reports it
+as `NOASSERTION`; custom-repository HACS validation omits only the default-index
+license eligibility check. Passing these checks does not claim eligibility for
+the default HACS catalogue.
+
+家庭安装目录与当前主分支存在源码差异，不能仅凭相同的 0.3.48 版本号判定两者相同。
+本轮完成源码、构建和发布流程准备；真实语音与续听体验在语音链路迭代中验证。
+发版不会把工具派发或语音合成结果当成物理设备确认或实际播报完成。

@@ -1,4 +1,7 @@
 {
     "name": "LLM Gateway",
-    "render_readme": true
+    "render_readme": true,
+    "homeassistant": "2026.6.3",
+    "zip_release": true,
+    "filename": "llm_gateway.zip"
 }
