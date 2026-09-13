@@ -148,8 +148,13 @@ async def test_stop_processing_cue_posts_stop_even_when_start_task_is_pending():
     assert session.posts == [f"{DISPLAY_AGENT_BASE_URL}/voice/processing/stop"]
 
 
-async def test_chat_completion_falls_back_on_retryable_http_error(hass, aioclient_mock):
-    aioclient_mock.post(PRIMARY + "/chat/completions", status=500, text="boom")
+@pytest.mark.parametrize("status", [429, 500, 410])
+async def test_chat_completion_falls_back_on_retryable_http_error(
+    hass, aioclient_mock, status
+):
+    aioclient_mock.post(
+        PRIMARY + "/chat/completions", status=status, text="provider unavailable"
+    )
     aioclient_mock.post(
         FALLBACK + "/chat/completions",
         json={"choices": [{"message": {"role": "assistant", "content": "ok"}}]},

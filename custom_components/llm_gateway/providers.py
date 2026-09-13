@@ -485,8 +485,9 @@ def _is_retryable(err: LLMGatewayError) -> bool:
     if isinstance(err, LLMGatewayConnectionError | LLMGatewayAuthError):
         return True
     if isinstance(err, LLMGatewayHTTPError):
+        # A retired model/endpoint can still have a working configured fallback.
         return (
-            err.status == HTTPStatus.TOO_MANY_REQUESTS
+            err.status in (HTTPStatus.GONE, HTTPStatus.TOO_MANY_REQUESTS)
             or err.status >= HTTP_SERVER_ERROR
         )
     return False
