@@ -14,7 +14,7 @@ export function runOutcome(record: RunRecord): RunOutcome {
   if (["error", "failed", "stale", "partial"].includes(status)) return "failed";
   if (/(ambiguous|missing_requirement|clarif|confirmation)/.test(reason) || ["clarify", "clarification", "confirm", "confirmation"].includes(status) || ["clarify", "clarification"].includes(String(record.outcome || ""))) return "clarification";
   if (status === "blocked" || record.outcome === "not_answered" || verdict.answerable === false || loop.answerable === false) return "failed";
-  if (record.outcome === "answered" || verdict.answerable === true || loop.answerable === true || ["complete", "completed", "ok", "success"].includes(status)) return "answered";
+  if (record.outcome === "answered" || verdict.answerable === true || loop.answerable === true || ["complete", "completed", "executed", "ok", "success"].includes(status)) return "answered";
   return "unknown";
 }
 

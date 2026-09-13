@@ -48,7 +48,7 @@ test("summary-only dry runs cannot replace a real conversation or improve its me
 
 test("an answered action and a successful dispatch cannot become device confirmation", () => {
   const facts = conversationFacts({
-    status: "complete", task_family: "home_control", assistant_text: "已发送请求。",
+    status: "complete", terminal_outcome: "executed", task_family: "home_control", assistant_text: "已发送请求。",
     interaction: { dispatches: [{ dispatch_status: "sent", confirmation_status: "unknown" }] },
   });
   expect(facts.evidence).toBe("sent");

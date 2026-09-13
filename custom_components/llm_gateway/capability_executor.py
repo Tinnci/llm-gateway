@@ -311,7 +311,7 @@ def _climate_target_temperature(normalized: str) -> float | None:
 
 def _climate_target_hint(text: str, normalized: str) -> str:
     hint = re.sub(
-        r"(?:的)?温度(?:调到|调成|调至|设为|设置为|设置到|设定为|改到|改成)\d+(?:\.\d+)?度?",
+        r"(?:的)?(?:温度)?(?:调到|调成|调至|设为|设置为|设置到|设定为|改到|改成)[+-]?\d+(?:\.\d+)?度?",
         "",
         normalized,
     )

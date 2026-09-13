@@ -42,6 +42,8 @@ def test_local_action_candidate_parses_climate_control():
 async def test_climate_request_preserves_the_spoken_setpoint(hass, temperature):
     calls = []
     hass.states.async_set("climate.bedroom", "cool", {"friendly_name": "卧室空调"})
+    hass.states.async_set("climate.comfort", "auto", {"friendly_name": "卧室 舒适目标"})
+    hass.states.async_set("climate.override", "off", {"friendly_name": "卧室 手动覆盖"})
 
     async def set_temperature(call):
         calls.append(dict(call.data))

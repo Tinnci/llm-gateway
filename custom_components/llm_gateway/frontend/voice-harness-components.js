@@ -348,7 +348,7 @@ function runOutcome(record) {
     return "clarification";
   if (status === "blocked" || record.outcome === "not_answered" || verdict.answerable === false || loop.answerable === false)
     return "failed";
-  if (record.outcome === "answered" || verdict.answerable === true || loop.answerable === true || ["complete", "completed", "ok", "success"].includes(status))
+  if (record.outcome === "answered" || verdict.answerable === true || loop.answerable === true || ["complete", "completed", "executed", "ok", "success"].includes(status))
     return "answered";
   return "unknown";
 }

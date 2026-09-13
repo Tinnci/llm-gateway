@@ -1135,6 +1135,44 @@ async def test_climate_temperature_setpoint_uses_local_action(
     )
 
 
+async def test_device_clarification_retains_the_requested_temperature(
+    hass, aioclient_mock, mock_config_entry
+):
+    calls = []
+
+    async def set_temperature(call):
+        calls.append(dict(call.data))
+
+    hass.services.async_register("climate", "set_temperature", set_temperature)
+    aioclient_mock.get(MODELS_URL, json={"data": [{"id": "fast-model"}]})
+    for entity_id, name in (
+        ("climate.large", "卧室大空调"),
+        ("climate.small", "卧室小空调"),
+    ):
+        hass.states.async_set(entity_id, "cool", {"friendly_name": name})
+    agent_id = await _setup_agent(
+        hass, mock_config_entry, {CONF_DIAGNOSTIC_TRACES: True}
+    )
+
+    with patch(
+        "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
+        side_effect=AssertionError("A resolved climate request must remain local"),
+    ) as completion:
+        first = await conversation.async_converse(
+            hass, "把空调的温度调到25.5度", None, Context(), agent_id=agent_id
+        )
+        assert first.continue_conversation
+        assert not calls
+        result = await conversation.async_converse(
+            hass, "卧室大空调", first.conversation_id, Context(), agent_id=agent_id
+        )
+
+    completion.assert_not_called()
+    assert calls == [{"entity_id": ["climate.large"], "temperature": 25.5}]
+    assert "25.5" in result.response.speech["plain"]["speech"]
+    assert not result.continue_conversation
+
+
 @pytest.mark.parametrize("followup", ["卧室2", "次卧"])
 async def test_room_target_clarification_keeps_temperature_and_waits_for_room(
     hass, aioclient_mock, mock_config_entry, followup

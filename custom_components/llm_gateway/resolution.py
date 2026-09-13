@@ -359,7 +359,10 @@ def _score_device(  # noqa: PLR0912 - explicit evidence scoring keeps resolution
         evidence.append(f"area_mismatch:{area}")
 
     if normalized_mention:
-        if "已确认" in str(raw_mention or ""):
+        if (
+            str(raw_mention or "").startswith("已确认")
+            and normalized_mention.removeprefix("已确认") in normalized_names
+        ):
             score += 0.35
             evidence.append("confirmed_target")
         best_name = max(

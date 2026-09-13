@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from homeassistant.util import ulid
 
@@ -56,6 +56,8 @@ def _bound_attrs(value: object, *, depth: int = 0) -> object:
     oversized tool result or entity list from growing an in-memory run without
     limit. The full trace store still applies its own redaction and bounds.
     """
+    if isinstance(value, bool | int | float) or value is None:
+        return value
     if depth >= MAX_ATTR_DEPTH:
         return _truncate_attr_text(value)
     if isinstance(value, dict):
@@ -65,10 +67,6 @@ def _bound_attrs(value: object, *, depth: int = 0) -> object:
         }
     if isinstance(value, list):
         return [_bound_attrs(item, depth=depth + 1) for item in value[:MAX_ATTR_ITEMS]]
-    if isinstance(value, str):
-        return _truncate_attr_text(value)
-    if isinstance(value, bool | int | float) or value is None:
-        return value
     return _truncate_attr_text(value)
 
 
@@ -201,7 +199,7 @@ class VoiceRunRecorder:
             occurred_at=datetime.now(UTC).isoformat(),
             caused_by=previous.event_id if previous else "",
             status=status,
-            attrs=dict(attrs or {}),
+            attrs=cast("dict[str, Any]", _bound_attrs(attrs or {})),
         )
         run.events.append(event)
         return event.as_dict()

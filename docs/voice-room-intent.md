@@ -48,6 +48,12 @@ The room and target are already understood; repeating them cannot restore the
 control. A missing or ambiguous room still asks only for the room.
 控制不可用时明确结束本次请求；只有房间不明确时才请用户补充。
 
+Device matching removes the requested temperature from the device name. When
+two devices still need clarification, choosing one retains the original
+setpoint. Confirmation applies to the chosen name only; it does not increase
+confidence in every similarly named device. 空调与舒适实体共存时，明确说出的空调
+无需重复确认；真正需要澄清时，也不要求用户重说温度。
+
 After a successful comfort service call, Gateway reads the comfort entity's
 `override_active`, `override_temperature`, and `override_suppressed` attributes.
 Only a matching active override supports **Comfort target saved**. A missing or
@@ -85,6 +91,12 @@ evidence list. Already satisfied targets retain their separate skipped records.
 “设备已回报设定 25.5 度”只确认设备设定，不表示房间已达到 25.5°C，也不证明压缩机
 正在制冷。房间策略保存完成同样不等于空调执行完成。RoomMind 的执行器仍按其原有
 context ID 关联与迟到证据处理规则记录 Control Outcome。
+
+Run events copy bounded attributes when recorded. Scalar booleans, numbers and
+nulls retain their types at the nesting limit, so a saved comfort target remains
+recognizable after trace persistence. A completed local action is a completed
+reply; the separate dispatch and device evidence still determine confirmation.
+记录不会因调用方后续修改而变更事实，也不会把布尔确认值变成展示用字符串。
 
 ## Assist pipeline / 语音入口
 

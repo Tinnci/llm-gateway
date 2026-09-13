@@ -342,6 +342,11 @@ def dialogue_frame_from_local_capability(
             else "awaiting_referent"
         ),
         missing_referents=("target_device",),
+        filled_referents=(
+            {"target_temperature": candidate["target_temperature"]}
+            if candidate.get("target_temperature") is not None
+            else {}
+        ),
         last_prompt=prompt,
         candidates=candidates,
         route_decision={
@@ -576,11 +581,18 @@ def _commit_device_candidate(
     name = str(candidate.get("name") or candidate.get("id") or "")
     frame.filled_referents["target_device"] = dict(candidate)
     transition = stack.complete(frame)
+    temperature = frame.filled_referents.get("target_temperature")
+    effective_text = (
+        f"把已确认的{name}温度调到{temperature:g}度"
+        if frame.operation == "climate_set_temperature"
+        and isinstance(temperature, int | float)
+        else _home_control_effective_text(frame.operation, name)
+    )
     return DialogueTransaction(
         "slot_fill",
         target_frame=frame,
         slot_updates={"target_device": dict(candidate)},
-        effective_text=_home_control_effective_text(frame.operation, name),
+        effective_text=effective_text,
         interaction_state="slot_filled",
         transitions=(
             DialogueTransition(

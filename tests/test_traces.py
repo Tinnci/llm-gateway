@@ -11,6 +11,7 @@ from custom_components.llm_gateway.const import (
     CONF_TRACE_MAX_RUNS,
     CONF_TRACE_RETENTION_HOURS,
 )
+from custom_components.llm_gateway.observability import run_summary
 from custom_components.llm_gateway.traces import TraceStore, TraceTurn
 from custom_components.llm_gateway.voice_runs import VoiceRunRecorder
 
@@ -76,6 +77,56 @@ async def test_trace_store_records_bounded_summary_without_raw(hass):
     assert "raw_payload" not in record
     assert snapshot["storage"]["records"] == 1
     assert snapshot["storage"]["compressed_bytes"] == 0
+
+
+async def test_room_policy_evidence_keeps_scalar_types_through_recording(hass):
+    recorder = VoiceRunRecorder()
+    run_id = recorder.start(conversation_id="comfort", user_text="卧室")
+    observation = {
+        "matches_request": True,
+        "override_suppressed": False,
+        "override_temperature": 25.5,
+        "override_until": None,
+    }
+    recorder.mark(
+        run_id,
+        "local_capability_execute",
+        attrs={
+            "service_calls": [
+                {
+                    "control_scope": "room_comfort",
+                    "dispatch_status": "sent",
+                    "confirmation_status": "unknown",
+                    "policy_observation": observation,
+                }
+            ]
+        },
+    )
+    observation["matches_request"] = False
+    store = TraceStore(hass, "entry-policy-evidence")
+    await store.async_record_turn(
+        {CONF_DIAGNOSTIC_TRACES: True},
+        TraceTurn(
+            conversation_id="comfort",
+            user_text="卧室",
+            assistant_text="卧室舒适目标已保存为25.5度。",
+            route={"kind": "local_action", "terminal_outcome": "executed"},
+            latency_ms=120,
+            status="complete",
+            raw_payload={},
+            timeline=recorder.finish(run_id, status="complete"),
+        ),
+    )
+    reloaded = TraceStore(hass, "entry-policy-evidence")
+    await reloaded.async_load()
+    summary = run_summary(reloaded.snapshot()["records"][0])
+    [dispatch] = summary["interaction"]["dispatches"]
+    saved = dispatch["policy_observation"]
+    assert saved["matches_request"] is True
+    assert saved["override_suppressed"] is False
+    assert saved["override_temperature"] == 25.5
+    assert saved["override_until"] is None
+    assert dispatch["confirmation_status"] == "unknown"
 
 
 async def test_trace_store_attaches_satellite_diagnostic_snapshot(hass):
