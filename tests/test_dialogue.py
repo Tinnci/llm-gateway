@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from custom_components.llm_gateway.capabilities import decide_route
 from custom_components.llm_gateway.dialogue import (
     DialogueFrame,
@@ -65,16 +67,32 @@ def test_dialogue_frame_stack_keeps_search_permission_as_followup() -> None:
     assert stack.active_frame() is frame
 
 
-def test_dialogue_frame_stack_confirms_top_device_candidate() -> None:
+@pytest.mark.parametrize("reply", ["对。", "对的，对的，是的。", "是的是的。"])
+def test_dialogue_frame_stack_confirms_top_device_candidate(reply) -> None:
     frame = _device_frame()
     stack = DialogueFrameStack([frame])
 
-    transaction = resolve_dialogue_transaction("对。", stack)
+    transaction = resolve_dialogue_transaction(reply, stack)
 
     assert transaction.relation == "slot_fill"
     assert transaction.slot_updates["target_device"]["id"] == "light.devcea_1055"
     assert transaction.effective_text == "打开已确认的宜家麦希瑟E27 1055lm智能球泡灯 灯"
     assert stack.active_frame() is None
+
+
+def test_confirmation_does_not_select_the_first_of_several_unresolved_devices() -> None:
+    frame = _device_frame()
+    frame.status = "awaiting_referent"
+    frame.last_prompt = "你指的是球泡灯还是显示器挂灯？"
+    stack = DialogueFrameStack([frame])
+
+    transaction = resolve_dialogue_transaction("对的，对的。", stack)
+
+    assert transaction.relation == "confirmation"
+    assert transaction.prompt == frame.last_prompt
+    assert not transaction.slot_updates
+    assert not transaction.effective_text
+    assert stack.active_frame() is frame
 
 
 def test_dialogue_frame_stack_selects_device_candidate_by_name_fragment() -> None:

@@ -2,9 +2,9 @@
 
 ## Version sources
 
-The Phase 9 deployment uses **0.3.52**, including the four-panel redesign,
-streaming previews and the satellite's 22050 Hz PCM preview format. Its
-versioned asset path replaces the previously deployed browser modules.
+The Phase 10 household build is **0.3.54**. It keeps the four-panel tools behind
+a conversation-focused surface and separates room policy readback from device
+confirmation. The versioned asset path replaces earlier browser modules.
 A Git push and household deployment do not publish a
 HACS release; use the automatic workflow below to publish an archive.
 

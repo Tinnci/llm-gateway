@@ -1135,6 +1135,55 @@ async def test_climate_temperature_setpoint_uses_local_action(
     )
 
 
+@pytest.mark.parametrize("followup", ["卧室2", "次卧"])
+async def test_room_target_clarification_keeps_temperature_and_waits_for_room(
+    hass, aioclient_mock, mock_config_entry, followup
+):
+    aioclient_mock.get(MODELS_URL, json={"data": [{"id": "fast-model"}]})
+    calls = []
+    for name in ("卧室", "卧室 2"):
+        area = ar.async_get(hass).async_create(name)
+        if name == "卧室 2":
+            ar.async_get(hass).async_update(area.id, aliases={"次卧"})
+        entity = er.async_get(hass).async_get_or_create(
+            "climate", "roommind", f"roommind_{area.id}_comfort"
+        )
+        hass.states.async_set(
+            entity.entity_id, "auto", {"friendly_name": name + "舒适目标"}
+        )
+        exposed_entities.async_expose_entity(
+            hass, "conversation", entity.entity_id, should_expose=True
+        )
+
+    async def set_temperature(call):
+        calls.append(dict(call.data))
+
+    hass.services.async_register("climate", "set_temperature", set_temperature)
+    agent_id = await _setup_agent(
+        hass, mock_config_entry, {CONF_DIAGNOSTIC_TRACES: True}
+    )
+    with patch(
+        "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback"
+    ) as completion:
+        first = await conversation.async_converse(
+            hass, "把温度调到25.5度", None, Context(), agent_id=agent_id
+        )
+        assert "哪个房间" in first.response.speech["plain"]["speech"]
+        assert first.continue_conversation
+        assert not calls
+        ambiguous = await conversation.async_converse(
+            hass, "对的", first.conversation_id, Context(), agent_id=agent_id
+        )
+        assert "哪个房间" in ambiguous.response.speech["plain"]["speech"]
+        assert not calls
+        await conversation.async_converse(
+            hass, followup, first.conversation_id, Context(), agent_id=agent_id
+        )
+
+    completion.assert_not_called()
+    assert calls == [{"entity_id": [entity.entity_id], "temperature": 25.5}]
+
+
 async def test_virginia_wolf_routes_to_literary_knowledge_with_entity_correction(
     hass, aioclient_mock, mock_config_entry
 ):

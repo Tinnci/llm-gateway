@@ -37,6 +37,9 @@ export class VoiceHarnessOverview extends LitElement {
     const evidence = facts?.evidence || "unknown";
     const evidenceLabel = {
       observed: t("State read from observations", "已有观测依据"),
+      policy_saved: t("Comfort target saved", "舒适目标已保存"),
+      policy_requested: t("Comfort target submitted", "舒适目标已提交"),
+      policy_suppressed: t("Target saved · away policy takes priority", "目标已保存 · 离家策略优先"),
       sent: t("Request sent · confirmation missing", "请求已发送 · 设备确认暂缺"),
       accepted: t("Request accepted · device unconfirmed", "请求已受理 · 设备确认暂缺"),
       confirmed: t("Device reported the requested state", "设备已回报请求的状态"),
@@ -52,6 +55,9 @@ export class VoiceHarnessOverview extends LitElement {
     }[evidence];
     const guidance = !latest ? t("Your next conversation will appear here.", "下一次对话会记录在这里。")
       : evidence === "clarification" ? t("Answer the question above to continue.", "回答上面的澄清问题即可继续。")
+      : evidence === "policy_saved" ? t("The room will follow its comfort policy. Current temperature still comes from its sensors.", "接下来由房间按舒适策略调节，当前室温仍以传感器观测为准。")
+      : evidence === "policy_requested" ? t("The request was sent. The updated room target has not been observed yet.", "请求已提交，暂未读到更新后的房间目标。")
+      : evidence === "policy_suppressed" ? t("Your target is saved. The room currently follows its away policy.", "你的目标已保留，房间目前按离家策略运行。")
       : ["failed", "partial"].includes(evidence) ? t("The reply explains what is missing. Details are available in the record.", "可从回复了解未完成的原因，在记录中查看详情。")
       : ["sent", "accepted", "unconfirmed", "not_confirmed"].includes(evidence) ? t("The device response remains unconfirmed. The record has the available evidence.", "设备响应仍待确认，可在记录中查看已有反馈。")
       : evidence === "running" ? t("Waiting for the reply.", "正在等待回复。")
@@ -81,7 +87,7 @@ export class VoiceHarnessOverview extends LitElement {
         </section>
         <section class="surface reality" aria-label=${t("Result and next step", "结果与下一步")}>
           <span class="eyebrow">${t("WHAT HAPPENED", "实际结果")}</span>
-          <div class="evidence" data-tone=${evidence === "failed" ? "bad" : ["observed", "confirmed"].includes(evidence) ? "ok" : "muted"}>
+          <div class="evidence" data-tone=${evidence === "failed" ? "bad" : ["observed", "confirmed", "policy_saved"].includes(evidence) ? "ok" : "muted"}>
             <ha-icon icon=${evidence === "confirmed" ? "mdi:check-circle-outline" : evidence === "observed" ? "mdi:thermometer" : evidence === "failed" ? "mdi:alert-circle-outline" : "mdi:message-processing-outline"}></ha-icon>
             <h3>${latest ? evidenceLabel : t("No result yet", "暂无结果")}</h3>
           </div>

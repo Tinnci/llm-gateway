@@ -375,6 +375,13 @@ async def _async_execute_room_temperature(
             "你想调整哪个房间的舒适温度？",
             candidate=candidate,
             reason="ambiguous_target" if areas else "room_missing",
+            action_trace={
+                "control_scope": "room_comfort",
+                "area_candidates": [
+                    {"id": area.id, "name": area.name, "aliases": sorted(area.aliases)}
+                    for area in areas or ar.async_get(hass).async_list_areas()
+                ],
+            },
         )
     area = areas[0]
     entity_id = er.async_get(hass).async_get_entity_id(
@@ -416,6 +423,7 @@ async def _async_dispatch_action(
         )
     domain, service_name = service.split(".", 1)
     dispatch = await _async_dispatch_service(hass, domain, service_name, data)
+    dispatch["control_scope"] = action_trace.get("control_scope", "device")
     if dispatch["dispatch_status"] == "failed":
         return LocalCapabilityResult(
             "error",
@@ -426,9 +434,27 @@ async def _async_dispatch_action(
             reason=dispatch["error"],
             action_trace=action_trace,
         )
+    if candidate.action == "room_set_temperature":
+        # This is a later policy observation, separate from device application.
+        state = hass.states.get(matches[0].entity_id)
+        attributes = state.attributes if state else {}
+        dispatch["policy_observation"] = {
+            "entity_id": matches[0].entity_id,
+            "observed_at": state.last_updated.isoformat() if state else None,
+            "override_temperature": attributes.get("override_temperature"),
+            "override_active": attributes.get("override_active"),
+            "override_suppressed": attributes.get("override_suppressed"),
+            "matches_request": bool(
+                state
+                and state.state not in {"unavailable", "unknown"}
+                and attributes.get("override_active") is True
+                and attributes.get("override_temperature")
+                == candidate.target_temperature
+            ),
+        }
     return LocalCapabilityResult(
         "executed",
-        _dispatch_speech(candidate, matches, dispatch["confirmation_status"]),
+        _dispatch_speech(candidate, matches, dispatch),
         candidate=candidate,
         service_calls=(dispatch,),
         matches=tuple(_match_trace(match) for match in matches),
@@ -554,66 +580,60 @@ async def _async_execute_all_targets(
         )
     domain, service_name = service.split(".", 1)
     semaphore = asyncio.Semaphore(BULK_ACTION_MAX_CONCURRENCY)
-    results = await asyncio.gather(
-        *(
-            _async_call_bulk_target(
-                hass,
-                candidate,
-                state,
-                domain=domain,
-                service_name=service_name,
-                semaphore=semaphore,
+    service_calls = tuple(
+        await asyncio.gather(
+            *(
+                _async_call_bulk_target(
+                    hass,
+                    candidate,
+                    state,
+                    domain=domain,
+                    service_name=service_name,
+                    semaphore=semaphore,
+                )
+                for state in actionable
             )
-            for state in actionable
         )
     )
-    service_calls = tuple(
-        service_call
-        for service_call, _failed_entity in results
-        if service_call is not None
-    )
     failed_entities = [
-        failed_entity
-        for _service_call, failed_entity in results
-        if failed_entity is not None
+        {
+            "entity_id": dispatch["entity_ids"][0],
+            "reason": dispatch["error"],
+            "context_id": dispatch["context_id"],
+            "dispatch_status": "failed",
+        }
+        for dispatch in service_calls
+        if dispatch["dispatch_status"] == "failed"
     ]
+    succeeded_count = len(service_calls) - len(failed_entities)
     trace.update(
         {
             "attempted_count": len(actionable),
-            "succeeded_count": len(service_calls),
+            "succeeded_count": succeeded_count,
             "failed_count": len(failed_entities),
             "failed_entities": failed_entities[:32],
         }
     )
-    if not service_calls:
-        return LocalCapabilityResult(
-            "error",
-            "执行失败了，请稍后再试。",
-            candidate=candidate,
-            matches=tuple(_match_trace(match) for match in matches),
-            reason="all_targets_failed",
-            action_trace=trace,
+    if not succeeded_count:
+        status, reason = "error", "all_targets_failed"
+        speech = "执行失败了，请稍后再试。"
+    elif failed_entities:
+        status, reason = "partial", "partial_failure"
+        speech = _partial_success_speech(
+            candidate,
+            succeeded_count=succeeded_count,
+            failed_count=len(failed_entities),
         )
-    if failed_entities:
-        return LocalCapabilityResult(
-            "partial",
-            _partial_success_speech(
-                candidate,
-                succeeded_count=len(service_calls),
-                failed_count=len(failed_entities),
-            ),
-            candidate=candidate,
-            service_calls=service_calls,
-            matches=tuple(_match_trace(match) for match in matches),
-            reason="partial_failure",
-            action_trace=trace,
-        )
+    else:
+        status, reason = "executed", ""
+        speech = _dispatch_speech(candidate, matches)
     return LocalCapabilityResult(
-        "executed",
-        _dispatch_speech(candidate, matches),
+        status,
+        speech,
         candidate=candidate,
         service_calls=service_calls,
         matches=tuple(_match_trace(match) for match in matches),
+        reason=reason,
         action_trace=trace,
     )
 
@@ -626,18 +646,10 @@ async def _async_call_bulk_target(  # noqa: PLR0913 - explicit service context.
     domain: str,
     service_name: str,
     semaphore: asyncio.Semaphore,
-) -> tuple[dict[str, Any] | None, dict[str, str] | None]:
+) -> dict[str, Any]:
     _service, data = _service_for_candidate(candidate, [state])
     async with semaphore:
-        dispatch = await _async_dispatch_service(hass, domain, service_name, data)
-    if dispatch["dispatch_status"] == "failed":
-        return None, {
-            "entity_id": state.entity_id,
-            "reason": dispatch["error"],
-            "context_id": dispatch["context_id"],
-            "dispatch_status": "failed",
-        }
-    return dispatch, None
+        return await _async_dispatch_service(hass, domain, service_name, data)
 
 
 async def _async_execute_assistant_volume(
@@ -907,9 +919,11 @@ def _service_for_candidate(  # noqa: PLR0911 - explicit HA service mapping.
 def _dispatch_speech(
     candidate: LocalActionCandidate,
     matches: list[State],
-    confirmation_status: str = "unknown",
+    dispatch: dict[str, Any] | None = None,
 ) -> str:
     """Service completion establishes dispatch, not physical application."""
+    dispatch = dispatch or {}
+    confirmation_status = dispatch.get("confirmation_status", "unknown")
     label = (
         f"所有{_domain_label(candidate.domain)}"
         if _targets_all_entities(candidate)
@@ -927,6 +941,10 @@ def _dispatch_speech(
     }.get(candidate.action, "操作")
     if candidate.action in {"climate_set_temperature", "room_set_temperature"}:
         temperature = _format_temperature(candidate.target_temperature)
+        policy = dispatch.get("policy_observation", {})
+        if candidate.action == "room_set_temperature" and policy.get("matches_request"):
+            suffix = "当前离家策略仍优先。" if policy.get("override_suppressed") else ""
+            return f"{label}已保存为{temperature}度。{suffix}"
         if confirmation_status == "confirmed":
             return f"{label}已回报设定 {temperature} 度。"
         return f"已请求将{label}设为{temperature}度。"

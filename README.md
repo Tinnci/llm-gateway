@@ -37,6 +37,7 @@ tool policy.
 - Hidden, disabled, unavailable, and diagnostic entity exclusion
 - Dispatch, transport acceptance, and correlated TCL device-state reports
 - Designated room observations and RoomMind comfort-target control
+- Comfort policy readback and room clarification that retains the requested temperature
 - Local weather entity routing before external search
 
 Chinese batch terms such as `所有`, `全部`, `每个`, and `每一` can select an

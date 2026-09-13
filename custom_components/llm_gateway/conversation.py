@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Literal
 
 from homeassistant.components import conversation
@@ -617,6 +618,8 @@ class LLMGatewayConversationEntity(
     ) -> conversation.ConversationResult:
         """Process one user turn."""
         started = time.monotonic()
+        # HA allocates the first conversation ID on the chat log, not the input.
+        user_input = replace(user_input, conversation_id=chat_log.conversation_id)
         options = self.entry.options
         runtime = self.entry.runtime_data
         run_id = runtime.voice_runs.start(
@@ -750,7 +753,7 @@ class LLMGatewayConversationEntity(
                 run_id,
                 turn_token,
             )
-        if dialogue_transaction.relation == "permission":
+        if dialogue_transaction.relation in {"permission", "confirmation"}:
             prompt = dialogue_transaction.prompt or "你想查哪个地方？"
             self._mark_run(
                 runtime,

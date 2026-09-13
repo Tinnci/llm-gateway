@@ -75,6 +75,21 @@ test("failed dispatch evidence cannot be presented as a sent request", () => {
   expect(facts.evidence).toBe("failed");
 });
 
+test("room policy acknowledgement remains separate from physical device confirmation", () => {
+  const policy = {
+    control_scope: "room_comfort", dispatch_status: "sent", confirmation_status: "unknown",
+    policy_observation: { matches_request: true, override_suppressed: false },
+  };
+  const facts = (dispatches: object[]) => conversationFacts({
+    status: "complete", task_family: "home_control", interaction: { dispatches },
+  });
+  expect(facts([policy]).evidence).toBe("policy_saved");
+  expect(facts([{ ...policy, policy_observation: { matches_request: false } }]).evidence).toBe("policy_requested");
+  expect(facts([{ ...policy, policy_observation: { matches_request: true, override_suppressed: true } }]).evidence).toBe("policy_suppressed");
+  expect(facts([{ ...policy, dispatch_status: "failed" }]).evidence).toBe("failed");
+  expect(facts([policy, { dispatch_status: "sent", confirmation_status: "unknown" }]).evidence).toBe("sent");
+});
+
 test("device confirmation requires every dispatched operation and preserves a missing confirmation", () => {
   const run = { status: "complete", task_family: "home_control" };
   const confirmed = { dispatch_status: "sent", acceptance_status: "accepted", confirmation_status: "confirmed" };

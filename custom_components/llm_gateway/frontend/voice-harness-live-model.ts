@@ -39,6 +39,7 @@ export function conversationFacts(run: EvidenceRecord) {
   const sent = dispatches.filter((dispatch) => dispatch.dispatch_status === "sent");
   const failed = dispatches.some((dispatch) => dispatch.dispatch_status === "failed");
   const allSent = sent.length > 0 && sent.length === dispatches.length;
+  const roomPolicy = allSent && sent.every((dispatch) => dispatch.control_scope === "room_comfort");
   const family = String(run.task_family || object(run.route_decision).task_family || "");
   const action = ["home_control", "volume_control"].includes(family) || dispatches.length > 0;
   const outcome = runOutcome(run);
@@ -48,6 +49,9 @@ export function conversationFacts(run: EvidenceRecord) {
     : outcome === "clarification" ? "clarification"
     : outcome === "failed" || failed ? "failed"
     : outcome === "cancelled" ? "cancelled"
+    : roomPolicy ? sent.every((dispatch) => object(dispatch.policy_observation).matches_request === true)
+      ? sent.some((dispatch) => object(dispatch.policy_observation).override_suppressed === true) ? "policy_suppressed" : "policy_saved"
+      : "policy_requested"
     : action ? sent.some((dispatch) => dispatch.confirmation_status === "not_confirmed") ? "not_confirmed"
       : allSent && sent.every((dispatch) => dispatch.confirmation_status === "confirmed") ? "confirmed"
       : allSent && sent.every((dispatch) => dispatch.acceptance_status === "accepted") ? "accepted"

@@ -100,6 +100,60 @@ async def test_room_temperature_changes_comfort_policy_instead_of_ac(hass, room_
     assert "舒适目标" in result.speech
 
 
+@pytest.mark.parametrize(
+    ("stored_temperature", "active", "suppressed", "matched"),
+    [
+        (25.5, True, False, True),
+        (25.5, True, True, True),
+        (25, True, False, False),
+        (25.5, False, False, False),
+    ],
+)
+async def test_room_policy_readback_does_not_claim_device_confirmation(
+    hass, stored_temperature, active, suppressed, matched
+):
+    area = ar.async_get(hass).async_create("卧室")
+    entity = er.async_get(hass).async_get_or_create(
+        "climate", "roommind", f"roommind_{area.id}_comfort"
+    )
+    attributes = {"friendly_name": "卧室舒适目标", "temperature": 25}
+    hass.states.async_set(entity.entity_id, "auto", attributes)
+    exposed_entities.async_expose_entity(
+        hass, "conversation", entity.entity_id, should_expose=True
+    )
+
+    async def set_temperature(call):
+        hass.states.async_set(
+            entity.entity_id,
+            "auto",
+            {
+                **attributes,
+                "override_temperature": stored_temperature,
+                "override_active": active,
+                "override_suppressed": suppressed,
+            },
+            context=call.context,
+        )
+
+    hass.services.async_register("climate", "set_temperature", set_temperature)
+    text = "把卧室温度调到25.5度"
+    result = await async_try_execute_local_capability(hass, text, decide_route(text))
+
+    assert result is not None
+    dispatch = result.service_calls[0]
+    assert dispatch["control_scope"] == "room_comfort"
+    assert dispatch["confirmation_status"] == "unknown"
+    observation = dispatch["policy_observation"]
+    assert observation["matches_request"] is matched
+    assert observation["override_suppressed"] is suppressed
+    assert observation["override_temperature"] == stored_temperature
+    assert ("已保存" in result.speech) is matched
+    assert ("离家策略" in result.speech) is (matched and suppressed)
+    assert "已回报" not in result.speech
+    hass.states.async_set(entity.entity_id, "auto", {"override_temperature": 30})
+    assert observation["override_temperature"] == stored_temperature
+
+
 @pytest.mark.parametrize("exposed", [True, False])
 async def test_missing_or_unexposed_room_comfort_never_falls_back_to_ac(hass, exposed):
     calls = []
@@ -379,7 +433,14 @@ async def test_local_executor_reports_partial_all_scope_failure(hass):
             "service": "turn_on",
             "entity_ids": ["light.desk"],
         },
+        {
+            "domain": "light",
+            "service": "turn_on",
+            "entity_ids": ["light.unreliable"],
+        },
     )
+    assert result.service_calls[1]["dispatch_status"] == "failed"
+    assert result.service_calls[1]["data"] == {"entity_id": ["light.unreliable"]}
     assert result.action_trace["skipped_entities"] == [
         {"entity_id": "light.already_on", "reason": "already_on"}
     ]
@@ -388,6 +449,23 @@ async def test_local_executor_reports_partial_all_scope_failure(hass):
     assert failed["reason"] == "RuntimeError"
     assert failed["dispatch_status"] == "failed"
     assert failed["context_id"] != result.service_calls[0]["context_id"]
+
+
+async def test_all_failed_bulk_requests_keep_their_dispatch_evidence(hass):
+    hass.states.async_set("light.bedroom", "on", {"friendly_name": "卧室灯"})
+
+    async def turn_off(_call):
+        raise RuntimeError("Device unavailable")
+
+    hass.services.async_register("light", "turn_off", turn_off)
+    text = "关闭所有灯"
+    result = await async_try_execute_local_capability(hass, text, decide_route(text))
+
+    assert result.status == "error"
+    assert len(result.service_calls) == 1
+    assert result.service_calls[0]["dispatch_status"] == "failed"
+    assert result.service_calls[0]["confirmation_status"] == "unknown"
+    assert result.service_calls[0]["context_id"]
 
 
 def test_local_action_candidate_generalizes_explicit_all_scope() -> None:

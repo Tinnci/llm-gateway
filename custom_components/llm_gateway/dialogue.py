@@ -43,7 +43,9 @@ _CANCEL_RE = re.compile(r"^(取消|不用了|算了|别查了|不要了|停|停�
 _SEARCH_PERMISSION_RE = re.compile(
     r"^(搜索一下|搜一下|查一下|可以|好的|行|联网查)[。！？!,.，\s]*$"
 )
-_CONFIRM_RE = re.compile(r"^(对|是|是的|对的|没错|嗯|确认|就是它)[。！？!,.，\s]*$")
+_CONFIRM_RE = re.compile(
+    r"^(?:(?:是的|对的|没错|确认|就是它|对|是|嗯)[。！？!,.，\s]*)+$"
+)
 _LOCATION_ONLY_RE = re.compile(r"^[\u4e00-\u9fffA-Za-z0-9·\-\s]{2,18}[。！？!,.，\s]*$")
 _ORDINAL_RE = re.compile(r"(?:第)?([一二三四五六七八九十\d])个?")
 _FOLLOWUP_NORMALIZE_RE = re.compile(r"[\s《》「」『』“”\"'`·.。,:：，、_\-—!?！？]+")
@@ -292,6 +294,21 @@ def dialogue_frame_from_local_capability(
     action_trace = trace_attrs.get("action_trace")
     if not isinstance(action_trace, dict):
         return None
+    candidate = trace_attrs.get("candidate") or {}
+    if candidate.get("action") == "room_set_temperature" and action_trace.get(
+        "area_candidates"
+    ):
+        return DialogueFrame(
+            id=f"{turn_id}:target_area",
+            frame_type="home_control",
+            operation="room_set_temperature",
+            status="awaiting_referent",
+            missing_referents=("target_area",),
+            filled_referents={"target_temperature": candidate["target_temperature"]},
+            last_prompt=prompt,
+            candidates=tuple(action_trace["area_candidates"]),
+            route_decision=route.as_dict(),
+        )
     resolution_frame = action_trace.get("resolution_frame")
     if not isinstance(resolution_frame, dict):
         return None
@@ -367,7 +384,7 @@ def resolve_dialogue_transaction(  # noqa: PLR0911 - explicit transaction states
             transitions=(transition,),
         )
 
-    if _SEARCH_PERMISSION_RE.match(value):
+    if "location" in frame.missing_referents and _SEARCH_PERMISSION_RE.match(value):
         return DialogueTransaction(
             "permission",
             target_frame=frame,
@@ -376,14 +393,19 @@ def resolve_dialogue_transaction(  # noqa: PLR0911 - explicit transaction states
             interaction_state="awaiting_user_info",
         )
 
-    if (
-        frame.frame_type == "home_control"
-        and "target_device" in frame.missing_referents
-        and _CONFIRM_RE.match(value)
-    ):
-        candidate = frame.candidates[0] if frame.candidates else {}
-        if candidate:
-            return _commit_device_candidate(stack, frame, candidate)
+    if frame.frame_type == "home_control" and _CONFIRM_RE.match(value):
+        if (
+            frame.status == "awaiting_confirmation"
+            and "target_device" in frame.missing_referents
+            and frame.candidates
+        ):
+            return _commit_device_candidate(stack, frame, frame.candidates[0])
+        return DialogueTransaction(
+            "confirmation",
+            target_frame=frame,
+            prompt=frame.last_prompt,
+            interaction_state="awaiting_user_info",
+        )
 
     if _looks_like_new_task(value):
         transition = stack.suspend(frame)
@@ -394,6 +416,31 @@ def resolve_dialogue_transaction(  # noqa: PLR0911 - explicit transaction states
             interaction_state="suspended",
             transitions=(transition,),
         )
+
+    if "target_area" in frame.missing_referents:
+        normalized = _normalize_followup(value)
+        matches = [
+            candidate
+            for candidate in frame.candidates
+            if normalized
+            in {
+                _normalize_followup(label)
+                for label in (candidate["name"], *candidate.get("aliases", ()))
+            }
+        ]
+        if len(matches) == 1:
+            area = matches[0]
+            frame.filled_referents["target_area"] = dict(area)
+            transition = stack.complete(frame)
+            temperature = frame.filled_referents["target_temperature"]
+            return DialogueTransaction(
+                "slot_fill",
+                target_frame=frame,
+                slot_updates={"target_area": dict(area)},
+                effective_text=f"把{area['name']}温度调到{temperature:g}度",
+                interaction_state="slot_filled",
+                transitions=(transition,),
+            )
 
     if "location" in frame.missing_referents and _looks_like_location(value):
         location = value.strip(" 。！？!,.，")

@@ -1864,11 +1864,12 @@ function conversationFacts(run) {
   const sent = dispatches.filter((dispatch) => dispatch.dispatch_status === "sent");
   const failed = dispatches.some((dispatch) => dispatch.dispatch_status === "failed");
   const allSent = sent.length > 0 && sent.length === dispatches.length;
+  const roomPolicy = allSent && sent.every((dispatch) => dispatch.control_scope === "room_comfort");
   const family = String(run.task_family || object(run.route_decision).task_family || "");
   const action = ["home_control", "volume_control"].includes(family) || dispatches.length > 0;
   const outcome = runOutcome(run);
   const terminal = run.terminal_outcome || object(object(run.route).harness_loop).terminal_outcome || object(run.route).terminal_outcome || run.status;
-  const evidence = terminal === "partial" || failed && sent.length > 0 ? "partial" : outcome === "running" ? "running" : outcome === "clarification" ? "clarification" : outcome === "failed" || failed ? "failed" : outcome === "cancelled" ? "cancelled" : action ? sent.some((dispatch) => dispatch.confirmation_status === "not_confirmed") ? "not_confirmed" : allSent && sent.every((dispatch) => dispatch.confirmation_status === "confirmed") ? "confirmed" : allSent && sent.every((dispatch) => dispatch.acceptance_status === "accepted") ? "accepted" : sent.length ? "sent" : "unconfirmed" : observations.some((observation) => observation.answerable === true) ? "observed" : outcome === "answered" ? "reply" : "unknown";
+  const evidence = terminal === "partial" || failed && sent.length > 0 ? "partial" : outcome === "running" ? "running" : outcome === "clarification" ? "clarification" : outcome === "failed" || failed ? "failed" : outcome === "cancelled" ? "cancelled" : roomPolicy ? sent.every((dispatch) => object(dispatch.policy_observation).matches_request === true) ? sent.some((dispatch) => object(dispatch.policy_observation).override_suppressed === true) ? "policy_suppressed" : "policy_saved" : "policy_requested" : action ? sent.some((dispatch) => dispatch.confirmation_status === "not_confirmed") ? "not_confirmed" : allSent && sent.every((dispatch) => dispatch.confirmation_status === "confirmed") ? "confirmed" : allSent && sent.every((dispatch) => dispatch.acceptance_status === "accepted") ? "accepted" : sent.length ? "sent" : "unconfirmed" : observations.some((observation) => observation.answerable === true) ? "observed" : outcome === "answered" ? "reply" : "unknown";
   return {
     intent: String(facts.intent_text || run.user_text || object(run.input).text || ""),
     reply: speechOf(run),
@@ -2146,6 +2147,9 @@ class VoiceHarnessOverview extends i4 {
     const evidence = facts?.evidence || "unknown";
     const evidenceLabel = {
       observed: t3("State read from observations", "已有观测依据"),
+      policy_saved: t3("Comfort target saved", "舒适目标已保存"),
+      policy_requested: t3("Comfort target submitted", "舒适目标已提交"),
+      policy_suppressed: t3("Target saved · away policy takes priority", "目标已保存 · 离家策略优先"),
       sent: t3("Request sent · confirmation missing", "请求已发送 · 设备确认暂缺"),
       accepted: t3("Request accepted · device unconfirmed", "请求已受理 · 设备确认暂缺"),
       confirmed: t3("Device reported the requested state", "设备已回报请求的状态"),
@@ -2159,7 +2163,7 @@ class VoiceHarnessOverview extends i4 {
       running: t3("Processing your request", "正在处理这句话"),
       unknown: t3("Awaiting evidence", "等待结果依据")
     }[evidence];
-    const guidance = !latest ? t3("Your next conversation will appear here.", "下一次对话会记录在这里。") : evidence === "clarification" ? t3("Answer the question above to continue.", "回答上面的澄清问题即可继续。") : ["failed", "partial"].includes(evidence) ? t3("The reply explains what is missing. Details are available in the record.", "可从回复了解未完成的原因，在记录中查看详情。") : ["sent", "accepted", "unconfirmed", "not_confirmed"].includes(evidence) ? t3("The device response remains unconfirmed. The record has the available evidence.", "设备响应仍待确认，可在记录中查看已有反馈。") : evidence === "running" ? t3("Waiting for the reply.", "正在等待回复。") : evidence === "unknown" ? t3("There is not enough evidence to judge this request yet.", "目前还没有足够依据判断这次请求的结果。") : t3("Nothing else is needed for this conversation.", "这次对话无需补充。");
+    const guidance = !latest ? t3("Your next conversation will appear here.", "下一次对话会记录在这里。") : evidence === "clarification" ? t3("Answer the question above to continue.", "回答上面的澄清问题即可继续。") : evidence === "policy_saved" ? t3("The room will follow its comfort policy. Current temperature still comes from its sensors.", "接下来由房间按舒适策略调节，当前室温仍以传感器观测为准。") : evidence === "policy_requested" ? t3("The request was sent. The updated room target has not been observed yet.", "请求已提交，暂未读到更新后的房间目标。") : evidence === "policy_suppressed" ? t3("Your target is saved. The room currently follows its away policy.", "你的目标已保留，房间目前按离家策略运行。") : ["failed", "partial"].includes(evidence) ? t3("The reply explains what is missing. Details are available in the record.", "可从回复了解未完成的原因，在记录中查看详情。") : ["sent", "accepted", "unconfirmed", "not_confirmed"].includes(evidence) ? t3("The device response remains unconfirmed. The record has the available evidence.", "设备响应仍待确认，可在记录中查看已有反馈。") : evidence === "running" ? t3("Waiting for the reply.", "正在等待回复。") : evidence === "unknown" ? t3("There is not enough evidence to judge this request yet.", "目前还没有足够依据判断这次请求的结果。") : t3("Nothing else is needed for this conversation.", "这次对话无需补充。");
     const timestamp = String(latest?.created_at || latest?.started_at || "");
     const userText = String(latest?.user_text || object(latest?.input).text || "");
     return b2`
@@ -2184,7 +2188,7 @@ class VoiceHarnessOverview extends i4 {
         </section>
         <section class="surface reality" aria-label=${t3("Result and next step", "结果与下一步")}>
           <span class="eyebrow">${t3("WHAT HAPPENED", "实际结果")}</span>
-          <div class="evidence" data-tone=${evidence === "failed" ? "bad" : ["observed", "confirmed"].includes(evidence) ? "ok" : "muted"}>
+          <div class="evidence" data-tone=${evidence === "failed" ? "bad" : ["observed", "confirmed", "policy_saved"].includes(evidence) ? "ok" : "muted"}>
             <ha-icon icon=${evidence === "confirmed" ? "mdi:check-circle-outline" : evidence === "observed" ? "mdi:thermometer" : evidence === "failed" ? "mdi:alert-circle-outline" : "mdi:message-processing-outline"}></ha-icon>
             <h3>${latest ? evidenceLabel : t3("No result yet", "暂无结果")}</h3>
           </div>

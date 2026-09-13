@@ -43,6 +43,18 @@ so an entity rename does not change ownership. Missing, unavailable, hidden,
 or unexposed comfort control does not redirect the request to an AC. Negated
 requests and questions about whether a change happened do not dispatch it.
 
+After a successful comfort service call, Gateway reads the comfort entity's
+`override_active`, `override_temperature`, and `override_suppressed` attributes.
+Only a matching active override supports **Comfort target saved**. A missing or
+different value stays **Comfort target submitted**. An away-policy suppression
+is stated explicitly. This readback is a copied policy observation with its HA
+timestamp; it neither confirms AC application nor says the room reached its goal.
+
+“把温度调到 25.5 度”缺少房间时，只追问房间；随后“卧室”或明确的房间别名会沿用
+25.5 度。单独回答“对的”不会擅自选一个房间。首轮使用 HA 已分配给 ChatLog 的
+会话 ID，后续澄清、记忆与记录因此属于同一会话。重复肯定词如“对的，对的，是的”
+可确认已明确提问的设备，不再退回模型重复追问。
+
 ## Dispatch and confirmation / 发出与确认
 
 Each local service attempt retains its HA context ID, request data, and dispatch
@@ -60,6 +72,10 @@ The Gateway adds no polling or device retry.
 - A **not_confirmed** result stays distinct from a failed service call.
 - Missing driver evidence remains **unknown**. Later observations are separate
   facts; this short-lived voice listener does not claim to reconcile them.
+
+Bulk actions retain every attempted dispatch, including failures and their
+context IDs. A partial or entirely failed batch cannot leave a success-only
+evidence list. Already satisfied targets retain their separate skipped records.
 
 “设备已回报设定 25.5 度”只确认设备设定，不表示房间已达到 25.5°C，也不证明压缩机
 正在制冷。房间策略保存完成同样不等于空调执行完成。RoomMind 的执行器仍按其原有
