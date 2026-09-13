@@ -86,7 +86,8 @@ For the four-panel implementation and target-device results, see
 [Phase 9 verification / 实机验证](docs/voice-harness-phase9-2026-09-13.md).
 
 For room observations, comfort targets, and device confirmation, see
-[Voice and room intent / 语音与空间意图](docs/voice-room-intent.md).
+[Voice and room intent / 语音与空间意图](docs/voice-room-intent.md) and
+[Phase 10 verification / 实机验证](docs/voice-harness-phase10-2026-09-14.md).
 
 ## Installation
 
