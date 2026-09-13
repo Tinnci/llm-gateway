@@ -6,7 +6,12 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
+from .capabilities import decide_route
+from .static_context import COMMON_AREAS, state_metrics_from_text
+
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from .capabilities import RouteDecision
 
 DialogueRelation = Literal[
@@ -44,6 +49,44 @@ _ORDINAL_RE = re.compile(r"(?:第)?([一二三四五六七八九十\d])个?")
 _FOLLOWUP_NORMALIZE_RE = re.compile(r"[\s《》「」『』“”\"'`·.。,:：，、_\-—!?！？]+")
 _SHORT_LOCATION_MAX_LEN = 8
 MIN_FOLLOWUP_PART_LEN = 2
+
+
+def resolve_room_query_followup(
+    text: str, previous_texts: Sequence[str], *, area_names: Sequence[str] = ()
+) -> str:
+    """Carry a room metric through adjacent reads, including HA-local turns."""
+    normalized = _FOLLOWUP_NORMALIZE_RE.sub("", text)
+    names = set(COMMON_AREAS) | set(area_names)
+    followups = {
+        phrase: area
+        for area in names
+        for room in (_FOLLOWUP_NORMALIZE_RE.sub("", area),)
+        for phrase in (f"那{room}呢", f"{room}呢", f"那么{room}呢")
+    }
+    area = followups.get(normalized)
+    if area is None:
+        return text
+    for previous in reversed(previous_texts):
+        previous_normalized = _FOLLOWUP_NORMALIZE_RE.sub("", previous)
+        if previous_normalized in followups:
+            continue
+        decision = decide_route(previous)
+        metrics = state_metrics_from_text(previous)
+        if (
+            decision.next_action == "call_tool_then_local_render"
+            and decision.scope == "indoor_environment"
+            and metrics
+            and set(metrics) <= {"temperature", "humidity"}
+            and not any(word in previous for word in ("空调", "暖气", "温控"))
+        ):
+            label = "和".join(
+                "温度" if metric == "temperature" else "湿度" for metric in metrics
+            )
+            return f"{area}{label}是多少？"
+        break
+    return text
+
+
 _LOCATION_MARKERS = (
     "上海",
     "静安",

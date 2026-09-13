@@ -35,7 +35,8 @@ tool policy.
 - Confirmation for high-risk actions
 - Deterministic low-risk batch control
 - Hidden, disabled, unavailable, and diagnostic entity exclusion
-- State-match evidence for supported deterministic actions
+- Dispatch, transport acceptance, and correlated TCL device-state reports
+- Designated room observations and RoomMind comfort-target control
 - Local weather entity routing before external search
 
 Chinese batch terms such as `所有`, `全部`, `每个`, and `每一` can select an
@@ -57,14 +58,16 @@ need a manual `panel_custom` configuration.
 The four views share a Lit design system, light and dark themes, and layouts
 for desktop, tablet, and phone:
 
-- **Overview / 概览**: system status, observed reply metrics, sparklines, and
-  fresh voice activity.
+- **Overview / 概览**: the latest understood request, reply, and available
+  observation or device evidence. Metrics and connections expand on demand.
 - **Runs / 运行记录**: searchable conversations, six-stage timing, an evidence
-  drawer, reply comparison, token usage, and local WAV/PCM audition.
+  drawer, reply comparison, token usage, and local WAV/PCM audition. The drawer
+  opens on the conversation; timing and model usage live under Evidence.
 - **Test / 测试**: scenario cards, policy assertions, real provider streaming,
   tool proposals, cancellation, and replay of the last test.
 - **Settings / 设置**: audio, model routing, ASR/TTS and Wyoming, and storage;
-  connection probes and JSON/YAML tuning import/export.
+  connection probes and JSON/YAML tuning import/export. Audio scenes remain
+  visible while individual gain controls expand under Fine-tune volumes.
 
 Missing timing remains unmeasured. Tool proposals and dispatched actions do
 not become physical confirmation. Model previews use the primary provider and
@@ -80,6 +83,9 @@ dashboard. See [audio settings and runtime evidence](docs/voice-feedback-runtime
 For the four-panel implementation and target-device results, see
 [frontend design](docs/harness-frontend-design.md) and
 [Phase 9 verification / 实机验证](docs/voice-harness-phase9-2026-09-13.md).
+
+For room observations, comfort targets, and device confirmation, see
+[Voice and room intent / 语音与空间意图](docs/voice-room-intent.md).
 
 ## Installation
 

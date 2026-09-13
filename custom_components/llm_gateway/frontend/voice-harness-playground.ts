@@ -133,10 +133,10 @@ export class VoiceHarnessPlayground extends LitElement {
             >VOICE HARNESS / ${t("PLAYGROUND", "测试")}</span
           >
           <h2>
-            ${t("Try a thought. Shape a response.", "试一句话，打磨一次回应。")}
+            ${t("Investigate a response.", "排查一次回应。")}
           </h2>
           <p class="muted">
-            ${t("Explore a scenario, check its assertions, or watch a model compose a reply.", "从生活场景出发，检查断言，或看模型实时组织回答。")}
+            ${t("Use a recorded problem to check an answer or a tool proposal.", "从实际遇到的问题出发，检查回答或工具提案。")}
           </p>
         </div>
         <span class="chip">${t("Preview workspace", "演练工作台")}</span>

@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
     from .capabilities import RouteDecision
+    from .static_context import ScalarStateRenderResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +109,9 @@ class TurnLoopServices:
     ) = None
     execute_live_context: (
         Callable[[dict[str, Any]], Awaitable[dict[str, Any]]] | None
+    ) = None
+    read_area_observation: (
+        Callable[[str, RouteDecision], ScalarStateRenderResult | None] | None
     ) = None
 
 
@@ -358,6 +362,12 @@ class LocalLiveContextLoop:
         context: TurnLoopContext,
         services: TurnLoopServices,
     ) -> TurnLoopDecision:
+        if services.read_area_observation is not None:
+            observation = services.read_area_observation(
+                context.text, context.route_decision
+            )
+            if observation is not None:
+                return _live_state_result(observation, [])
         if context.route_decision.task_type == "outdoor_current_weather_query":
             weather = await WeatherContextProvider(_hass).async_get_current(
                 location_hint=context.route_decision.location_hint,
@@ -533,44 +543,48 @@ class LocalLiveContextLoop:
                 ),
                 trace_events=tuple(events),
             )
-        verdict = {
-            "answerable": rendered.answerable,
-            "target_covered": rendered.target_covered,
-            "reason": rendered.outcome_reason
-            or ("answered" if rendered.answerable else "required_data_missing"),
-            "required_data": list(rendered.required_data),
-            "available_data": list(rendered.available_data),
-        }
-        events.extend(
-            (
-                TurnLoopTraceEvent(
-                    stage="local_state_render",
-                    status="ok" if rendered.answerable else "warning",
-                    attrs=rendered.trace_attrs(),
-                ),
-                TurnLoopTraceEvent(
-                    stage="outcome_evaluated",
-                    status="ok" if rendered.answerable else "warning",
-                    attrs=verdict,
-                ),
-            )
-        )
-        result_status = (
-            "complete"
-            if rendered.answerable
-            else "clarify"
-            if rendered.outcome_reason == "ambiguous_target"
-            else "failed"
-        )
-        return TurnLoopResult(
-            status=result_status,
-            speech=rendered.speech,
-            route_kind="local_live_context",
-            route_model="live_context_renderer",
-            trace_events=tuple(events),
-            stop_reason=verdict["reason"],
-            outcome_verdict=verdict,
-        )
+        return _live_state_result(rendered, events)
+
+
+def _live_state_result(
+    rendered: ScalarStateRenderResult, events: list[TurnLoopTraceEvent]
+) -> TurnLoopResult:
+    verdict = {
+        "answerable": rendered.answerable,
+        "target_covered": rendered.target_covered,
+        "reason": rendered.outcome_reason
+        or ("answered" if rendered.answerable else "required_data_missing"),
+        "required_data": list(rendered.required_data),
+        "available_data": list(rendered.available_data),
+    }
+    result_status = (
+        "complete"
+        if rendered.answerable
+        else "clarify"
+        if rendered.outcome_reason == "ambiguous_target"
+        else "failed"
+    )
+    return TurnLoopResult(
+        status=result_status,
+        speech=rendered.speech,
+        route_kind="local_live_context",
+        route_model="live_context_renderer",
+        trace_events=(
+            *events,
+            TurnLoopTraceEvent(
+                stage="local_state_render",
+                status="ok" if rendered.answerable else "warning",
+                attrs=rendered.trace_attrs(),
+            ),
+            TurnLoopTraceEvent(
+                stage="outcome_evaluated",
+                status="ok" if rendered.answerable else "warning",
+                attrs=verdict,
+            ),
+        ),
+        stop_reason=verdict["reason"],
+        outcome_verdict=verdict,
+    )
 
 
 def _live_context_operation_id(context: TurnLoopContext) -> str:

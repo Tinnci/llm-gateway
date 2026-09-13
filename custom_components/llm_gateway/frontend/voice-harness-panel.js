@@ -1045,7 +1045,6 @@ class VoiceHarnessPanel extends HTMLElement {
     this._actionBusy = {};
     this._openPicker = "";
     /** @type {Set<"diagnostics" | "memory">} */
-    this._overviewOpenSections = new Set();
   }
 
   set hass(value) {
@@ -2085,7 +2084,6 @@ class VoiceHarnessPanel extends HTMLElement {
         id: sample.id, title: this._sampleName(sample), user: this._sampleUser(sample),
         response: this._sampleResponse(sample), expected: this._sampleExpected(sample),
       })),
-      openSections: [...this._overviewOpenSections],
       diagnostics: this._satelliteDiagnosticPanel(satellite.diagnostic_snapshot || {}),
       memory: this._visitedTabs.has("overview") ? this._renderMemory(entries) : "",
       config: this._configHtml || "",

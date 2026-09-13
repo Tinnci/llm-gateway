@@ -33,7 +33,6 @@ export type HarnessShellModel = {
   updatedAt: string;
   navigation: Array<{ id: string; label: string; icon: string }>;
   scenarios: PlaygroundScenario[];
-  openSections: string[];
   diagnostics: string;
   memory: string;
   config: string;
@@ -106,8 +105,6 @@ export function renderHarnessShell(
                 .entries=${model.entries}
                 .satellite=${model.satellite}
                 .language=${model.language}
-                .updatedAt=${model.updatedAt}
-                .openSections=${model.openSections}
                 @harness-overview-navigate=${(event: CustomEvent<{ destination: string }>) => model.select(event.detail.destination)}
               >
                 <div slot="diagnostics">${unsafeHTML(model.diagnostics)}</div>

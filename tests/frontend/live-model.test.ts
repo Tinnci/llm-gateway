@@ -5,6 +5,8 @@ import {
   livePipeline,
   pcmWave,
   supportsActionReplay,
+  latestConversation,
+  conversationFacts,
 } from "../../custom_components/llm_gateway/frontend/voice-harness-live-model";
 
 test("recorded action replay is unavailable for model replies and existing forks", () => {
@@ -35,6 +37,54 @@ test("missing measurements stay unknown and replay does not improve live success
   expect(metrics.errorRate).toBe(50);
   expect(observedMetrics([]).medianMs).toBeNull();
   expect(observedMetrics([]).successRate).toBeNull();
+});
+
+test("summary-only dry runs cannot replace a real conversation or improve its metrics", () => {
+  const real = { run_id: "live", created_at: "2026-09-13T10:00:00Z", status: "error", latency_ms: 400 };
+  const replay = { run_id: "fork", created_at: "2026-09-13T11:00:00Z", status: "complete", outcome: "dry_run", terminal_outcome: "dry_run", latency_ms: 1 };
+  expect(latestConversation([replay, real])).toBe(real);
+  expect(observedMetrics([replay, real]).successRate).toBe(0);
+});
+
+test("an answered action and a successful dispatch cannot become device confirmation", () => {
+  const facts = conversationFacts({
+    status: "complete", task_family: "home_control", assistant_text: "已发送请求。",
+    interaction: { dispatches: [{ dispatch_status: "sent", confirmation_status: "unknown" }] },
+  });
+  expect(facts.evidence).toBe("sent");
+  expect(conversationFacts({ status: "complete", task_family: "home_control" }).evidence).toBe("unconfirmed");
+  expect(conversationFacts({ status: "complete", assistant_text: "你好" }).evidence).toBe("reply");
+  expect(conversationFacts({ status: "complete", terminal_outcome: "partial", task_family: "home_control", interaction: { dispatches: [{ dispatch_status: "sent" }] } }).evidence).toBe("partial");
+});
+
+test("a room answer shows its observation source and resolved follow-up intent", () => {
+  const facts = conversationFacts({
+    status: "complete", user_text: "那客厅呢？", assistant_text: "客厅现在 28.9 度。",
+    interaction: { intent_text: "客厅温度是多少？", observations: [{ source: "ha_area_sensor", answerable: true, entities: [{ name: "客厅温度", state: "28.9" }] }] },
+  });
+  expect(facts.intent).toBe("客厅温度是多少？");
+  expect(facts.evidence).toBe("observed");
+  expect(facts.sources).toEqual(["客厅温度"]);
+});
+
+test("failed dispatch evidence cannot be presented as a sent request", () => {
+  const facts = conversationFacts({
+    status: "complete", task_family: "home_control",
+    interaction: { dispatches: [{ dispatch_status: "failed", confirmation_status: "unknown" }] },
+  });
+  expect(facts.evidence).toBe("failed");
+});
+
+test("device confirmation requires every dispatched operation and preserves a missing confirmation", () => {
+  const run = { status: "complete", task_family: "home_control" };
+  const confirmed = { dispatch_status: "sent", acceptance_status: "accepted", confirmation_status: "confirmed" };
+  const accepted = { dispatch_status: "sent", acceptance_status: "accepted", confirmation_status: "unknown" };
+  const facts = (dispatches: object[]) => conversationFacts({ ...run, interaction: { dispatches } });
+  expect(facts([confirmed]).evidence).toBe("confirmed");
+  expect(facts([accepted]).evidence).toBe("accepted");
+  expect(facts([confirmed, { dispatch_status: "sent" }]).evidence).toBe("sent");
+  expect(facts([confirmed, { ...accepted, confirmation_status: "not_confirmed" }]).evidence).toBe("not_confirmed");
+  expect(facts([confirmed, { dispatch_status: "failed" }]).evidence).toBe("partial");
 });
 
 test("dispatch and absent playback never become physical confirmation or zero duration", () => {

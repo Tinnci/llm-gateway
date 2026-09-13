@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+
+import pytest
+from homeassistant.components.homeassistant import exposed_entities
+from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import EntityCategory
 
@@ -31,6 +36,100 @@ def test_local_action_candidate_parses_climate_control():
     assert candidate.action == "turn_on"
     assert candidate.domain == "climate"
     assert candidate.target_hint == "空调"
+
+
+@pytest.mark.parametrize("temperature", ["25.5", "26"])
+async def test_climate_request_preserves_the_spoken_setpoint(hass, temperature):
+    calls = []
+    hass.states.async_set("climate.bedroom", "cool", {"friendly_name": "卧室空调"})
+
+    async def set_temperature(call):
+        calls.append(dict(call.data))
+
+    hass.services.async_register("climate", "set_temperature", set_temperature)
+    text = f"把卧室空调设为{temperature}度"
+    route = decide_route(text)
+    result = await async_try_execute_local_capability(hass, text, route)
+
+    assert route.route == "local_action"
+    assert result is not None
+    assert result.status == "executed"
+    assert calls == [
+        {"entity_id": ["climate.bedroom"], "temperature": float(temperature)}
+    ]
+    assert result.service_calls[0]["confirmation_status"] == "unknown"
+
+
+@pytest.mark.parametrize("text", ["不要把卧室空调设为25.5度", "别把卧室温度调到26度"])
+async def test_negated_temperature_request_never_dispatches(hass, text):
+    assert local_action_candidate(text) is None
+    assert decide_route(text).next_action != "execute_local"
+
+
+@pytest.mark.parametrize("room_name", ["卧室", "卧室 2", "小书房"])
+async def test_room_temperature_changes_comfort_policy_instead_of_ac(hass, room_name):
+    calls = []
+    area = ar.async_get(hass).async_create(room_name)
+    entity = er.async_get(hass).async_get_or_create(
+        "climate",
+        "roommind",
+        f"roommind_{area.id}_comfort",
+        suggested_object_id="renamed_comfort_control",
+    )
+    hass.states.async_set(
+        entity.entity_id, "auto", {"friendly_name": room_name + "舒适目标"}
+    )
+    hass.states.async_set("climate.ac", "cool", {"friendly_name": room_name + "空调"})
+    exposed_entities.async_expose_entity(
+        hass, "conversation", entity.entity_id, should_expose=True
+    )
+
+    async def set_temperature(call):
+        calls.append(dict(call.data))
+
+    hass.services.async_register("climate", "set_temperature", set_temperature)
+    text = f"把{room_name.replace(' ', '')}温度调到25.5度"
+    route = decide_route(text)
+    result = await async_try_execute_local_capability(hass, text, route)
+
+    assert route.route == "local_action"
+    assert result is not None
+    assert result.status == "executed"
+    assert calls == [{"entity_id": [entity.entity_id], "temperature": 25.5}]
+    assert result.service_calls[0]["confirmation_status"] == "unknown"
+    assert "舒适目标" in result.speech
+
+
+@pytest.mark.parametrize("exposed", [True, False])
+async def test_missing_or_unexposed_room_comfort_never_falls_back_to_ac(hass, exposed):
+    calls = []
+    area = ar.async_get(hass).async_create("卧室")
+    hass.states.async_set("climate.ac", "cool", {"friendly_name": "卧室空调"})
+    if not exposed:
+        entity = er.async_get(hass).async_get_or_create(
+            "climate", "roommind", f"roommind_{area.id}_comfort"
+        )
+        hass.states.async_set(
+            entity.entity_id, "auto", {"friendly_name": "卧室舒适目标"}
+        )
+        exposed_entities.async_expose_entity(
+            hass, "conversation", entity.entity_id, should_expose=False
+        )
+
+    async def set_temperature(call):
+        calls.append(dict(call.data))
+
+    hass.services.async_register("climate", "set_temperature", set_temperature)
+    text = "卧室温度调到26度"
+    result = await async_try_execute_local_capability(hass, text, decide_route(text))
+
+    assert result is not None
+    assert result.status == "clarify"
+    assert not calls
+
+
+def test_question_about_a_room_target_does_not_change_it():
+    assert decide_route("卧室温度调到26度了吗？").next_action != "execute_local"
 
 
 def test_local_action_candidate_rejects_high_risk_control():
@@ -72,8 +171,117 @@ async def test_local_executor_calls_light_service(hass):
 
     assert result is not None
     assert result.status == "executed"
-    assert result.speech == "已打开客厅灯。"
+    assert result.speech == "已向客厅灯发送打开请求。"
     assert calls == [{"entity_id": ["light.living_room"]}]
+    assert hass.states.get("light.living_room").state == "off"
+    assert result.service_calls[0]["dispatch_status"] == "sent"
+    assert result.service_calls[0]["confirmation_status"] == "unknown"
+    assert result.service_calls[0]["context_id"]
+    trace = result.trace_attrs()
+    trace["service_calls"][0]["entity_ids"].clear()
+    assert result.service_calls[0]["entity_ids"] == ["light.living_room"]
+
+
+async def test_failed_dispatch_retains_its_context_without_claiming_delivery(hass):
+    contexts = []
+    hass.states.async_set("light.living_room", "off", {"friendly_name": "客厅灯"})
+
+    async def turn_on(call):
+        contexts.append(call.context.id)
+        raise RuntimeError("Device unavailable")
+
+    hass.services.async_register("light", "turn_on", turn_on)
+    text = "打开客厅灯"
+    result = await async_try_execute_local_capability(hass, text, decide_route(text))
+
+    assert result is not None
+    assert result.status == "error"
+    assert result.service_calls[0]["dispatch_status"] == "failed"
+    assert result.service_calls[0]["context_id"] == contexts[0]
+    assert result.service_calls[0]["confirmation_status"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    ("outcome", "confirmation"),
+    [("applied", "confirmed"), ("not_confirmed", "not_confirmed")],
+)
+async def test_driver_evidence_before_dispatch_return_is_kept(
+    hass, outcome, confirmation
+):
+    hass.states.async_set("climate.bedroom", "cool", {"friendly_name": "卧室空调"})
+
+    async def set_temperature(call):
+        hass.bus.async_fire(
+            "tcl_udp_ac_command_result",
+            {
+                "entity_id": "climate.bedroom",
+                "context_id": call.context.id,
+                "command_id": "temperature-command",
+                "outcome": outcome,
+                "transport_outcome": "accepted_by_udp",
+                "expected_status": {"target_temperature": 25.5},
+                "status": {"target_temperature": 25.5 if outcome == "applied" else 25},
+            },
+        )
+        await asyncio.sleep(0)
+
+    hass.services.async_register("climate", "set_temperature", set_temperature)
+    text = "把卧室空调设为25.5度"
+    result = await async_try_execute_local_capability(hass, text, decide_route(text))
+
+    assert result is not None
+    dispatch = result.service_calls[0]
+    assert dispatch["dispatch_status"] == "sent"
+    assert dispatch["confirmation_status"] == confirmation
+    assert dispatch["acceptance_status"] == "accepted"
+    assert dispatch["integration_evidence"][0]["context_id"] == dispatch["context_id"]
+    assert ("已回报设定" in result.speech) is (outcome == "applied")
+    trace = result.trace_attrs()
+    trace["service_calls"][0]["integration_evidence"][0]["status"].clear()
+    assert dispatch["integration_evidence"][0]["status"]
+    assert not hass.bus.async_listeners().get("tcl_udp_ac_command_result")
+
+
+@pytest.mark.parametrize("mismatch", ["context_id", "entity_id"])
+async def test_unrelated_driver_evidence_cannot_confirm_a_request(hass, mismatch):
+    hass.states.async_set("climate.bedroom", "cool", {"friendly_name": "卧室空调"})
+
+    async def set_temperature(call):
+        evidence = {
+            "entity_id": "climate.bedroom",
+            "context_id": call.context.id,
+            "outcome": "applied",
+            "transport_outcome": "accepted_by_udp",
+        }
+        evidence[mismatch] = "another-request-or-device"
+        hass.bus.async_fire("tcl_udp_ac_command_result", evidence)
+        await asyncio.sleep(0)
+
+    hass.services.async_register("climate", "set_temperature", set_temperature)
+    text = "把卧室空调设为25.5度"
+    result = await async_try_execute_local_capability(hass, text, decide_route(text))
+
+    assert result is not None
+    assert result.service_calls[0]["confirmation_status"] == "unknown"
+    assert result.service_calls[0]["integration_evidence"] == []
+    assert "已回报" not in result.speech
+
+
+async def test_zero_volume_is_not_replaced_with_half_volume(hass):
+    calls = []
+    hass.states.async_set(
+        "media_player.speaker", "playing", {"friendly_name": "客厅音箱"}
+    )
+
+    async def set_volume(call):
+        calls.append(dict(call.data))
+
+    hass.services.async_register("media_player", "volume_set", set_volume)
+    text = "把客厅音箱音量调到最小"
+    result = await async_try_execute_local_capability(hass, text, decide_route(text))
+
+    assert result is not None
+    assert calls == [{"entity_id": ["media_player.speaker"], "volume_level": 0.0}]
 
 
 async def test_local_executor_applies_explicit_all_lights_scope(hass):
@@ -91,7 +299,7 @@ async def test_local_executor_applies_explicit_all_lights_scope(hass):
 
     assert result is not None
     assert result.status == "executed"
-    assert result.speech == "已打开所有灯。"
+    assert result.speech == "已向所有灯发送打开请求。"
     assert calls == [
         {"entity_id": ["light.desk"]},
         {"entity_id": ["light.monitor"]},
@@ -157,12 +365,15 @@ async def test_local_executor_reports_partial_all_scope_failure(hass):
 
     assert result is not None
     assert result.status == "partial"
-    assert result.speech == "已打开 1 个灯，1 个失败。"
+    assert result.speech == "已向 1 个灯发送打开请求，1 个发送失败。"
     assert calls == [
         {"entity_id": ["light.desk"]},
         {"entity_id": ["light.unreliable"]},
     ]
-    assert result.service_calls == (
+    assert tuple(
+        {key: call[key] for key in ("domain", "service", "entity_ids")}
+        for call in result.service_calls
+    ) == (
         {
             "domain": "light",
             "service": "turn_on",
@@ -172,9 +383,11 @@ async def test_local_executor_reports_partial_all_scope_failure(hass):
     assert result.action_trace["skipped_entities"] == [
         {"entity_id": "light.already_on", "reason": "already_on"}
     ]
-    assert result.action_trace["failed_entities"] == [
-        {"entity_id": "light.unreliable", "reason": "RuntimeError"}
-    ]
+    [failed] = result.action_trace["failed_entities"]
+    assert failed["entity_id"] == "light.unreliable"
+    assert failed["reason"] == "RuntimeError"
+    assert failed["dispatch_status"] == "failed"
+    assert failed["context_id"] != result.service_calls[0]["context_id"]
 
 
 def test_local_action_candidate_generalizes_explicit_all_scope() -> None:
@@ -207,7 +420,7 @@ async def test_local_executor_calls_climate_service(hass):
     assert route.metadata["domain"] == "climate"
     assert result is not None
     assert result.status == "executed"
-    assert result.speech == "已打开卧室空调。"
+    assert result.speech == "已向卧室空调发送打开请求。"
     assert calls == [{"entity_id": ["climate.bedroom_ac"]}]
 
 
@@ -236,7 +449,7 @@ async def test_local_executor_sets_climate_temperature(hass):
     assert route.metadata["target_temperature"] == 16.0
     assert result is not None
     assert result.status == "executed"
-    assert result.speech == "已把卧室空调设为16度。"
+    assert result.speech == "已请求将卧室空调设为16度。"
     assert calls == [{"entity_id": ["climate.bedroom_ac"], "temperature": 16.0}]
     assert result.trace_attrs()["candidate"]["target_temperature"] == 16.0
 

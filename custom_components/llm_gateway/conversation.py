@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from homeassistant.components import conversation
 from homeassistant.const import CONF_LLM_HASS_API, CONF_PROMPT, MATCH_ALL
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import llm
 from homeassistant.helpers.intent import IntentResponse
@@ -50,6 +51,7 @@ from .dialogue import (
     dialogue_pending_key,
     interaction_state_for_policy_block,
     resolve_dialogue_transaction,
+    resolve_room_query_followup,
 )
 from .feedback import (
     VoiceFeedbackPolicy,
@@ -72,6 +74,7 @@ from .resolution import (
     resolution_frame_from_entity_resolution,
     weather_resolution_frame,
 )
+from .room_context import read_area_observation
 from .router import (
     ModelRoute,
     legacy_model_from_options,
@@ -474,20 +477,7 @@ def _local_live_context_area(text: str) -> str:
 
 
 def _local_live_context_metric(normalized: str) -> str:
-    metric_terms = (
-        ("air_quality", ("空气质量", "空气怎么样")),
-        ("pm25", ("pm25", "pm2.5", "雾霾")),
-        ("eco2", ("eco2",)),
-        ("co2", ("co2", "二氧化碳")),
-        ("tvoc", ("tvoc", "甲醛", "挥发")),
-        ("temperature", ("温度", "气温", "几度", "冷不冷", "热不热")),
-        ("humidity", ("湿度",)),
-        ("weather", ("天气",)),
-    )
-    for metric, terms in metric_terms:
-        if any(term in normalized for term in terms):
-            return metric
-    return "state"
+    return environment_metric_from_text(normalized) or "state"
 
 
 def _tool_call_fingerprint(tool_call: llm.ToolInput) -> tuple[str, str]:
@@ -707,6 +697,21 @@ class LLMGatewayConversationEntity(
                 attrs=transition.as_dict(),
             )
         effective_text = dialogue_transaction.effective_text or user_input.text
+        if dialogue_transaction.relation == "new_task":
+            previous_texts = [
+                item.content
+                for item in chat_log.content
+                if isinstance(item, conversation.UserContent)
+            ][:-1]
+            effective_text = resolve_room_query_followup(
+                effective_text,
+                previous_texts,
+                area_names=tuple(
+                    name
+                    for area in ar.async_get(self.hass).async_list_areas()
+                    for name in (area.name, *area.aliases)
+                ),
+            )
         if (
             dialogue_transaction.relation != "new_task"
             or dialogue_transaction.suspended_frame is not None
@@ -907,15 +912,7 @@ class LLMGatewayConversationEntity(
                 selected_loop,
                 self.hass,
                 loop_context,
-                TurnLoopServices(
-                    plan_live_context=lambda text, decision: (
-                        _local_live_context_tool_args(text, decision),
-                        _local_live_context_slots(text, decision),
-                    ),
-                    execute_live_context=lambda args: (
-                        self._async_execute_live_context_tool(chat_log, args)
-                    ),
-                ),
+                self._live_context_services(chat_log),
             )
             if loop_result is not None:
                 frame = loop_result.dialogue_frame
@@ -1183,6 +1180,25 @@ class LLMGatewayConversationEntity(
             route_decision,
         )
 
+    def _live_context_services(
+        self, chat_log: conversation.ChatLog
+    ) -> TurnLoopServices:
+        """Share source selection between individual and composed room queries."""
+        return TurnLoopServices(
+            plan_live_context=lambda text, decision: (
+                _local_live_context_tool_args(text, decision),
+                _local_live_context_slots(text, decision),
+            ),
+            execute_live_context=lambda args: self._async_execute_live_context_tool(
+                chat_log, args
+            ),
+            read_area_observation=(
+                lambda text, decision: read_area_observation(self.hass, text, decision)
+            )
+            if _chat_log_has_tool(chat_log, LIVE_CONTEXT_TOOL_NAME)
+            else None,
+        )
+
     async def _async_execute_live_context_tool(
         self,
         chat_log: conversation.ChatLog,
@@ -1422,15 +1438,7 @@ class LLMGatewayConversationEntity(
                     route_decision=decision,
                     turn_id=f"{run_id}:{subtask.index}",
                 ),
-                TurnLoopServices(
-                    plan_live_context=lambda text, route: (
-                        _local_live_context_tool_args(text, route),
-                        _local_live_context_slots(text, route),
-                    ),
-                    execute_live_context=lambda args: (
-                        self._async_execute_live_context_tool(chat_log, args)
-                    ),
-                ),
+                self._live_context_services(chat_log),
             )
             if child is not None:
                 for event in child.trace_events:

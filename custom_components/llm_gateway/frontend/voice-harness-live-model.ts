@@ -19,6 +19,51 @@ export const speechOf = (value: EvidenceRecord): string =>
       "",
   );
 
+function isLiveRun(record: EvidenceRecord): boolean {
+  return object(record.lineage).mode !== "dry_run" &&
+    record.terminal_outcome !== "dry_run" && record.outcome !== "dry_run" &&
+    object(record.route).kind !== "replay";
+}
+
+export function latestConversation(input: readonly EvidenceRecord[]): EvidenceRecord | null {
+  return [...input].filter(isLiveRun).sort((a, b) => {
+    const time = (run: EvidenceRecord) => Date.parse(String(run.created_at || run.started_at || "")) || 0;
+    return time(b) - time(a);
+  })[0] || null;
+}
+
+export function conversationFacts(run: EvidenceRecord) {
+  const facts = object(run.interaction);
+  const observations = records(facts.observations);
+  const dispatches = records(facts.dispatches);
+  const sent = dispatches.filter((dispatch) => dispatch.dispatch_status === "sent");
+  const failed = dispatches.some((dispatch) => dispatch.dispatch_status === "failed");
+  const allSent = sent.length > 0 && sent.length === dispatches.length;
+  const family = String(run.task_family || object(run.route_decision).task_family || "");
+  const action = ["home_control", "volume_control"].includes(family) || dispatches.length > 0;
+  const outcome = runOutcome(run);
+  const terminal = run.terminal_outcome || object(object(run.route).harness_loop).terminal_outcome || object(run.route).terminal_outcome || run.status;
+  const evidence = terminal === "partial" || (failed && sent.length > 0) ? "partial"
+    : outcome === "running" ? "running"
+    : outcome === "clarification" ? "clarification"
+    : outcome === "failed" || failed ? "failed"
+    : outcome === "cancelled" ? "cancelled"
+    : action ? sent.some((dispatch) => dispatch.confirmation_status === "not_confirmed") ? "not_confirmed"
+      : allSent && sent.every((dispatch) => dispatch.confirmation_status === "confirmed") ? "confirmed"
+      : allSent && sent.every((dispatch) => dispatch.acceptance_status === "accepted") ? "accepted"
+      : sent.length ? "sent" : "unconfirmed"
+    : observations.some((observation) => observation.answerable === true) ? "observed"
+    : outcome === "answered" ? "reply" : "unknown";
+  return {
+    intent: String(facts.intent_text || run.user_text || object(run.input).text || ""),
+    reply: speechOf(run),
+    evidence,
+    sources: [...new Set(observations.filter((observation) => observation.answerable === true)
+      .flatMap((observation) => records(observation.entities))
+      .map((entity) => String(entity.name || entity.entity_id || "")).filter(Boolean))],
+  };
+}
+
 export function supportsActionReplay(record: EvidenceRecord): boolean {
   const decision = object(record.route_decision);
   return (
@@ -29,7 +74,7 @@ export function supportsActionReplay(record: EvidenceRecord): boolean {
 }
 
 export function observedMetrics(input: readonly EvidenceRecord[]) {
-  const live = input.filter((run) => object(run.lineage).mode !== "dry_run");
+  const live = input.filter(isLiveRun);
   const settled = live.filter((run) =>
     ["answered", "failed", "clarification", "cancelled"].includes(
       runOutcome(run),

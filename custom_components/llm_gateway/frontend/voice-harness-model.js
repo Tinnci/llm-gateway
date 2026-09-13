@@ -9,7 +9,7 @@ function runOutcome(record) {
     return "cancelled";
   if (["running", "pending"].includes(status))
     return "running";
-  if (["error", "failed", "stale"].includes(status))
+  if (["error", "failed", "stale", "partial"].includes(status))
     return "failed";
   if (/(ambiguous|missing_requirement|clarif|confirmation)/.test(reason) || ["clarify", "clarification", "confirm", "confirmation"].includes(status) || ["clarify", "clarification"].includes(String(record.outcome || "")))
     return "clarification";

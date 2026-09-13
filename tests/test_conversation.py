@@ -9,8 +9,10 @@ from unittest.mock import patch
 
 import pytest
 from homeassistant.components import conversation
+from homeassistant.components.homeassistant import exposed_entities
 from homeassistant.const import ATTR_ENTITY_ID, CONF_LLM_HASS_API
 from homeassistant.core import Context, SupportsResponse
+from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import llm
 from homeassistant.util import dt as dt_util
@@ -1005,7 +1007,7 @@ async def test_local_device_clarification_confirmation_uses_dialogue_frame_stack
     completion.assert_not_called()
     assert "1055lm" in first.response.speech["plain"]["speech"]
     assert second.response.speech["plain"]["speech"] == (
-        "已打开宜家麦希瑟E27 1055lm智能球泡灯 灯。"
+        "已向宜家麦希瑟E27 1055lm智能球泡灯 灯发送打开请求。"
     )
     assert calls == [{ATTR_ENTITY_ID: ["light.devcea_1055"]}]
     records = mock_config_entry.runtime_data.trace_store.snapshot()["records"]
@@ -1060,7 +1062,7 @@ async def test_climate_control_uses_local_device_resolution(
         )
 
     completion.assert_not_called()
-    assert result.response.speech["plain"]["speech"] == "已打开卧室空调。"
+    assert result.response.speech["plain"]["speech"] == "已向卧室空调发送打开请求。"
     assert calls == [{ATTR_ENTITY_ID: ["climate.bedroom_ac"]}]
     trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
     assert trace["route"]["kind"] == "local_action"
@@ -1116,7 +1118,7 @@ async def test_climate_temperature_setpoint_uses_local_action(
         )
 
     completion.assert_not_called()
-    assert result.response.speech["plain"]["speech"] == "已把卧室空调设为16度。"
+    assert result.response.speech["plain"]["speech"] == "已请求将卧室空调设为16度。"
     assert calls == [{ATTR_ENTITY_ID: ["climate.bedroom_ac"], "temperature": 16.0}]
     trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
     assert trace["route"]["kind"] == "local_action"
@@ -1192,6 +1194,71 @@ async def test_virginia_wolf_routes_to_literary_knowledge_with_entity_correction
     )
     assert "GetLiveContext" not in schema_span["attrs"]["visible_tool_schema"]
     assert not trace["tools"]
+
+
+@pytest.mark.parametrize("api_enabled", [True, False])
+@pytest.mark.parametrize(
+    "room_case",
+    [("客厅", "那客厅呢？"), ("卧室 2", "那卧室2呢？"), ("小书房", "那小书房呢？")],
+)
+async def test_room_query_and_followup_use_live_area_sources_without_a_model(
+    hass, aioclient_mock, mock_config_entry, api_enabled, room_case
+):
+    area_name, followup = room_case
+    aioclient_mock.get(MODELS_URL, json={"data": [{"id": "fast-model"}]})
+    for name, temperature in (("卧室", "26.4"), (area_name, "28.9")):
+        area = ar.async_get(hass).async_create(name)
+        entity = er.async_get(hass).async_get_or_create(
+            "sensor", "test", name, original_device_class="temperature"
+        )
+        er.async_get(hass).async_update_entity(entity.entity_id, area_id=area.id)
+        hass.states.async_set(
+            entity.entity_id,
+            temperature,
+            {
+                "friendly_name": name + "温度",
+                "device_class": "temperature",
+                "unit_of_measurement": "°C",
+            },
+        )
+        exposed_entities.async_expose_entity(
+            hass, "conversation", entity.entity_id, should_expose=True
+        )
+        ar.async_get(hass).async_update(area.id, temperature_entity_id=entity.entity_id)
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {
+            CONF_LLM_HASS_API: "assist" if api_enabled else None,
+            CONF_DIAGNOSTIC_TRACES: True,
+        },
+    )
+    with patch(
+        "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback"
+    ) as completion:
+        first = await conversation.async_converse(
+            hass, "卧室现在多少度？", None, Context(), agent_id=agent_id
+        )
+        second = await conversation.async_converse(
+            hass, followup, first.conversation_id, Context(), agent_id=agent_id
+        )
+
+    completion.assert_not_called()
+    if api_enabled:
+        assert first.response.speech["plain"]["speech"] == "卧室现在 26.4 度。"
+        assert second.response.speech["plain"]["speech"] == f"{area_name}现在 28.9 度。"
+        trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+        observation = next(
+            span
+            for span in trace["timeline_spans"]
+            if span["stage"] == "local_state_render"
+        )
+        assert observation["attrs"]["source"] == "ha_area_sensor"
+        assert observation["attrs"]["entities"][0]["entity_id"] == entity.entity_id
+        assert not trace["tools"]
+    else:
+        assert "26.4" not in first.response.speech["plain"]["speech"]
+        assert "28.9" not in second.response.speech["plain"]["speech"]
 
 
 async def test_home_state_uses_local_live_context_without_model(
@@ -1817,7 +1884,7 @@ async def test_explicit_all_lights_executes_batch_without_clarification(
         )
 
     completion.assert_not_called()
-    assert result.response.speech["plain"]["speech"] == "已打开所有灯。"
+    assert result.response.speech["plain"]["speech"] == "已向所有灯发送打开请求。"
     assert calls == [
         {ATTR_ENTITY_ID: ["light.desk"]},
         {ATTR_ENTITY_ID: ["light.monitor"]},
@@ -1861,7 +1928,10 @@ async def test_explicit_all_lights_reports_partial_batch_failure(
         )
 
     completion.assert_not_called()
-    assert result.response.speech["plain"]["speech"] == "已打开 1 个灯，1 个失败。"
+    assert (
+        result.response.speech["plain"]["speech"]
+        == "已向 1 个灯发送打开请求，1 个发送失败。"
+    )
     assert calls == [
         {ATTR_ENTITY_ID: ["light.desk"]},
         {ATTR_ENTITY_ID: ["light.monitor"]},
@@ -1873,9 +1943,11 @@ async def test_explicit_all_lights_reports_partial_batch_failure(
         if span["stage"] == "local_capability_execute"
     )
     assert execute_span["status"] == "warning"
-    assert execute_span["attrs"]["action_trace"]["failed_entities"] == [
-        {"entity_id": "light.monitor", "reason": "RuntimeError"}
-    ]
+    [failed] = execute_span["attrs"]["action_trace"]["failed_entities"]
+    assert failed["entity_id"] == "light.monitor"
+    assert failed["reason"] == "RuntimeError"
+    assert failed["dispatch_status"] == "failed"
+    assert failed["context_id"]
 
 
 async def test_weather_forecast_uses_ha_weather_forecast_service_before_search(

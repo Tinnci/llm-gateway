@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import re
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
+from homeassistant.components.homeassistant import exposed_entities
 from homeassistant.const import ATTR_ENTITY_ID
+from homeassistant.core import Context, callback
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -17,11 +20,12 @@ from .resolution import (
     SemanticResolutionFrame,
     resolve_device_referent,
 )
+from .room_context import resolve_room_areas
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from homeassistant.core import HomeAssistant, State
+    from homeassistant.core import Event, HomeAssistant, State
 
     from .capabilities import RouteDecision
 
@@ -31,6 +35,7 @@ LocalActionKind = Literal[
     "brightness_up",
     "brightness_down",
     "climate_set_temperature",
+    "room_set_temperature",
     "volume_up",
     "volume_down",
     "volume_set",
@@ -65,11 +70,14 @@ _MEDIA_VOLUME_RE = re.compile(r"(音箱|播放器|homepod|喇叭|扬声器|电�
 _HIGH_RISK_RE = re.compile(
     r"(门锁|开门|前门|后门|报警|警报|车库门|卷帘门|门禁|热水器|取暖器|烤箱|炉灶|全屋)"
 )
-_ACTION_VERB_RE = re.compile(r"(打开|开启|关闭|关掉|关上|调亮|调暗|设置|开|关)")
+_ACTION_VERBS = (
+    r"(?:打开|开启|关闭|关掉|关上|调亮|调暗|设置|调到|调成|调至|设为|"
+    r"设定为|改到|改成|开|关)"
+)
+_ACTION_VERB_RE = re.compile(_ACTION_VERBS)
 _NEGATED_ACTION_RE = re.compile(
-    r"(?:(不要|别|不用|无需|禁止).{0,12}"
-    r"(打开|开启|关闭|关掉|关上|调亮|调暗|设置|开|关)|"
-    r"(打开|开启|关闭|关掉|关上|调亮|调暗|设置).{0,8}(不要|别|不用))"
+    rf"(?:(不要|别|不用|无需|禁止).{{0,12}}{_ACTION_VERBS}|"
+    rf"{_ACTION_VERBS}.{{0,8}}(不要|别|不用))"
 )
 _AMBIGUOUS_ACTION_RE = re.compile(
     r"(?=.*(?:打开|开启|开))(?=.*(?:关闭|关掉|关上|关))(?=.*(?:还是|或者|或))"
@@ -132,10 +140,10 @@ class LocalCapabilityResult:
             }
             if candidate
             else None,
-            "service_calls": [dict(call) for call in self.service_calls],
-            "matches": [dict(match) for match in self.matches],
-            "panel": dict(self.panel),
-            "action_trace": dict(self.action_trace),
+            "service_calls": deepcopy(list(self.service_calls)),
+            "matches": deepcopy(list(self.matches)),
+            "panel": deepcopy(self.panel),
+            "action_trace": deepcopy(self.action_trace),
         }
 
 
@@ -178,14 +186,31 @@ async def async_try_execute_local_capability(
         return None
     if candidate.action == "assistant_volume_set":
         return await _async_execute_assistant_volume(hass, candidate)
+    if candidate.action == "room_set_temperature":
+        return await _async_execute_room_temperature(hass, candidate)
     return await _async_execute_ha_action(hass, candidate)
 
 
 def _home_control_candidate(text: str, normalized: str) -> LocalActionCandidate | None:
     domain = _domain_from_text(normalized)
+    target_temperature = _climate_target_temperature(re.sub(r"\s+", "", text))
+    if target_temperature is not None and re.search(r"(了吗|了没|是否|是不是)", text):
+        return None
+    if (
+        not domain
+        and target_temperature is not None
+        and any(word in normalized for word in ("温度", "室温", "舒适目标"))
+    ):
+        return LocalActionCandidate(
+            family="home_control",
+            action="room_set_temperature",
+            domain="climate",
+            target_hint=text,
+            target_temperature=target_temperature,
+            confidence=0.9,
+        )
     if domain not in LOW_RISK_DOMAINS:
         return None
-    target_temperature = _climate_target_temperature(normalized)
     if domain == "climate" and target_temperature is not None:
         return LocalActionCandidate(
             family="home_control",
@@ -270,7 +295,7 @@ def _volume_candidate(text: str, normalized: str) -> LocalActionCandidate | None
 
 def _climate_target_temperature(normalized: str) -> float | None:
     match = re.search(
-        r"(?:温度)?(?:调到|调成|调至|设为|设置为|设置到|设定为|改到|改成)(\d+(?:\.\d+)?)度?",
+        r"(?:温度)?(?:调到|调成|调至|设为|设置为|设置到|设定为|改到|改成)([+-]?\d+(?:\.\d+)?)度?",
         normalized,
     )
     if match is None:
@@ -295,7 +320,7 @@ def _climate_target_hint(text: str, normalized: str) -> str:
     return hint or _target_hint(text) or "空调"
 
 
-async def _async_execute_ha_action(  # noqa: PLR0911 - explicit result states.
+async def _async_execute_ha_action(
     hass: HomeAssistant, candidate: LocalActionCandidate
 ) -> LocalCapabilityResult:
     if _targets_all_entities(candidate):
@@ -334,6 +359,51 @@ async def _async_execute_ha_action(  # noqa: PLR0911 - explicit result states.
             reason="ambiguous_target",
             action_trace=_resolution_action_trace(resolution_frame),
         )
+    return await _async_dispatch_action(
+        hass, candidate, matches, _resolution_action_trace(resolution_frame)
+    )
+
+
+async def _async_execute_room_temperature(
+    hass: HomeAssistant, candidate: LocalActionCandidate
+) -> LocalCapabilityResult:
+    """Change the existing room policy; the RoomMind Control Cycle owns actuation."""
+    areas, ambiguous = resolve_room_areas(hass, candidate.target_hint)
+    if ambiguous or len(areas) != 1:
+        return LocalCapabilityResult(
+            "clarify",
+            "你想调整哪个房间的舒适温度？",
+            candidate=candidate,
+            reason="ambiguous_target" if areas else "room_missing",
+        )
+    area = areas[0]
+    entity_id = er.async_get(hass).async_get_entity_id(
+        "climate", "roommind", f"roommind_{area.id}_comfort"
+    )
+    state = hass.states.get(entity_id) if entity_id else None
+    if (
+        state is None
+        or _entity_exclusion_reason(hass, state)
+        or not exposed_entities.async_should_expose(hass, "conversation", entity_id)
+    ):
+        return LocalCapabilityResult(
+            "clarify",
+            f"{area.name}的舒适温度控制当前不可用。",
+            candidate=candidate,
+            reason="room_comfort_unavailable",
+        )
+    return await _async_dispatch_action(
+        hass, candidate, [state], {"control_scope": "room_comfort", "area_id": area.id}
+    )
+
+
+async def _async_dispatch_action(
+    hass: HomeAssistant,
+    candidate: LocalActionCandidate,
+    matches: list[State],
+    action_trace: dict[str, Any],
+) -> LocalCapabilityResult:
+    """Record one HA dispatch separately from physical device application."""
     service, data = _service_for_candidate(candidate, matches)
     if not service:
         return LocalCapabilityResult(
@@ -342,34 +412,81 @@ async def _async_execute_ha_action(  # noqa: PLR0911 - explicit result states.
             candidate=candidate,
             matches=tuple(_match_trace(match) for match in matches),
             reason="unsupported_action",
-            action_trace=_resolution_action_trace(resolution_frame),
+            action_trace=action_trace,
         )
     domain, service_name = service.split(".", 1)
-    try:
-        await hass.services.async_call(domain, service_name, data, blocking=True)
-    except Exception as err:  # noqa: BLE001 - HA service exceptions vary by integration
+    dispatch = await _async_dispatch_service(hass, domain, service_name, data)
+    if dispatch["dispatch_status"] == "failed":
         return LocalCapabilityResult(
             "error",
             "执行失败了，请稍后再试。",
             candidate=candidate,
+            service_calls=(dispatch,),
             matches=tuple(_match_trace(match) for match in matches),
-            reason=type(err).__name__,
-            action_trace=_resolution_action_trace(resolution_frame),
+            reason=dispatch["error"],
+            action_trace=action_trace,
         )
     return LocalCapabilityResult(
         "executed",
-        _success_speech(candidate, matches),
+        _dispatch_speech(candidate, matches, dispatch["confirmation_status"]),
         candidate=candidate,
-        service_calls=(
-            {
-                "domain": domain,
-                "service": service_name,
-                "entity_ids": list(data.get(ATTR_ENTITY_ID, [])),
-            },
-        ),
+        service_calls=(dispatch,),
         matches=tuple(_match_trace(match) for match in matches),
-        action_trace=_resolution_action_trace(resolution_frame),
+        action_trace=action_trace,
     )
+
+
+async def _async_dispatch_service(
+    hass: HomeAssistant, domain: str, service: str, data: dict[str, Any]
+) -> dict[str, Any]:
+    """Capture the driver's existing evidence without adding a second wait loop."""
+    context = Context()
+    entity_ids = list(data.get(ATTR_ENTITY_ID, []))
+    evidence: list[dict[str, Any]] = []
+
+    @callback
+    def capture(event: Event) -> None:
+        if (
+            event.data.get("context_id") == context.id
+            and event.data.get("entity_id") in entity_ids
+        ):
+            evidence.append(deepcopy(dict(event.data)))
+
+    # A driver may report application before the blocking HA service returns.
+    unsubscribe = hass.bus.async_listen("tcl_udp_ac_command_result", capture)
+    dispatch = {
+        "domain": domain,
+        "service": service,
+        "entity_ids": entity_ids,
+        "data": deepcopy(data),
+        "context_id": context.id,
+        "dispatch_status": "sent",
+        "acceptance_status": "unknown",
+        "confirmation_status": "unknown",
+    }
+    try:
+        await hass.services.async_call(
+            domain, service, data, blocking=True, context=context
+        )
+    except Exception as err:  # noqa: BLE001 - HA service exceptions vary by integration
+        dispatch.update(dispatch_status="failed", error=type(err).__name__)
+    finally:
+        unsubscribe()
+    covered = bool(evidence) and set(entity_ids) <= {
+        item["entity_id"] for item in evidence
+    }
+    if covered and all(
+        item.get("transport_outcome")
+        in {"accepted_by_udp", "accepted_by_cloud", "accepted_by_both"}
+        for item in evidence
+    ):
+        dispatch["acceptance_status"] = "accepted"
+    if dispatch["dispatch_status"] == "sent":
+        if any(item.get("outcome") == "not_confirmed" for item in evidence):
+            dispatch["confirmation_status"] = "not_confirmed"
+        elif covered and all(item.get("outcome") == "applied" for item in evidence):
+            dispatch["confirmation_status"] = "confirmed"
+    return {**dispatch, "integration_evidence": list(evidence)}
 
 
 async def _async_execute_all_targets(
@@ -493,7 +610,7 @@ async def _async_execute_all_targets(
         )
     return LocalCapabilityResult(
         "executed",
-        _success_speech(candidate, matches),
+        _dispatch_speech(candidate, matches),
         candidate=candidate,
         service_calls=service_calls,
         matches=tuple(_match_trace(match) for match in matches),
@@ -512,21 +629,15 @@ async def _async_call_bulk_target(  # noqa: PLR0913 - explicit service context.
 ) -> tuple[dict[str, Any] | None, dict[str, str] | None]:
     _service, data = _service_for_candidate(candidate, [state])
     async with semaphore:
-        try:
-            await hass.services.async_call(domain, service_name, data, blocking=True)
-        except Exception as err:  # noqa: BLE001 - HA service exceptions vary
-            return None, {
-                "entity_id": state.entity_id,
-                "reason": type(err).__name__,
-            }
-    return (
-        {
-            "domain": domain,
-            "service": service_name,
-            "entity_ids": list(data.get(ATTR_ENTITY_ID, [])),
-        },
-        None,
-    )
+        dispatch = await _async_dispatch_service(hass, domain, service_name, data)
+    if dispatch["dispatch_status"] == "failed":
+        return None, {
+            "entity_id": state.entity_id,
+            "reason": dispatch["error"],
+            "context_id": dispatch["context_id"],
+            "dispatch_status": "failed",
+        }
+    return dispatch, None
 
 
 async def _async_execute_assistant_volume(
@@ -545,7 +656,9 @@ async def _async_execute_assistant_volume(
             reason="assistant_volume_unconfigured",
         )
     service_calls: list[dict[str, Any]] = []
-    requested_level = candidate.volume_level or 0.5
+    requested_level = (
+        candidate.volume_level if candidate.volume_level is not None else 0.5
+    )
     for entity_id in entity_ids:
         state = hass.states.get(entity_id)
         value = _bounded_assistant_volume_value(state, requested_level)
@@ -569,7 +682,7 @@ async def _async_execute_assistant_volume(
     }
     return LocalCapabilityResult(
         "executed",
-        "我说话的音量已调整。",
+        "已请求调整播报音量。",
         candidate=candidate,
         service_calls=tuple(service_calls),
         action_trace={
@@ -761,7 +874,7 @@ def _service_for_candidate(  # noqa: PLR0911 - explicit HA service mapping.
         return "light.turn_on", {ATTR_ENTITY_ID: entity_ids, "brightness_step_pct": 20}
     if candidate.action == "brightness_down":
         return "light.turn_on", {ATTR_ENTITY_ID: entity_ids, "brightness_step_pct": -20}
-    if candidate.action == "climate_set_temperature":
+    if candidate.action in {"climate_set_temperature", "room_set_temperature"}:
         return (
             "climate.set_temperature",
             {
@@ -776,7 +889,12 @@ def _service_for_candidate(  # noqa: PLR0911 - explicit HA service mapping.
     if candidate.action == "volume_set":
         return (
             "media_player.volume_set",
-            {ATTR_ENTITY_ID: entity_ids, "volume_level": candidate.volume_level or 0.5},
+            {
+                ATTR_ENTITY_ID: entity_ids,
+                "volume_level": candidate.volume_level
+                if candidate.volume_level is not None
+                else 0.5,
+            },
         )
     if candidate.action == "volume_mute":
         return (
@@ -786,38 +904,35 @@ def _service_for_candidate(  # noqa: PLR0911 - explicit HA service mapping.
     return "", {}
 
 
-def _success_speech(  # noqa: PLR0911,PLR0912 - explicit templates per action.
-    candidate: LocalActionCandidate, matches: list[State]
+def _dispatch_speech(
+    candidate: LocalActionCandidate,
+    matches: list[State],
+    confirmation_status: str = "unknown",
 ) -> str:
-    if _targets_all_entities(candidate):
-        if candidate.action == "turn_on":
-            return f"已打开所有{_domain_label(candidate.domain)}。"
-        if candidate.action == "turn_off":
-            return f"已关闭所有{_domain_label(candidate.domain)}。"
-    label = _target_label(candidate, matches)
-    if candidate.action == "turn_on":
-        return f"已打开{label}。"
-    if candidate.action == "turn_off":
-        return f"已关闭{label}。"
-    if candidate.action == "brightness_up":
-        return f"已调亮{label}。"
-    if candidate.action == "brightness_down":
-        return f"已调暗{label}。"
-    if candidate.action == "climate_set_temperature":
-        return f"已把{label}设为{_format_temperature(candidate.target_temperature)}度。"
-    if candidate.action == "volume_up":
-        return f"已调高{label}音量。"
-    if candidate.action == "volume_down":
-        return f"已调低{label}音量。"
-    if candidate.action == "volume_set":
-        if candidate.volume_level == 1.0:
-            return f"已把{label}音量调到最大。"
-        if candidate.volume_level == 0.0:
-            return f"已把{label}音量调到最小。"
-        return f"已调整{label}音量。"
-    if candidate.action == "volume_mute":
-        return f"已{'静音' if candidate.mute else '取消静音'}{label}。"
-    return "好了。"
+    """Service completion establishes dispatch, not physical application."""
+    label = (
+        f"所有{_domain_label(candidate.domain)}"
+        if _targets_all_entities(candidate)
+        else _target_label(candidate, matches)
+    )
+    action = {
+        "turn_on": "打开",
+        "turn_off": "关闭",
+        "brightness_up": "调亮",
+        "brightness_down": "调暗",
+        "volume_up": "调高音量",
+        "volume_down": "调低音量",
+        "volume_set": "调整音量",
+        "volume_mute": "静音" if candidate.mute else "取消静音",
+    }.get(candidate.action, "操作")
+    if candidate.action in {"climate_set_temperature", "room_set_temperature"}:
+        temperature = _format_temperature(candidate.target_temperature)
+        if confirmation_status == "confirmed":
+            return f"{label}已回报设定 {temperature} 度。"
+        return f"已请求将{label}设为{temperature}度。"
+    if confirmation_status == "confirmed":
+        return f"{label}已回报请求的状态。"
+    return f"已向{label}发送{action}请求。"
 
 
 def _partial_success_speech(
@@ -834,7 +949,9 @@ def _partial_success_speech(
         "climate_set_temperature": "设置",
     }.get(candidate.action, "操作")
     label = _domain_label(candidate.domain)
-    return f"已{action} {succeeded_count} 个{label}，{failed_count} 个失败。"
+    return (
+        f"已向 {succeeded_count} 个{label}发送{action}请求，{failed_count} 个发送失败。"
+    )
 
 
 def _already_satisfied_reason(

@@ -1204,8 +1204,19 @@ def classify_environment_query(text: str) -> EnvironmentQuerySpec:
     location_hint = _location_hint(value)
 
     indoor_areas = ("卧室", "客厅", "餐厅", "厨房", "书房", "卫生间", "阳台")
-    indoor_metrics = ("温度", "湿度", "空气质量", "pm25", "pm2")
-    any_indoor_metrics = ("温度", "湿度", "空气质量", "pm25", "pm2", "co2", "tvoc")
+    indoor_metrics = (
+        "温度",
+        "室温",
+        "多少度",
+        "几度",
+        "湿度",
+        "空气质量",
+        "pm25",
+        "pm2",
+        "甲醛",
+        "co2",
+        "tvoc",
+    )
     has_indoor_area = any(area in value for area in indoor_areas)
     if "家里" in value or "全屋" in value:
         scope: EnvironmentScope = "home_summary"
@@ -1223,7 +1234,7 @@ def classify_environment_query(text: str) -> EnvironmentQuerySpec:
         or _EN_WEATHER_RE.search(value)
     ):
         scope = "outdoor_weather"
-    elif any(term in normalized for term in any_indoor_metrics):
+    elif any(term in normalized for term in indoor_metrics):
         scope = "indoor_environment"
     else:
         scope = ""
@@ -1600,7 +1611,7 @@ def _extract_english_named_entity(text: str) -> str:
 
 def _looks_like_environment_state_question(text: str) -> bool:
     normalized = _normalize(text)
-    has_metric = any(term in normalized for term in ("温度", "湿度", "co2", "tvoc"))
+    has_metric = bool(_metric_from_text(text))
     has_value_question = any(
         term in normalized
         for term in ("多少", "几度", "现在", "当前", "什么样", "怎么样", "如何")
@@ -1627,11 +1638,13 @@ def _area_hint(text: str) -> str:
 def _metric_from_text(text: str) -> str:
     normalized = _normalize(text)
     metric_patterns = (
-        ("air_quality", ("空气质量",)),
+        ("air_quality", ("空气质量", "空气怎么样")),
         ("pm25", ("pm25", "pm2")),
+        ("eco2", ("eco2",)),
         ("co2", ("co2", "二氧化碳")),
-        ("tvoc", ("tvoc", "甲醛")),
-        ("temperature", ("温度", "气温", "几度")),
+        ("formaldehyde", ("甲醛", "formaldehyde")),
+        ("tvoc", ("tvoc", "挥发")),
+        ("temperature", ("温度", "室温", "气温", "几度", "多少度", "冷不冷", "热不热")),
         ("humidity", ("湿度",)),
         ("pressure", ("气压", "大气压")),
         ("wind_speed", ("风速", "风有多大")),

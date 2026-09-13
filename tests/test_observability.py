@@ -59,6 +59,47 @@ def test_run_summary_is_small_and_reply_focused() -> None:
     assert "event_stream" not in summary
 
 
+def test_summary_preserves_intent_observation_and_dispatch_as_separate_facts() -> None:
+    record = _record("room", created_at="2026-09-13T10:00:00+00:00")
+    record["timeline_spans"] = [
+        {"stage": "route_decision", "attrs": {"effective_text": "客厅温度是多少？"}},
+        {
+            "stage": "local_state_render",
+            "attrs": {
+                "source": "ha_area_sensor",
+                "answerable": True,
+                "entities": [
+                    {"entity_id": "sensor.living", "name": "客厅温度", "state": "28.9"}
+                ],
+            },
+        },
+        {
+            "stage": "local_capability_execute",
+            "attrs": {
+                "service_calls": [
+                    {
+                        "domain": "light",
+                        "service": "turn_on",
+                        "entity_ids": ["light.desk"],
+                        "context_id": "dispatch-1",
+                        "dispatch_status": "sent",
+                        "confirmation_status": "unknown",
+                    }
+                ],
+            },
+        },
+    ]
+
+    summary = run_summary(record)
+    facts = summary["interaction"]
+
+    assert facts["intent_text"] == "客厅温度是多少？"
+    assert facts["observations"][0]["entities"][0]["state"] == "28.9"
+    assert facts["dispatches"][0]["confirmation_status"] == "unknown"
+    facts["observations"][0]["entities"][0]["state"] = "99"
+    assert record["timeline_spans"][1]["attrs"]["entities"][0]["state"] == "28.9"
+
+
 def test_query_runs_filters_and_pages_with_run_id_cursor() -> None:
     records = [
         _record("run-3", created_at="2026-09-02T12:00:00+00:00", status="error"),

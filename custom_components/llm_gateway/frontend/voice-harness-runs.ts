@@ -339,7 +339,6 @@ export class VoiceHarnessRuns extends LitElement {
       <h2 class="question">
         ${String(record.user_text || object(record.input).text || "—")}
       </h2>
-      ${this.waterfall(record)}
       <nav
         class="detail-tabs"
         aria-label=${t("Run detail sections", "运行详情分组")}
@@ -373,7 +372,15 @@ export class VoiceHarnessRuns extends LitElement {
           <small>${t("Assistant", "助手")}</small>
           <p>${speechOf(record) || t("No answer retained", "未保留回答")}</p>
         </div>
-        <div class="usage">
+      </section>
+      <section ?hidden=${this.detailTab !== "evidence"} class="evidence">
+        <p class="muted">
+          ${t("Dispatch, acceptance and physical confirmation remain separate facts.", "派发、接收和物理确认，是彼此独立的事实。")}
+        </p>
+        <details class="timing-details">
+          <summary>${t("Timing and model usage", "时序与模型用量")}</summary>
+          ${this.waterfall(record)}
+          <div class="usage">
           ${[
             [
               t("Input tokens", "输入 Token"),
@@ -394,6 +401,7 @@ export class VoiceHarnessRuns extends LitElement {
               </div>`,
           )}
         </div>
+        </details>
         <button
           class="primary"
           ?disabled=${this.loading || !this.replay || !supportsActionReplay(record)}
@@ -403,11 +411,6 @@ export class VoiceHarnessRuns extends LitElement {
         </button>
         <p class="muted replay-note">
           ${supportsActionReplay(record) ? t("Replay evaluates the recorded local action. Device actions remain proposals.", "重放评估已记录的本地动作，设备动作保留为提案。") : t("This record has no replayable local action. Use the Test panel to preview a new model response.", "此记录没有可重放的本地动作，可在测试面板演练模型回答。")}
-        </p>
-      </section>
-      <section ?hidden=${this.detailTab !== "evidence"} class="evidence">
-        <p class="muted">
-          ${t("Dispatch, acceptance and physical confirmation remain separate facts.", "派发、接收和物理确认，是彼此独立的事实。")}
         </p>
         ${
           this.detailTab === "evidence"
@@ -967,6 +970,12 @@ export class VoiceHarnessRuns extends LitElement {
         grid-template-columns: repeat(3, 1fr);
         gap: 12px;
         margin: 12px 0;
+      }
+      .timing-details > summary {
+        min-height: 48px;
+        padding: 14px 0;
+        cursor: pointer;
+        font-size: 14px;
       }
       .usage > div {
         padding: 16px;

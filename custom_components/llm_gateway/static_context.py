@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
@@ -110,6 +111,7 @@ STATE_METRIC_ORDER = (
     "co2",
     "eco2",
     "tvoc",
+    "formaldehyde",
     "temperature",
     "humidity",
     "weather",
@@ -119,6 +121,7 @@ STATE_METRIC_LABELS = {
     "co2": "CO2",
     "eco2": "eCO2",
     "tvoc": "TVOC",
+    "formaldehyde": "甲醛",
     "temperature": "温度",
     "humidity": "湿度",
     "weather": "天气",
@@ -128,6 +131,7 @@ STATE_ENTITY_PATTERNS = (
     ("eco2", ("eco2",)),
     ("co2", ("co2", "二氧化碳")),
     ("tvoc", ("tvoc", "挥发")),
+    ("formaldehyde", ("甲醛", "formaldehyde")),
     ("temperature", ("温度", "temperature")),
     ("humidity", ("湿度", "humidity")),
 )
@@ -269,6 +273,7 @@ class ScalarStateRenderResult:
                     "state": entity.state,
                     "unit_of_measurement": entity.unit_of_measurement,
                     "attributes": dict(entity.attributes),
+                    "entity_id": entity.entity_id,
                     "source": entity.source,
                 }
                 for entity in self.entities
@@ -535,7 +540,7 @@ def render_scalar_state_answer(  # noqa: PLR0911
             available_data=available_data,
         )
 
-    metrics = _state_metrics_from_text(text)
+    metrics = state_metrics_from_text(text)
     if not metrics and getattr(route_decision, "scope", "") != "home_summary":
         return None
     if _is_home_temperature_summary(route_decision, metrics):
@@ -577,12 +582,17 @@ def render_scalar_state_answer(  # noqa: PLR0911
         (getattr(route_decision, "metadata", {}) or {}).get("area")
         or _area_from_common(text)
     )
-    if area:
-        candidate_entities = tuple(
-            entity
-            for entity in candidate_entities
-            if area in entity.areas or area in entity.name
-        )
+    room_query = getattr(
+        route_decision, "scope", ""
+    ) == "indoor_environment" and not any(
+        word in text for word in ("空调", "暖气", "温控")
+    )
+    candidate_entities = tuple(
+        entity
+        for entity in candidate_entities
+        if (not area or area in entity.areas or area in entity.name)
+        and (not room_query or entity.domain == "sensor")
+    )
     selected = _select_state_entities(candidate_entities, metrics)
     if not selected:
         if _requires_outdoor_weather(route_decision):
@@ -606,7 +616,15 @@ def render_scalar_state_answer(  # noqa: PLR0911
         for entity in selected
         if _state_metric_is_available(entity, _metric_for_entity(entity))
     }
-    missing = tuple(metric for metric in metrics if metric not in supplied)
+    # A general summary does not require sensors the home does not have.
+    requested = state_metrics_from_text(text, include_air_quality=False)
+    missing = tuple(metric for metric in requested if metric not in supplied)
+    selected_metrics = {_metric_for_entity(entity) for entity in selected}
+    speech += "".join(
+        f"{STATE_METRIC_LABELS[metric]}当前不可用。"
+        for metric in missing
+        if metric not in selected_metrics
+    )
     answerable = bool(supplied) and not missing
     return ScalarStateRenderResult(
         speech=speech,
@@ -874,7 +892,7 @@ def _render_home_temperature_summary(
     skipped: list[str] = []
     seen_labels: set[str] = set()
     for entity in entities:
-        if _metric_for_entity(entity) != "temperature":
+        if entity.domain == "climate" or _metric_for_entity(entity) != "temperature":
             continue
         label = _summary_area_label(entity)
         if not _state_metric_is_available(entity, "temperature"):
@@ -1153,21 +1171,30 @@ def _entity_matches_domain(entity: ExposedEntity, domain: str) -> bool:
     return False
 
 
-def _state_metrics_from_text(text: str) -> tuple[str, ...]:
+def state_metrics_from_text(
+    text: str, *, include_air_quality: bool = True
+) -> tuple[str, ...]:
+    """Return requested measurements, optionally expanding a general air summary."""
     normalized = _normalize_query_text(text)
     metrics: list[str] = []
-    if "空气质量" in normalized or "空气怎么样" in normalized:
-        metrics.extend(("pm25", "co2", "eco2", "tvoc"))
+    if include_air_quality and ("空气质量" in normalized or "空气怎么样" in normalized):
+        metrics.extend(("pm25", "co2", "eco2", "tvoc", "formaldehyde"))
     if "pm25" in normalized or "pm2" in normalized or "雾霾" in normalized:
         metrics.append("pm25")
-    if "co2" in normalized or "二氧化碳" in normalized:
+    if re.search(r"(?<!e)co2", normalized) or "二氧化碳" in normalized:
         metrics.append("co2")
     if "eco2" in normalized:
         metrics.append("eco2")
-    if "tvoc" in normalized or "甲醛" in normalized or "挥发" in normalized:
+    if "tvoc" in normalized or "挥发" in normalized:
         metrics.append("tvoc")
+    if "甲醛" in normalized or "formaldehyde" in normalized:
+        metrics.append("formaldehyde")
     if (
         "温度" in normalized
+        or "温湿度" in normalized
+        or "室温" in normalized
+        or "多少度" in normalized
+        or "几度" in normalized
         or "气温" in normalized
         or "冷不冷" in normalized
         or "热不热" in normalized
@@ -1209,7 +1236,13 @@ def _render_scalar_state_summary(
     metrics: tuple[str, ...],
 ) -> str:
     normalized = _normalize_query_text(text)
-    if "空气质量" in normalized or {"pm25", "co2", "eco2", "tvoc"} & set(metrics):
+    if "空气质量" in normalized or {
+        "pm25",
+        "co2",
+        "eco2",
+        "tvoc",
+        "formaldehyde",
+    } & set(metrics):
         subject = "空气质量"
     elif "天气" in normalized or "weather" in metrics:
         subject = "天气相关"
@@ -1280,7 +1313,7 @@ def _render_single_climate_temperature(entity: ExposedEntity) -> str:
         )
     if _state_is_available(current):
         return f"{label}当前 {_format_spoken_number(current)} 度。"
-    return f"{label}设定 {_format_spoken_number(target)} 度。"
+    return f"{label}当前温度不可用，设定 {_format_spoken_number(target)} 度。"
 
 
 def _metric_for_entity(entity: ExposedEntity) -> str:
@@ -1288,7 +1321,7 @@ def _metric_for_entity(entity: ExposedEntity) -> str:
     for metric, patterns in STATE_ENTITY_PATTERNS:
         if any(pattern in name for pattern in patterns):
             return metric
-    if entity.domain == "climate" and _state_metric_is_available(entity, "temperature"):
+    if entity.domain == "climate":
         return "temperature"
     if entity.domain == "weather" or "天气" in name:
         return "weather"
@@ -1313,11 +1346,16 @@ def _state_is_available(value: str) -> bool:
 
 def _state_metric_is_available(entity: ExposedEntity, metric: str) -> bool:
     if entity.domain == "climate" and metric == "temperature":
-        value = _climate_current_temperature(entity) or _climate_target_temperature(
-            entity
-        )
+        value = _climate_current_temperature(entity)
         return _state_is_available(entity.state) and _state_is_available(value)
-    return _state_is_available(entity.state)
+    if not _state_is_available(entity.state):
+        return False
+    if metric in STATE_METRIC_LABELS and metric != "weather":
+        try:
+            return math.isfinite(float(_clean_state_value(entity.state)))
+        except ValueError:
+            return False
+    return True
 
 
 def _unit_suffix(entity: ExposedEntity) -> str:
@@ -1327,9 +1365,7 @@ def _unit_suffix(entity: ExposedEntity) -> str:
 
 def _state_with_spoken_unit(entity: ExposedEntity) -> str:
     if entity.domain == "climate":
-        value = _climate_current_temperature(entity) or _climate_target_temperature(
-            entity
-        )
+        value = _climate_current_temperature(entity)
         if _state_is_available(value):
             return f"{_format_spoken_number(value)} 度"
     state = _clean_state_value(entity.state)

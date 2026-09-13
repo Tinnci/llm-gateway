@@ -19,10 +19,14 @@ visual rules, and evidence boundary. 四个面板共享设计系统，同时保�
 
 The first navigation level follows administrator tasks:
 
-1. **Overview** answers what is unhealthy and where investigation starts.
-2. **Runs** lists recent turns and opens evidence for one turn.
-3. **Test** evaluates scenarios and keeps prompt policy as reference material.
-4. **Settings** owns provider, trace, satellite, and earcon configuration.
+1. **Overview** shows the latest utterance, resolved intent, reply, and what the
+   observations or device reports establish. Metrics expand under System details.
+2. **Runs** opens a conversation first. Evidence, timing, model usage, and audio
+   remain available for investigating that conversation.
+3. **Test** investigates a reported problem with scenario assertions and model
+   previews. Its results do not establish physical reliability.
+4. **Settings** presents audio scenes first and individual gains on demand,
+   alongside provider, trace, and satellite configuration.
 
 Satellite, Prompt Policies, and Memory are no longer peer applications.
 Satellite health and memory are supporting evidence. Satellite controls and
@@ -47,7 +51,7 @@ Current ownership:
 | --- | --- |
 | `voice-harness-shell.ts` | Four mounted views; switching keeps forms, selection, and stream state. |
 | `voice-harness-navigation.ts` | Tabs, arrow keys, Home/End, and 1–4 shortcuts outside editable fields. |
-| `voice-harness-overview.ts`, `voice-harness-stat.ts` | Bento composition, observed metrics, sparklines, and supporting diagnostics. |
+| `voice-harness-overview.ts`, `voice-harness-stat.ts` | Understood intent and result, with metrics, sparklines, and diagnostics under native disclosure. |
 | `voice-harness-runs.ts` | Filters, modal trace drawer, stage disclosure, dialogue, local audio, and comparison. |
 | `voice-harness-playground.ts` | Scenario assertions and cancellable provider streaming. |
 | `voice-harness-settings.ts`, `voice-harness-audio-settings.ts` | Four settings groups, probes, 400 ms audio saving, scene presets, and preview. |

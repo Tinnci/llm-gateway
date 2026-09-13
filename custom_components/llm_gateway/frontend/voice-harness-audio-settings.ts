@@ -291,6 +291,8 @@ export class VoiceHarnessAudioSettings extends LitElement {
         <div class="scenes">${audioScenes.map((item) => html`<button aria-pressed=${scene?.id === item.id}
           ?disabled=${!this.loaded} @click=${() => this.saver.editPatch(item.values)}>
           <strong>${this.text(item.name[0], item.name[1])}</strong><span>${this.text(item.hint[0], item.hint[1])}</span></button>`)}</div>
+        <p class="explanation">${this.text("Night speech volume follows the tablet's clock, from 22:00 to 07:00.", "平板会在每天 22:00–07:00 自动使用夜间播报音量。")}</p>
+        <details class="fine-tuning"><summary>${this.text("Fine-tune volumes", "音量微调")}</summary>
         <div class="groups">${groups.map((group) => html`<fieldset><legend>${this.text(group.title[0], group.title[1])}</legend>
           ${group.fields.map(([field, en, zh, min, low, high]) => {
             const value = typeof values[field] === "number" ? values[field] as number : undefined;
@@ -314,11 +316,12 @@ export class VoiceHarnessAudioSettings extends LitElement {
           })}</fieldset>`)}</div>
         <div class="headroom"><span class="peak-line" aria-hidden="true"></span><p>${this.text("Earcon master peak", "提示音母带峰值")} <strong>−1.0 dBFS</strong><br>
           ${this.text("100% is unity gain. Night speech is automatic from 22:00 to 07:00 on the tablet.", "100% 为原始增益。平板时间 22:00–07:00 自动使用夜间播报音量。")}</p></div>
+        <p class="preview-status" role="status">${this.previewMessage || (busy ? this.text("A conversation is active. Test sounds are available after the reply.", "正在对话，回复结束后可以试听。") : this.text("Test sounds play through the tablet speaker.", "试听声音从平板扬声器播放。"))}</p>
+        </details>
         ${this.loadError ? html`<div class="error" role="alert">${this.text("Cannot refresh tablet settings. Your edits are kept.", "暂时无法读取平板设置，修改仍会保留。")}
           <button @click=${() => this.refresh()}>${this.text("Reconnect", "重新连接")}</button></div>` : ""}
         ${this.saver.error || (this.loaded && !this.saver.applied && !pending && !this.saver.saving) ? html`<div class="error" role="alert">${this.saver.error ? this.text("Changes are unconfirmed and kept for retry.", "修改尚未确认，已保留供重试。") : this.text("Saved settings need another application attempt.", "已保存的设置需要重新应用。")}
           <button @click=${() => void this.saver.flush(true).catch(() => {})}>${this.text("Retry", "重试")}</button></div>` : ""}
-        <p class="preview-status" role="status">${this.previewMessage || (busy ? this.text("A conversation is active. Test sounds are available after the reply.", "正在对话，回复结束后可以试听。") : this.text("Test sounds play through the tablet speaker.", "试听声音从平板扬声器播放。"))}</p>
       </section>`;
   }
 
@@ -330,6 +333,9 @@ export class VoiceHarnessAudioSettings extends LitElement {
     .eyebrow { color: var(--muted); font-size: 11px; letter-spacing: .14em; }
     h2 { font-size: 27px; font-weight: 550; margin: 7px 0 8px; letter-spacing: -.03em; }
     h3 { font-size: 14px; font-weight: 550; margin: 0; }
+    .fine-tuning { border-top: 1px solid var(--divider-color, #d6e2de); margin-top: 22px; }
+    summary { min-height: 52px; padding: 16px 0; cursor: pointer; font-size: 14px; font-weight: 550; }
+    summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
     p { color: var(--muted); font-size: 12px; line-height: 1.6; margin: 0; }
     .profile { color: var(--muted); font-size: 11px; text-align: right; white-space: nowrap; }
     .profile strong { display: block; color: var(--primary-text-color, #213b3b); font-size: 30px; font-weight: 450; font-variant-numeric: tabular-nums; }

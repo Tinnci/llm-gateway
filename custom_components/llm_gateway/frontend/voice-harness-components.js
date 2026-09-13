@@ -342,7 +342,7 @@ function runOutcome(record) {
     return "cancelled";
   if (["running", "pending"].includes(status))
     return "running";
-  if (["error", "failed", "stale"].includes(status))
+  if (["error", "failed", "stale", "partial"].includes(status))
     return "failed";
   if (/(ambiguous|missing_requirement|clarif|confirmation)/.test(reason) || ["clarify", "clarification", "confirm", "confirmation"].includes(status) || ["clarify", "clarification"].includes(String(record.outcome || "")))
     return "clarification";
@@ -1356,6 +1356,8 @@ class VoiceHarnessAudioSettings extends i4 {
         <div class="scenes">${audioScenes.map((item) => b2`<button aria-pressed=${scene?.id === item.id}
           ?disabled=${!this.loaded} @click=${() => this.saver.editPatch(item.values)}>
           <strong>${this.text(item.name[0], item.name[1])}</strong><span>${this.text(item.hint[0], item.hint[1])}</span></button>`)}</div>
+        <p class="explanation">${this.text("Night speech volume follows the tablet's clock, from 22:00 to 07:00.", "平板会在每天 22:00–07:00 自动使用夜间播报音量。")}</p>
+        <details class="fine-tuning"><summary>${this.text("Fine-tune volumes", "音量微调")}</summary>
         <div class="groups">${groups.map((group) => b2`<fieldset><legend>${this.text(group.title[0], group.title[1])}</legend>
           ${group.fields.map(([field, en, zh, min, low, high]) => {
       const value = typeof values[field] === "number" ? values[field] : undefined;
@@ -1379,11 +1381,12 @@ class VoiceHarnessAudioSettings extends i4 {
     })}</fieldset>`)}</div>
         <div class="headroom"><span class="peak-line" aria-hidden="true"></span><p>${this.text("Earcon master peak", "提示音母带峰值")} <strong>−1.0 dBFS</strong><br>
           ${this.text("100% is unity gain. Night speech is automatic from 22:00 to 07:00 on the tablet.", "100% 为原始增益。平板时间 22:00–07:00 自动使用夜间播报音量。")}</p></div>
+        <p class="preview-status" role="status">${this.previewMessage || (busy ? this.text("A conversation is active. Test sounds are available after the reply.", "正在对话，回复结束后可以试听。") : this.text("Test sounds play through the tablet speaker.", "试听声音从平板扬声器播放。"))}</p>
+        </details>
         ${this.loadError ? b2`<div class="error" role="alert">${this.text("Cannot refresh tablet settings. Your edits are kept.", "暂时无法读取平板设置，修改仍会保留。")}
           <button @click=${() => this.refresh()}>${this.text("Reconnect", "重新连接")}</button></div>` : ""}
         ${this.saver.error || this.loaded && !this.saver.applied && !pending && !this.saver.saving ? b2`<div class="error" role="alert">${this.saver.error ? this.text("Changes are unconfirmed and kept for retry.", "修改尚未确认，已保留供重试。") : this.text("Saved settings need another application attempt.", "已保存的设置需要重新应用。")}
           <button @click=${() => void this.saver.flush(true).catch(() => {})}>${this.text("Retry", "重试")}</button></div>` : ""}
-        <p class="preview-status" role="status">${this.previewMessage || (busy ? this.text("A conversation is active. Test sounds are available after the reply.", "正在对话，回复结束后可以试听。") : this.text("Test sounds play through the tablet speaker.", "试听声音从平板扬声器播放。"))}</p>
       </section>`;
   }
   static styles = i`
@@ -1394,6 +1397,9 @@ class VoiceHarnessAudioSettings extends i4 {
     .eyebrow { color: var(--muted); font-size: 11px; letter-spacing: .14em; }
     h2 { font-size: 27px; font-weight: 550; margin: 7px 0 8px; letter-spacing: -.03em; }
     h3 { font-size: 14px; font-weight: 550; margin: 0; }
+    .fine-tuning { border-top: 1px solid var(--divider-color, #d6e2de); margin-top: 22px; }
+    summary { min-height: 52px; padding: 16px 0; cursor: pointer; font-size: 14px; font-weight: 550; }
+    summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
     p { color: var(--muted); font-size: 12px; line-height: 1.6; margin: 0; }
     .profile { color: var(--muted); font-size: 11px; text-align: right; white-space: nowrap; }
     .profile strong { display: block; color: var(--primary-text-color, #213b3b); font-size: 30px; font-weight: 450; font-variant-numeric: tabular-nums; }
@@ -1842,12 +1848,40 @@ var records = (value) => Array.isArray(value) ? value.map(object) : [];
 var measurement = (value) => typeof value === "number" && Number.isFinite(value) ? value : null;
 var idOf = (value) => String(value.run_id || value.id || "");
 var speechOf = (value) => String(object(value.speech).final || value.final_speech_text || value.assistant_text || "");
+function isLiveRun(record) {
+  return object(record.lineage).mode !== "dry_run" && record.terminal_outcome !== "dry_run" && record.outcome !== "dry_run" && object(record.route).kind !== "replay";
+}
+function latestConversation(input) {
+  return [...input].filter(isLiveRun).sort((a3, b3) => {
+    const time = (run) => Date.parse(String(run.created_at || run.started_at || "")) || 0;
+    return time(b3) - time(a3);
+  })[0] || null;
+}
+function conversationFacts(run) {
+  const facts = object(run.interaction);
+  const observations = records(facts.observations);
+  const dispatches = records(facts.dispatches);
+  const sent = dispatches.filter((dispatch) => dispatch.dispatch_status === "sent");
+  const failed = dispatches.some((dispatch) => dispatch.dispatch_status === "failed");
+  const allSent = sent.length > 0 && sent.length === dispatches.length;
+  const family = String(run.task_family || object(run.route_decision).task_family || "");
+  const action = ["home_control", "volume_control"].includes(family) || dispatches.length > 0;
+  const outcome = runOutcome(run);
+  const terminal = run.terminal_outcome || object(object(run.route).harness_loop).terminal_outcome || object(run.route).terminal_outcome || run.status;
+  const evidence = terminal === "partial" || failed && sent.length > 0 ? "partial" : outcome === "running" ? "running" : outcome === "clarification" ? "clarification" : outcome === "failed" || failed ? "failed" : outcome === "cancelled" ? "cancelled" : action ? sent.some((dispatch) => dispatch.confirmation_status === "not_confirmed") ? "not_confirmed" : allSent && sent.every((dispatch) => dispatch.confirmation_status === "confirmed") ? "confirmed" : allSent && sent.every((dispatch) => dispatch.acceptance_status === "accepted") ? "accepted" : sent.length ? "sent" : "unconfirmed" : observations.some((observation) => observation.answerable === true) ? "observed" : outcome === "answered" ? "reply" : "unknown";
+  return {
+    intent: String(facts.intent_text || run.user_text || object(run.input).text || ""),
+    reply: speechOf(run),
+    evidence,
+    sources: [...new Set(observations.filter((observation) => observation.answerable === true).flatMap((observation) => records(observation.entities)).map((entity) => String(entity.name || entity.entity_id || "")).filter(Boolean))]
+  };
+}
 function supportsActionReplay(record) {
   const decision = object(record.route_decision);
   return decision.route === "local_action" && decision.next_action === "execute_local" && object(record.lineage).mode !== "dry_run";
 }
 function observedMetrics(input) {
-  const live = input.filter((run) => object(run.lineage).mode !== "dry_run");
+  const live = input.filter(isLiveRun);
   const settled = live.filter((run) => ["answered", "failed", "clarification", "cancelled"].includes(runOutcome(run)));
   const timed = settled.map((run) => measurement(run.latency_ms)).filter((value) => value !== null && value >= 0);
   const sorted = [...timed].sort((a3, b3) => a3 - b3);
@@ -2088,21 +2122,15 @@ if (!customElements.get("voice-harness-stat"))
 // custom_components/llm_gateway/frontend/voice-harness-overview.ts
 class VoiceHarnessOverview extends i4 {
   static properties = {
-    model: { attribute: false },
-    openSections: { attribute: false },
     entries: { attribute: false },
     satellite: { attribute: false },
-    language: {},
-    updatedAt: {}
+    language: {}
   };
   constructor() {
     super();
-    this.model = null;
-    this.openSections = [];
     this.entries = [];
     this.satellite = {};
     this.language = "en";
-    this.updatedAt = "";
   }
   text(en, zh) {
     return this.language.startsWith("zh") ? zh : en;
@@ -2110,442 +2138,129 @@ class VoiceHarnessOverview extends i4 {
   render() {
     const t3 = this.text.bind(this);
     const runs = this.entries.flatMap((entry) => records(object(entry.traces).records));
-    const metrics = observedMetrics(runs);
-    const states = object(this.satellite.states);
-    const snapshot = object(this.satellite.diagnostic_snapshot);
-    const display = object(object(this.entries[0]?.feedback).latest_display);
-    const live = livePipeline(states, display);
-    const checks = records(snapshot.checks);
-    const firstIssue = object(snapshot.first_failing_check);
-    const issue = firstIssue.id ? firstIssue : checks.find((check) => ["error", "warning"].includes(String(check.status)));
-    const loaded = this.entries.some((entry) => entry.state === "loaded");
-    const format = (value, suffix) => value === null ? "—" : new Intl.NumberFormat(this.language, {
-      maximumFractionDigits: suffix === "ms" ? 0 : 1
-    }).format(value) + suffix;
-    const latestWake = records(snapshot.event_stream).filter((event) => /wake/.test(String(event.type))).at(-1);
-    const wakeValue = latestWake?.timestamp || object(snapshot.wake).last_detected_at;
-    const asr = object(snapshot.asr);
-    const tts = object(snapshot.tts);
-    const summaryHint = t3("Latest ", "最近 ") + metrics.count + t3(" completed live runs", " 次已结束实机运行");
-    const model = this.model;
+    const active = this.entries.flatMap((entry) => records(entry.voice_runs).filter((run) => run.status === "running"));
+    const latest = latestConversation([...active, ...runs]);
+    const facts = latest ? conversationFacts(latest) : null;
+    const live = livePipeline(object(this.satellite.states), object(object(this.entries[0]?.feedback).latest_display));
+    const stateLabel = live.phase === "paused" ? t3("Do not disturb", "免打扰中") : live.active ? t3("Conversation in progress", "正在对话") : live.phase === "standby" ? t3("Standing by", "语音待机") : live.phase === "offline" ? t3("Voice connection interrupted", "语音连接中断") : t3("Capture state unknown", "收音状态未知");
+    const evidence = facts?.evidence || "unknown";
+    const evidenceLabel = {
+      observed: t3("State read from observations", "已有观测依据"),
+      sent: t3("Request sent · confirmation missing", "请求已发送 · 设备确认暂缺"),
+      accepted: t3("Request accepted · device unconfirmed", "请求已受理 · 设备确认暂缺"),
+      confirmed: t3("Device reported the requested state", "设备已回报请求的状态"),
+      not_confirmed: t3("Device did not confirm the request", "设备尚未确认这次请求"),
+      unconfirmed: t3("Device response unconfirmed", "尚无设备响应的确认"),
+      reply: t3("Reply generated", "已生成回复"),
+      failed: t3("This request did not complete", "这次请求未完成"),
+      partial: t3("Only part of the request was sent", "请求仅部分发出"),
+      clarification: t3("One detail to clarify", "还需要补充一点信息"),
+      cancelled: t3("Conversation stopped", "本次对话已停止"),
+      running: t3("Processing your request", "正在处理这句话"),
+      unknown: t3("Awaiting evidence", "等待结果依据")
+    }[evidence];
+    const guidance = !latest ? t3("Your next conversation will appear here.", "下一次对话会记录在这里。") : evidence === "clarification" ? t3("Answer the question above to continue.", "回答上面的澄清问题即可继续。") : ["failed", "partial"].includes(evidence) ? t3("The reply explains what is missing. Details are available in the record.", "可从回复了解未完成的原因，在记录中查看详情。") : ["sent", "accepted", "unconfirmed", "not_confirmed"].includes(evidence) ? t3("The device response remains unconfirmed. The record has the available evidence.", "设备响应仍待确认，可在记录中查看已有反馈。") : evidence === "running" ? t3("Waiting for the reply.", "正在等待回复。") : evidence === "unknown" ? t3("There is not enough evidence to judge this request yet.", "目前还没有足够依据判断这次请求的结果。") : t3("Nothing else is needed for this conversation.", "这次对话无需补充。");
+    const timestamp = String(latest?.created_at || latest?.started_at || "");
+    const userText = String(latest?.user_text || object(latest?.input).text || "");
     return b2`
       <div class="section-head intro">
-        <div>
-          <span class="eyebrow">VOICE HARNESS / ${t3("OVERVIEW", "概览")}</span>
-          <h2>
-            ${t3("A little closer to effortless.", "让每一句，都自然发生。")}
-          </h2>
-          <p class="muted">
-            ${t3("A clear view of your voice, from the first word to the last reply.", "从唤醒到回应，安静而清楚地看见语音的每一步。")}
-          </p>
+        <div><span class="eyebrow">${t3("VOICE & SPACE", "语音与空间")}</span>
+          <h2>${t3("Your last conversation", "最近的对话")}</h2>
+          <p class="muted">${t3("What was understood, what happened, and what needs you.", "听懂了什么，实际发生了什么，是否需要你。")}</p>
         </div>
-        <span class="chip ${issue ? "warning" : loaded ? "ok" : "muted"}"
-          ><span class="dot"></span
-          >${issue ? t3("Needs attention", "需要留意") : loaded ? t3("Gateway ready", "网关已就绪") : t3("Awaiting observations", "等待观测")}</span
-        >
+        <span class="chip" role="status"><span class="dot" data-active=${String(live.active)}></span>${stateLabel}</span>
       </div>
-      <div class="bento">
-        <section
-          class="surface pipeline"
-          aria-label=${t3("Observed voice pipeline", "语音链路观测")}
-        >
-          <div class="section-head">
-            <div>
-              <span class="eyebrow">LIVE PIPELINE</span>
-              <h3>${t3("One continuous conversation", "一段连贯的对话")}</h3>
-            </div>
-            <span class="chip"
-              >${live.active ? t3("Active", "交互中") : live.phase === "standby" ? t3("Standing by", "待机") : live.phase === "paused" ? t3("Capture paused", "收音已暂停") : t3("No live evidence", "暂无实时观测")}</span
-            >
+      <div class="conversation-grid">
+        <section class="surface conversation" aria-label=${t3("Understood intent", "理解的意图")}>
+          <div class="section-head"><span class="eyebrow">${t3("YOU SAID", "刚才那句话")}</span>
+            ${Number.isFinite(Date.parse(timestamp)) ? b2`<time datetime=${timestamp}>${new Date(timestamp).toLocaleString(this.language, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time>` : A}
           </div>
-          <div
-            class="pulse-scene"
-            data-active=${String(live.active)}
-            aria-hidden="true"
-          >
-            <div class="orb">
-              <ha-icon icon="mdi:microphone-outline"></ha-icon>
-            </div>
-            <div class="wave">
-              ${Array.from({ length: 15 }, (_2, i5) => b2`<i style=${"--i:" + i5 + ";--h:" + (8 + (7 - Math.abs(7 - i5)) * 5) + "px"}></i>`)}
-            </div>
+          <h3 class="utterance">${userText || t3("No conversation recorded yet.", "还没有对话记录。")}</h3>
+          ${facts?.intent && facts.intent !== userText ? b2`<p class="resolved"><span>${t3("Understood as", "理解为")}</span>${facts.intent}</p>` : A}
+          <div class="reply"><span class="eyebrow">${t3("THE REPLY", "系统的回应")}</span>
+            <p>${facts?.reply || (latest ? t3("The reply has not been recorded yet.", "暂未记录到回复。") : t3("Speak as you normally would.", "像平常一样开口就好。"))}</p>
           </div>
-          <div class="pipeline-nodes">
-            ${[
-      ["mdi:microphone-outline", t3("Wake", "唤醒")],
-      ["mdi:waveform", "ASR"],
-      ["mdi:creation-outline", "LLM"],
-      ["mdi:volume-high", "TTS"],
-      ["mdi:play-circle-outline", t3("Playback", "播放")],
-      ["mdi:reply-outline", t3("Follow-up", "追问")]
-    ].map(([icon, label]) => b2`<span><ha-icon icon=${icon}></ha-icon>${label}</span>`)}
-          </div>
-          <p class="pipeline-note">
-            ${live.active ? String(display.title || display.state || "") : live.phase === "paused" ? t3("Capture is paused. Resume it in acoustic settings when you are ready.", "收音已暂停，可在声学设置中恢复。") : live.connected ? t3("Ready when you are. Animation follows fresh capture and response evidence.", "随时等你开口。动效随最新收音与回应状态出现。") : t3("Waiting for current satellite observations.", "等待卫星的最新观测。")}
-          </p>
+          <button class="quiet" @click=${() => this.navigate("runs")}>${t3("Conversation records", "查看对话记录")} <ha-icon icon="mdi:arrow-top-right"></ha-icon></button>
         </section>
-        <section class="surface focus">
-          <div class="section-head">
-            <span class="eyebrow">${t3("YOUR NEXT STEP", "值得留意")}</span
-            ><ha-icon
-              icon=${issue ? "mdi:alert-circle-outline" : "mdi:check-decagram-outline"}
-            ></ha-icon>
+        <section class="surface reality" aria-label=${t3("Result and next step", "结果与下一步")}>
+          <span class="eyebrow">${t3("WHAT HAPPENED", "实际结果")}</span>
+          <div class="evidence" data-tone=${evidence === "failed" ? "bad" : ["observed", "confirmed"].includes(evidence) ? "ok" : "muted"}>
+            <ha-icon icon=${evidence === "confirmed" ? "mdi:check-circle-outline" : evidence === "observed" ? "mdi:thermometer" : evidence === "failed" ? "mdi:alert-circle-outline" : "mdi:message-processing-outline"}></ha-icon>
+            <h3>${latest ? evidenceLabel : t3("No result yet", "暂无结果")}</h3>
           </div>
-          <h3>
-            ${issue ? t3("A detail needs a closer look", "有一处细节值得看看") : t3("Make room for a better response", "为更好的回应，留一点空间")}
-          </h3>
-          <p class="muted">
-            ${issue ? t3("Open system observations for the source, dependencies and recovery guidance.", "展开系统观测，可查看来源、依赖和恢复建议。") : t3("Explore a recent conversation, or try a scenario without changing your home.", "展开最近的对话，或用场景演练打磨下一次回应。")}
-          </p>
-          <div class="focus-actions">
-            ${(model?.actions || [
-      {
-        destination: "runs",
-        icon: "mdi:arrow-top-right",
-        label: t3("Explore runs", "查看运行记录")
-      },
-      {
-        destination: "test",
-        icon: "mdi:flask-outline",
-        label: t3("Try a scenario", "开始场景演练")
-      }
-    ]).map((action) => b2`<button
-                @click=${() => this.navigate(action.destination)}
-              >
-                <span>${action.label}</span
-                ><ha-icon icon=${action.icon}></ha-icon>
-              </button>`)}
-          </div>
-        </section>
-        <div class="metrics">
-          <voice-harness-stat
-            .label=${t3("Median response", "响应中位数")}
-            .value=${format(metrics.medianMs, "ms")}
-            .values=${metrics.latencies}
-            .hint=${summaryHint}
-            icon="mdi:timer-outline"
-          ></voice-harness-stat>
-          <voice-harness-stat
-            .label=${t3("Answered", "回答完成率")}
-            .value=${format(metrics.successRate, "%")}
-            .values=${metrics.outcomes}
-            .hint=${t3("Conversation outcome", "按对话结果统计")}
-            tone="ok"
-            icon="mdi:check-circle-outline"
-          ></voice-harness-stat>
-          <voice-harness-stat
-            .label=${t3("Error rate", "错误率")}
-            .value=${format(metrics.errorRate, "%")}
-            .values=${metrics.errors}
-            .hint=${summaryHint}
-            .tone=${metrics.errorRate ? "bad" : "muted"}
-            icon="mdi:pulse"
-          ></voice-harness-stat>
-          <voice-harness-stat
-            .label=${t3("Last wake", "最近唤醒")}
-            .value=${typeof wakeValue === "string" && Number.isFinite(Date.parse(wakeValue)) ? new Date(wakeValue).toLocaleTimeString(this.language, { hour: "2-digit", minute: "2-digit" }) : "—"}
-            .hint=${t3("Satellite timestamp", "卫星唤醒时间戳")}
-            icon="mdi:microphone-outline"
-          ></voice-harness-stat>
-        </div>
-        <section class="surface services">
-          <div class="section-head">
-            <div>
-              <span class="eyebrow">CONNECTED SYSTEM</span>
-              <h3>${t3("Working together", "彼此协同")}</h3>
-            </div>
-            <button class="quiet" @click=${() => this.navigate("settings")}>
-              ${t3("Settings", "设置")} ↗
-            </button>
-          </div>
-          <div class="service-grid">
-            ${this.service("LLM Gateway", t3("Routing & response", "路由与回答"), loaded ? "ok" : "muted", loaded ? t3("Loaded", "已加载") : t3("Unknown", "未知"), "mdi:creation-outline")}
-            ${this.service("Wyoming ASR", t3("Speech recognition", "语音识别"), asr.connected === true || asr.status === "ok" ? "ok" : "muted", String(asr.status || object(states.asr_metrics).state || t3("No observation", "暂无观测")), "mdi:waveform")}
-            ${this.service("Edge TTS", t3("Speech synthesis", "语音合成"), tts.status === "ok" ? "ok" : "muted", String(tts.status || t3("Measured per reply", "按次记录合成")), "mdi:volume-high")}
-            ${this.service("Kukui · Phosh", t3("Capture & playback", "收音与播放"), live.connected ? "ok" : "muted", live.connected ? t3("Observed online", "观测在线") : t3("Unknown", "未知"), "mdi:tablet-dashboard")}
-          </div>
+          ${facts?.sources.length ? b2`<p class="source">${t3("Source at the time of the reply: ", "回复时的来源：")}${facts.sources.join(" · ")}</p>` : A}
+          ${evidence === "reply" ? b2`<p class="source">${t3("This record contains a text reply. Speaker playback is recorded separately.", "这里记录了文字回复，扬声器播放需要独立的播放记录。")}</p>` : A}
+          <div class="next-step"><span class="eyebrow">${t3("DOES THIS NEED YOU?", "需要你做什么")}</span><p>${guidance}</p></div>
+          ${live.phase === "paused" || live.phase === "offline" ? b2`<button class="quiet" @click=${() => this.navigate("settings")}>${t3("Voice settings", "语音设置")} <ha-icon icon="mdi:arrow-top-right"></ha-icon></button>` : A}
         </section>
       </div>
-      ${this.disclosure("diagnostics", model?.diagnosticsLabel || t3("System observations", "系统观测详情"))}
-      ${this.disclosure("memory", model?.memoryLabel || t3("Conversation memory", "对话记忆"))}
+      <details class="surface diagnostics">
+        <summary>${t3("System details", "系统详情")}<span>${t3("Measurements, connections and diagnostics", "测量、连接与诊断")}</span></summary>
+        ${this.diagnostics(runs)}
+        <slot name="diagnostics"></slot>
+        <details class="memory"><summary>${t3("Conversation memory", "对话记忆")}</summary><slot name="memory"></slot></details>
+      </details>
     `;
   }
-  service(name, hint, tone, status, icon) {
-    return b2`<article class="service">
-      <ha-icon icon=${icon}></ha-icon>
-      <div><strong>${name}</strong><small>${hint}</small></div>
-      <span class=${"chip " + tone}>${status}</span>
-    </article>`;
-  }
-  disclosure(id, label) {
-    return b2`<details
-      class="surface disclosure"
-      .open=${this.openSections.includes(id)}
-      @toggle=${(event) => {
-      const open = event.currentTarget.open;
-      this.dispatchEvent(new CustomEvent("harness-overview-disclosure-toggle", {
-        bubbles: true,
-        composed: true,
-        detail: { id, open }
-      }));
-    }}
-    >
-      <summary>${label}</summary>
-      <slot name=${id}></slot>
-    </details>`;
+  diagnostics(runs) {
+    const t3 = this.text.bind(this);
+    const metrics = observedMetrics(runs);
+    const snapshot = object(this.satellite.diagnostic_snapshot);
+    const wake = records(snapshot.event_stream).filter((event) => /wake/.test(String(event.type))).at(-1);
+    const wakeTime = wake?.timestamp || object(snapshot.wake).last_detected_at;
+    const format = (value, suffix) => value === null ? "—" : new Intl.NumberFormat(this.language, { maximumFractionDigits: suffix === "ms" ? 0 : 1 }).format(value) + suffix;
+    const loaded = this.entries.some((entry) => entry.state === "loaded");
+    return b2`
+      <div class="metrics">
+        <voice-harness-stat .label=${t3("Median response", "响应中位数")} .value=${format(metrics.medianMs, "ms")} .values=${metrics.latencies} .hint=${t3("Retained live conversations", "已保留的实际对话")} icon="mdi:timer-outline"></voice-harness-stat>
+        <voice-harness-stat .label=${t3("Replies completed", "回答完成率")} .value=${format(metrics.successRate, "%")} .values=${metrics.outcomes} .hint=${t3("Reply outcome only", "仅描述回答结果")} icon="mdi:check-circle-outline"></voice-harness-stat>
+        <voice-harness-stat .label=${t3("Error rate", "错误率")} .value=${format(metrics.errorRate, "%")} .values=${metrics.errors} .hint=${String(metrics.count) + t3(" completed conversations", " 次已结束对话")} icon="mdi:pulse"></voice-harness-stat>
+        <voice-harness-stat .label=${t3("Last wake", "最近唤醒")} .value=${typeof wakeTime === "string" && Number.isFinite(Date.parse(wakeTime)) ? new Date(wakeTime).toLocaleTimeString(this.language, { hour: "2-digit", minute: "2-digit" }) : "—"} .hint=${t3("Satellite timestamp", "卫星时间戳")} icon="mdi:microphone-outline"></voice-harness-stat>
+      </div>
+      <p class="system-state">${loaded ? t3("Gateway loaded", "网关已加载") : t3("Gateway state unknown", "网关状态未知")} · ${t3("Connection checks and missing measurements follow below.", "连接检查与缺失测量见下方。")}</p>
+    `;
   }
   navigate(destination) {
-    this.dispatchEvent(new CustomEvent("harness-overview-navigate", {
-      bubbles: true,
-      composed: true,
-      detail: { destination }
-    }));
+    this.dispatchEvent(new CustomEvent("harness-overview-navigate", { bubbles: true, composed: true, detail: { destination } }));
   }
-  static styles = [
-    harnessFoundationStyles,
-    harnessButtonStyles,
-    harnessSurfaceStyles,
-    i`
-      :host {
-        display: grid;
-        gap: 18px;
-      }
-      .intro {
-        margin-bottom: 6px;
-      }
-      .dot {
-        width: 6px;
-        height: 6px;
-        border-radius: 50%;
-        background: currentColor;
-      }
-      .bento {
-        display: grid;
-        grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
-        gap: 18px;
-      }
-      .pipeline {
-        padding: 26px 30px 22px;
-        background:
-          radial-gradient(
-            ellipse at 45% 55%,
-            color-mix(in srgb, var(--vh-accent) 9%, transparent),
-            transparent 65%
-          ),
-          var(--vh-surface);
-      }
-      .pulse-scene {
-        height: 126px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 30px;
-      }
-      .orb {
-        width: 72px;
-        height: 72px;
-        border-radius: 50%;
-        display: grid;
-        place-items: center;
-        background: var(--vh-soft);
-        box-shadow: 0 0 0 14px
-          color-mix(in srgb, var(--vh-accent) 3%, transparent);
-        color: var(--vh-accent);
-      }
-      .orb ha-icon {
-        --mdc-icon-size: 28px;
-        width: 28px;
-        height: 28px;
-      }
-      .wave {
-        height: 56px;
-        display: flex;
-        align-items: center;
-        gap: 5px;
-        color: var(--vh-accent);
-        opacity: 0.45;
-      }
-      .wave i {
-        width: 3px;
-        height: var(--h);
-        border-radius: 4px;
-        background: currentColor;
-      }
-      [data-active="true"] .orb {
-        animation: breathe 2.6s ease-in-out infinite;
-      }
-      [data-active="true"] .wave i {
-        animation: sound 900ms ease-in-out infinite alternate;
-        animation-delay: calc(var(--i) * -80ms);
-      }
-      .pipeline-nodes {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 10px;
-      }
-      .pipeline-nodes span {
-        display: inline-flex;
-        align-items: center;
-        gap: 7px;
-        font-size: 12px;
-        color: var(--vh-muted);
-      }
-      .pipeline-nodes ha-icon {
-        --mdc-icon-size: 16px;
-        width: 16px;
-        height: 16px;
-      }
-      .pipeline-note {
-        margin-top: 20px;
-        font-size: 12px;
-        color: var(--vh-muted);
-      }
-      .focus {
-        display: flex;
-        flex-direction: column;
-        gap: 14px;
-        background: linear-gradient(
-          135deg,
-          color-mix(in srgb, #d2ae79 9%, var(--vh-surface)),
-          var(--vh-surface)
-        );
-      }
-      .focus .section-head {
-        margin-bottom: 4px;
-        color: var(--vh-accent);
-      }
-      .focus h3 {
-        font-size: 22px;
-        line-height: 1.4;
-        letter-spacing: -0.025em;
-      }
-      .focus-actions {
-        display: grid;
-        gap: 6px;
-        margin-top: auto;
-        padding-top: 6px;
-      }
-      .focus-actions button {
-        justify-content: space-between;
-        background: transparent;
-      }
-      .metrics {
-        grid-column: 1 / -1;
-        display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 18px;
-      }
-      .services {
-        grid-column: 1 / -1;
-      }
-      .service-grid {
-        display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 16px;
-      }
-      .service {
-        display: flex;
-        flex-wrap: wrap;
-        align-content: start;
-        gap: 12px;
-        padding: 12px 18px;
-        border-left: 1px solid var(--vh-line);
-      }
-      .service:first-child {
-        border-left: 0;
-        padding-left: 0;
-      }
-      .service > ha-icon {
-        color: var(--vh-accent);
-        margin-top: 2px;
-      }
-      .service > div {
-        display: grid;
-        gap: 3px;
-        min-width: 0;
-      }
-      .service strong {
-        font-size: 14px;
-      }
-      .service small {
-        color: var(--vh-muted);
-        font-size: 12px;
-      }
-      .service .chip {
-        max-width: 100%;
-        white-space: normal;
-        overflow-wrap: anywhere;
-      }
-      .disclosure {
-        padding: 0 24px;
-      }
-      .disclosure summary {
-        padding: 18px 0;
-        font-weight: 550;
-      }
-      ::slotted(*) {
-        display: block;
-        padding-bottom: 20px;
-      }
-      @keyframes breathe {
-        50% {
-          transform: scale(1.05);
-          opacity: 0.8;
-        }
-      }
-      @keyframes sound {
-        to {
-          transform: scaleY(0.3);
-        }
-      }
-      @media (max-width: 1000px) {
-        .bento {
-          grid-template-columns: 1fr;
-        }
-        .focus {
-          display: none;
-        }
-        .service-grid {
-          grid-template-columns: 1fr 1fr;
-        }
-        .service:nth-child(3) {
-          border: 0;
-          padding-left: 0;
-        }
-      }
-      @media (max-width: 600px) {
-        .metrics {
-          grid-template-columns: 1fr 1fr;
-          gap: 12px;
-        }
-        .bento {
-          gap: 12px;
-        }
-        .pipeline {
-          padding: 22px 18px;
-        }
-        .pipeline-nodes span {
-          flex-direction: column;
-          gap: 6px;
-          font-size: 11px;
-        }
-        .pulse-scene {
-          height: 110px;
-        }
-        .service {
-          padding: 8px 0;
-          border: 0;
-        }
-        .service-grid {
-          gap: 18px;
-        }
-        .intro > .chip {
-          margin-top: 0;
-        }
-      }
-    `
-  ];
+  static styles = [harnessFoundationStyles, harnessButtonStyles, harnessSurfaceStyles, i`
+    :host { display: grid; gap: 24px; }
+    .intro { margin: 0 0 4px; }
+    .intro h2 { margin-top: 9px; }
+    .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+    .dot[data-active="true"] { background: var(--vh-accent); animation: breathe 1.8s ease-in-out infinite; }
+    .conversation-grid { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(280px, 1fr); gap: 22px; }
+    .conversation { padding: 32px; background: radial-gradient(ellipse at top left, color-mix(in srgb, var(--vh-accent) 6%, transparent), transparent 70%), var(--vh-surface); }
+    .conversation .section-head { align-items: center; }
+    time { font-size: 12px; color: var(--vh-muted); font-variant-numeric: tabular-nums; }
+    .utterance { margin: 34px 0 28px; font-size: clamp(24px, 2.5vw, 34px); font-weight: 500; line-height: 1.55; letter-spacing: -.025em; overflow-wrap: anywhere; }
+    .resolved { display: grid; gap: 5px; font-size: 15px; line-height: 1.65; margin: -10px 0 28px; }
+    .resolved span { color: var(--vh-muted); font-size: 12px; }
+    .reply { border-top: 1px solid var(--vh-line); padding-top: 24px; }
+    .reply p { font-size: 17px; line-height: 1.8; margin: 14px 0 24px; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .conversation button { padding-left: 0; color: var(--vh-accent); }
+    .reality { padding: 32px; }
+    .evidence { display: flex; gap: 12px; align-items: flex-start; margin: 24px 0 16px; }
+    .evidence ha-icon { color: var(--vh-muted); width: 24px; height: 24px; flex-shrink: 0; }
+    .evidence[data-tone="ok"] ha-icon { color: var(--success-color, #43806c); }
+    .evidence[data-tone="bad"] ha-icon { color: var(--error-color, #b54747); }
+    .evidence h3 { margin: 0; font-size: 20px; font-weight: 550; line-height: 1.5; }
+    .source { color: var(--vh-muted); font-size: 13px; line-height: 1.75; overflow-wrap: anywhere; }
+    .next-step { border-top: 1px solid var(--vh-line); padding-top: 24px; margin-top: 30px; }
+    .next-step p { font-size: 15px; line-height: 1.8; margin: 12px 0 0; }
+    .reality button { margin-top: 16px; }
+    .diagnostics { padding: 0 26px; background: transparent; }
+    summary { min-height: 60px; padding: 18px 0; font-size: 14px; font-weight: 550; cursor: pointer; }
+    summary span { color: var(--vh-muted); font-size: 12px; font-weight: 400; margin-left: 18px; }
+    .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin: 6px 0 20px; }
+    .system-state { color: var(--vh-muted); font-size: 12px; margin-bottom: 24px; }
+    .memory { border-top: 1px solid var(--vh-line); }
+    ::slotted(*) { display: block; padding-bottom: 20px; }
+    @keyframes breathe { 50% { opacity: .35; transform: scale(.8); } }
+    @media (max-width: 850px) { .conversation-grid { grid-template-columns: 1fr; } .metrics { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 600px) { :host { gap: 18px; } .conversation-grid { gap: 16px; } .conversation, .reality { padding: 24px 20px; } .utterance { margin-top: 24px; font-size: 26px; } .diagnostics { padding: 0 18px; } summary span { display: none; } .metrics { gap: 10px; } .next-step { margin-top: 22px; } }
+    @media (prefers-reduced-motion: reduce) { .dot { animation: none !important; } }
+  `];
 }
 if (!customElements.get("voice-harness-overview"))
   customElements.define("voice-harness-overview", VoiceHarnessOverview);
@@ -3702,7 +3417,6 @@ class VoiceHarnessRuns extends i4 {
       <h2 class="question">
         ${String(record.user_text || object(record.input).text || "—")}
       </h2>
-      ${this.waterfall(record)}
       <nav
         class="detail-tabs"
         aria-label=${t5("Run detail sections", "运行详情分组")}
@@ -3733,7 +3447,15 @@ class VoiceHarnessRuns extends i4 {
           <small>${t5("Assistant", "助手")}</small>
           <p>${speechOf(record) || t5("No answer retained", "未保留回答")}</p>
         </div>
-        <div class="usage">
+      </section>
+      <section ?hidden=${this.detailTab !== "evidence"} class="evidence">
+        <p class="muted">
+          ${t5("Dispatch, acceptance and physical confirmation remain separate facts.", "派发、接收和物理确认，是彼此独立的事实。")}
+        </p>
+        <details class="timing-details">
+          <summary>${t5("Timing and model usage", "时序与模型用量")}</summary>
+          ${this.waterfall(record)}
+          <div class="usage">
           ${[
       [
         t5("Input tokens", "输入 Token"),
@@ -3751,6 +3473,7 @@ class VoiceHarnessRuns extends i4 {
                 >
               </div>`)}
         </div>
+        </details>
         <button
           class="primary"
           ?disabled=${this.loading || !this.replay || !supportsActionReplay(record)}
@@ -3760,11 +3483,6 @@ class VoiceHarnessRuns extends i4 {
         </button>
         <p class="muted replay-note">
           ${supportsActionReplay(record) ? t5("Replay evaluates the recorded local action. Device actions remain proposals.", "重放评估已记录的本地动作，设备动作保留为提案。") : t5("This record has no replayable local action. Use the Test panel to preview a new model response.", "此记录没有可重放的本地动作，可在测试面板演练模型回答。")}
-        </p>
-      </section>
-      <section ?hidden=${this.detailTab !== "evidence"} class="evidence">
-        <p class="muted">
-          ${t5("Dispatch, acceptance and physical confirmation remain separate facts.", "派发、接收和物理确认，是彼此独立的事实。")}
         </p>
         ${this.detailTab === "evidence" ? b2`
                 ${[...records(record.actions), ...records(record.proposed_actions)].map((action) => b2`<article class="surface"><strong>${String(action.entity_id || action.domain || action.service || "Action")}</strong>${this.jsonTree(action, "Actuation evidence")}</article>`)}
@@ -4299,6 +4017,12 @@ class VoiceHarnessRuns extends i4 {
         gap: 12px;
         margin: 12px 0;
       }
+      .timing-details > summary {
+        min-height: 48px;
+        padding: 14px 0;
+        cursor: pointer;
+        font-size: 14px;
+      }
       .usage > div {
         padding: 16px;
         border-radius: 14px;
@@ -4567,10 +4291,10 @@ class VoiceHarnessPlayground extends i4 {
             >VOICE HARNESS / ${t5("PLAYGROUND", "测试")}</span
           >
           <h2>
-            ${t5("Try a thought. Shape a response.", "试一句话，打磨一次回应。")}
+            ${t5("Investigate a response.", "排查一次回应。")}
           </h2>
           <p class="muted">
-            ${t5("Explore a scenario, check its assertions, or watch a model compose a reply.", "从生活场景出发，检查断言，或看模型实时组织回答。")}
+            ${t5("Use a recorded problem to check an answer or a tool proposal.", "从实际遇到的问题出发，检查回答或工具提案。")}
           </p>
         </div>
         <span class="chip">${t5("Preview workspace", "演练工作台")}</span>
@@ -11887,8 +11611,6 @@ function renderHarnessShell(root, model, legacyStyles) {
                 .entries=${model.entries}
                 .satellite=${model.satellite}
                 .language=${model.language}
-                .updatedAt=${model.updatedAt}
-                .openSections=${model.openSections}
                 @harness-overview-navigate=${(event) => model.select(event.detail.destination)}
               >
                 <div slot="diagnostics">${o5(model.diagnostics)}</div>

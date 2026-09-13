@@ -360,6 +360,9 @@ def test_volume_control_gets_targeted_route_or_clarification():
 def test_home_state_routes_to_local_live_context_without_llm():
     for text in (
         "卧室温度是多少？",
+        "卧室现在多少度？",
+        "客厅现在几度？",
+        "卧室室温是多少？",
         "当前卧室的温度是多少？",
         "当前客厅的温度是多少？",
         "卧室湿度多少？",

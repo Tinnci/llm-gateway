@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -80,6 +81,7 @@ def run_summary(record: dict[str, Any]) -> dict[str, Any]:
         "user_text": str(record.get("user_text") or ""),
         "assistant_text": str(record.get("assistant_text") or ""),
         "final_speech_text": str(record.get("final_speech_text") or ""),
+        "interaction": _interaction_facts(record),
         "route": {
             "kind": str(route.get("kind") or turn.get("route") or ""),
             "model": str(route.get("model") or ""),
@@ -113,6 +115,33 @@ def run_summary(record: dict[str, Any]) -> dict[str, Any]:
             }
         ),
         "has_raw_payload": isinstance(record.get("raw_payload"), dict),
+    }
+
+
+def _interaction_facts(record: dict[str, Any]) -> dict[str, Any]:
+    """Keep the daily surface grounded without loading a diagnostic trace."""
+    intent_text = str(record.get("user_text") or "")
+    observations = []
+    dispatches = []
+    for span in record.get("timeline_spans") or []:
+        attrs = span.get("attrs") or {}
+        if span.get("stage") == "route_decision":
+            intent_text = str(attrs.get("effective_text") or intent_text)
+        elif span.get("stage") == "local_state_render":
+            observations.append(
+                {
+                    "source": attrs.get("source", ""),
+                    "answerable": attrs.get("answerable"),
+                    "reason": attrs.get("outcome_reason", ""),
+                    "entities": deepcopy((attrs.get("entities") or [])[:5]),
+                }
+            )
+        elif span.get("stage") == "local_capability_execute":
+            dispatches.extend(deepcopy(attrs.get("service_calls") or []))
+    return {
+        "intent_text": intent_text,
+        "observations": observations[:5],
+        "dispatches": dispatches[:20],
     }
 
 

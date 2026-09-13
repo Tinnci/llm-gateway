@@ -105,73 +105,37 @@ describe("Voice Harness run list", () => {
 });
 
 describe("Voice Harness overview", () => {
-  test("owns summary composition and task navigation", async () => {
+  test("shows the understood request and keeps measurements in closed details", async () => {
     const overview = new VoiceHarnessOverview();
-    overview.model = {
-      actions: [
-        { destination: "runs", icon: "mdi:play", label: "Inspect runs" },
-        { destination: "test", icon: "mdi:flask", label: "Run a test" },
-      ],
-      ariaLabel: "System health",
-      diagnosticsLabel: "Advanced diagnostics",
-      focusHint: "Inspect the affected run.",
-      focusIcon: "mdi:alert",
-      focusTitle: "Investigation needed",
-      headline: "System health",
-      memoryLabel: "Recent memory",
-      metrics: [
-        { icon: "mdi:lan", label: "Gateways", tone: "ok", value: "1" },
-      ],
-      stateLabel: "Investigation needed",
-      stateTone: "warning",
-      statusLine: "1 gateway",
-    };
-    overview.openSections = ["memory"];
+    overview.entries = [{ traces: { records: [{
+      run_id: "room", user_text: "那客厅呢？", assistant_text: "客厅现在 28.9 度。", status: "complete",
+      interaction: { intent_text: "客厅温度是多少？", observations: [{ answerable: true, entities: [{ name: "客厅温度" }] }] },
+    }] } }];
     document.body.append(overview);
     await overview.updateComplete;
-
-    expect(overview.shadowRoot?.querySelectorAll("voice-harness-stat")).toHaveLength(4);
-    const disclosures = overview.shadowRoot?.querySelectorAll("details") || [];
-    expect(disclosures).toHaveLength(2);
-    expect(disclosures[1]?.open).toBe(true);
-
+    expect(overview.shadowRoot?.textContent).toContain("那客厅呢？");
+    expect(overview.shadowRoot?.textContent).toContain("客厅温度是多少？");
+    const metrics = overview.shadowRoot?.querySelectorAll("voice-harness-stat") || [];
+    expect(metrics).toHaveLength(4);
+    for (const metric of metrics) expect(metric.closest("details")?.open).toBe(false);
     const destinations: string[] = [];
     overview.addEventListener("harness-overview-navigate", (event) => {
-      destinations.push(
-        (event as CustomEvent<{ destination: string }>).detail.destination,
-      );
+      destinations.push((event as CustomEvent<{ destination: string }>).detail.destination);
     });
     overview.shadowRoot?.querySelector("button")?.click();
     expect(destinations).toEqual(["runs"]);
   });
 
-  test("reports disclosure state without owning panel data", async () => {
+  test("native disclosure stays open while observations refresh", async () => {
     const overview = new VoiceHarnessOverview();
-    overview.model = {
-      actions: [],
-      ariaLabel: "System health",
-      diagnosticsLabel: "Advanced diagnostics",
-      focusHint: "Ready",
-      focusIcon: "mdi:check",
-      focusTitle: "Ready",
-      headline: "System health",
-      memoryLabel: "Recent memory",
-      metrics: [],
-      stateLabel: "Ready",
-      stateTone: "ok",
-      statusLine: "1 gateway",
-    };
     document.body.append(overview);
     await overview.updateComplete;
-
-    const changes: Array<{ id: string; open: boolean }> = [];
-    overview.addEventListener("harness-overview-disclosure-toggle", (event) => {
-      changes.push((event as CustomEvent<{ id: string; open: boolean }>).detail);
-    });
     const details = overview.shadowRoot?.querySelector("details");
     if (!details) throw new Error("diagnostics disclosure was not rendered");
     details.open = true;
-    details.dispatchEvent(new Event("toggle"));
-    expect(changes.at(-1)).toEqual({ id: "diagnostics", open: true });
+    overview.entries = [{ state: "loaded" }];
+    await overview.updateComplete;
+    expect(overview.shadowRoot?.querySelector("details")).toBe(details);
+    expect(details.open).toBe(true);
   });
 });

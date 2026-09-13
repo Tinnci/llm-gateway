@@ -12,6 +12,7 @@ from custom_components.llm_gateway.static_context import (
     parse_static_devices,
     render_device_inventory_answer,
     render_scalar_state_answer,
+    state_metrics_from_text,
 )
 
 STATIC_CONTEXT = (
@@ -209,6 +210,94 @@ def test_render_scalar_state_answer_handles_climate_temperature_attributes() -> 
     assert result.trace_attrs()["metrics"] == ["temperature"]
 
 
+def test_home_temperature_never_substitutes_a_device_target() -> None:
+    result = render_scalar_state_answer(
+        "家里温度是多少？",
+        {
+            "success": True,
+            "result": (
+                "Live Context:\n- names: 卧室空调\n"
+                "  domain: climate\n  state: cool\n  areas: 卧室\n"
+                "  attributes:\n    temperature: 16\n"
+            ),
+        },
+        route_decision=decide_route("家里温度是多少？"),
+    )
+
+    assert result is not None
+    assert result.answerable is False
+    assert "16" not in result.speech
+
+
+def test_home_summary_does_not_let_an_ac_hide_the_room_observation() -> None:
+    text = "家里温度是多少？"
+    result = render_scalar_state_answer(
+        text,
+        {
+            "success": True,
+            "result": (
+                "Live Context:\n- names: 卧室空调\n"
+                "  domain: climate\n  state: cool\n  areas: 卧室\n"
+                "  attributes:\n    current_temperature: 24.4\n"
+                "- names: 卧室温度\n  domain: sensor\n  state: '26.4'\n"
+                "  areas: 卧室\n  attributes:\n    unit_of_measurement: °C\n"
+            ),
+        },
+        route_decision=decide_route(text),
+    )
+
+    assert result is not None
+    assert result.answerable
+    assert "26.4" in result.speech
+    assert "24.4" not in result.speech
+
+
+def test_requesting_co2_and_eco2_keeps_both_measurements() -> None:
+    assert state_metrics_from_text("卧室CO2和eCO2多少？") == ("co2", "eco2")
+
+
+def test_room_query_prefers_room_sensor_over_device_internal_temperature() -> None:
+    result = render_scalar_state_answer(
+        "卧室现在多少度？",
+        {
+            "success": True,
+            "result": (
+                "Live Context:\n- names: 卧室空调\n"
+                "  domain: climate\n  state: cool\n  areas: 卧室\n"
+                "  attributes:\n    current_temperature: 24.4\n    temperature: 25\n"
+                "- names: zM1 温度\n  domain: sensor\n  state: '26.4'\n"
+                "  areas: 卧室\n  attributes:\n    unit_of_measurement: °C\n"
+            ),
+        },
+        route_decision=decide_route("卧室现在多少度？"),
+    )
+
+    assert result is not None
+    assert result.speech == "卧室现在 26.4 度。"
+    assert result.answerable is True
+
+
+def test_formaldehyde_is_not_tvoc_or_carbon_dioxide() -> None:
+    result = render_scalar_state_answer(
+        "卧室甲醛是多少？",
+        {
+            "success": True,
+            "result": (
+                "Live Context:\n- names: zM1 甲醛\n"
+                "  domain: sensor\n  state: '0.02'\n  areas: 卧室\n"
+                "  attributes:\n    unit_of_measurement: mg/m³\n"
+            ),
+        },
+        route_decision=decide_route("卧室甲醛是多少？"),
+    )
+
+    assert result is not None
+    assert result.answerable is True
+    assert result.metrics == ("formaldehyde",)
+    assert "甲醛 0.02 mg/m³" in result.speech
+    assert "TVOC" not in result.speech
+
+
 def test_render_scalar_state_answer_handles_humidity_query() -> None:
     result = render_scalar_state_answer(
         "卧室湿度多少",
@@ -219,6 +308,27 @@ def test_render_scalar_state_answer_handles_humidity_query() -> None:
     assert result
     assert result.speech == "卧室湿度现在 80.2%。"
     assert result.trace_attrs()["source"] == "GetLiveContext"
+
+
+def test_air_quality_summary_does_not_hide_an_explicit_missing_co2_request():
+    text = "卧室空气质量和CO2怎么样？"
+    result = render_scalar_state_answer(
+        text,
+        {
+            "success": True,
+            "result": (
+                "Live Context:\n- names: 卧室 PM2.5\n"
+                "  domain: sensor\n  state: '8'\n  areas: 卧室\n"
+                "  attributes:\n    unit_of_measurement: µg/m³\n"
+            ),
+        },
+        route_decision=decide_route(text),
+    )
+
+    assert result is not None
+    assert not result.answerable
+    assert result.missing_requirements == ("co2",)
+    assert "CO2" in result.speech
 
 
 def test_render_scalar_state_answer_handles_unavailable_single_metric() -> None:
