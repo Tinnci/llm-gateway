@@ -394,7 +394,7 @@ async def _async_execute_room_temperature(
         or not exposed_entities.async_should_expose(hass, "conversation", entity_id)
     ):
         return LocalCapabilityResult(
-            "clarify",
+            "error",
             f"{area.name}的舒适温度控制当前不可用。",
             candidate=candidate,
             reason="room_comfort_unavailable",

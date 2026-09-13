@@ -1184,6 +1184,48 @@ async def test_room_target_clarification_keeps_temperature_and_waits_for_room(
     assert calls == [{"entity_id": [entity.entity_id], "temperature": 25.5}]
 
 
+async def test_unavailable_room_control_does_not_ask_for_clarification(
+    hass, aioclient_mock, mock_config_entry
+):
+    calls = []
+
+    async def set_temperature(call):
+        calls.append(dict(call.data))
+
+    hass.services.async_register("climate", "set_temperature", set_temperature)
+    aioclient_mock.get(MODELS_URL, json={"data": [{"id": "fast-model"}]})
+    area = ar.async_get(hass).async_create("客厅")
+    entity = er.async_get(hass).async_get_or_create(
+        "climate", "roommind", f"roommind_{area.id}_comfort"
+    )
+    hass.states.async_set(entity.entity_id, "unavailable")
+    exposed_entities.async_expose_entity(
+        hass, "conversation", entity.entity_id, should_expose=True
+    )
+    agent_id = await _setup_agent(
+        hass, mock_config_entry, {CONF_DIAGNOSTIC_TRACES: True}
+    )
+
+    with patch(
+        "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback"
+    ) as completion:
+        result = await conversation.async_converse(
+            hass, "把客厅温度调到25度", None, Context(), agent_id=agent_id
+        )
+
+    assert result.response.speech["plain"]["speech"] == (
+        "客厅的舒适温度控制当前不可用。"
+    )
+    assert not result.continue_conversation
+    completion.assert_not_called()
+    assert not calls
+    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+    assert trace["route"]["terminal_outcome"] == "error"
+    assert not any(
+        span["stage"] == "local_route_clarify" for span in trace["timeline_spans"]
+    )
+
+
 async def test_virginia_wolf_routes_to_literary_knowledge_with_entity_correction(
     hass, aioclient_mock, mock_config_entry
 ):

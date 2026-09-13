@@ -178,7 +178,8 @@ async def test_missing_or_unexposed_room_comfort_never_falls_back_to_ac(hass, ex
     result = await async_try_execute_local_capability(hass, text, decide_route(text))
 
     assert result is not None
-    assert result.status == "clarify"
+    assert result.status == "error"
+    assert result.reason == "room_comfort_unavailable"
     assert not calls
 
 

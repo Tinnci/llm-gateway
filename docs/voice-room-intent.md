@@ -43,6 +43,11 @@ so an entity rename does not change ownership. Missing, unavailable, hidden,
 or unexposed comfort control does not redirect the request to an AC. Negated
 requests and questions about whether a change happened do not dispatch it.
 
+An unavailable comfort control ends as an error, not a request for clarification.
+The room and target are already understood; repeating them cannot restore the
+control. A missing or ambiguous room still asks only for the room.
+控制不可用时明确结束本次请求；只有房间不明确时才请用户补充。
+
 After a successful comfort service call, Gateway reads the comfort entity's
 `override_active`, `override_temperature`, and `override_suppressed` attributes.
 Only a matching active override supports **Comfort target saved**. A missing or
@@ -94,6 +99,11 @@ With no designated sensor, the same path previously chose the AC's internal
 temperature. Routing this pipeline through one conversation owner also keeps
 follow-ups, exposure checks, speech, and outcome records together. Other Assist
 pipelines and HA core files need no changes.
+
+Set this option on the household Assist pipeline and verify a pipeline run after
+restarting HA. A direct `conversation.process` call to Gateway does not exercise
+the pipeline's local-intent preference. 直接调用 Gateway 成功，不等于实际语音入口
+已经经过 Gateway；验收必须检查 Assist 管线中的 `intent-start` 和 `intent-end`。
 
 ## Calm surface / 平静界面
 
