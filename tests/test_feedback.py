@@ -31,7 +31,8 @@ def test_feedback_policy_maps_search_started() -> None:
     )
 
     assert earcon["earcon_name"] == "search"
-    assert earcon["played_at_ms"] == 120
+    assert earcon["scheduled_at_ms"] == 120
+    assert earcon["played_at_ms"] is None
     assert earcon["volume_profile"] in {"normal", "quiet"}
     assert display["state"] == "searching"
     assert display["progress"] == "indeterminate"

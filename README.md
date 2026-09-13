@@ -63,10 +63,15 @@ The panel provides:
 - bundled scenarios,
 - short-memory inspection,
 - earcon assets,
+- grouped satellite audio controls with automatic saving and per-field preview,
 - satellite diagnostic summaries.
 
 English and Simplified Chinese labels follow the Home Assistant or browser
 locale.
+
+The audio card requires the current `phosh-ha-status` Home Assistant package
+and display agent. It also works as `custom:voice-harness-audio-settings` in a
+dashboard. See [audio settings and runtime evidence](docs/voice-feedback-runtime-verification.md).
 
 ## Installation
 

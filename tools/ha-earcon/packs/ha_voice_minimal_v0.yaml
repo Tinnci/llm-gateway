@@ -1,7 +1,7 @@
 name: ha_voice_minimal_v0
 sample_rate: 16000
-target_lufs: -24.0
-true_peak_dbfs: -3.0
+true_peak_dbfs: -1.0
+mastering: tablet
 
 earcons:
   wake:
@@ -183,11 +183,10 @@ earcons:
       - freq: 523.25
         ms: 34
         amp: 0.10
-      - silence_ms: 92
+      - silence_ms: 22
       - freq: 659.25
         ms: 40
         amp: 0.10
-      - silence_ms: 174
     envelope:
       attack_ms: 6
       release_ms: 26
@@ -205,11 +204,10 @@ earcons:
       - freq: 523.25
         ms: 34
         amp: 0.10
-      - silence_ms: 92
+      - silence_ms: 22
       - freq: 659.25
         ms: 40
         amp: 0.10
-      - silence_ms: 174
     envelope:
       attack_ms: 6
       release_ms: 26
@@ -264,3 +262,23 @@ earcons:
     envelope:
       attack_ms: 8
       release_ms: 35
+
+  follow_up:
+    type: tone_sequence
+    purpose: Command capture reopened after a question; no wake word is needed.
+    semantic_state: listening
+    priority: 90
+    can_play_while_listening: true
+    quiet_hours_behavior: attenuate
+    trace_event_name: earcon_follow_up
+    peak: 0.24
+    tones:
+      - freq: 587.33
+        ms: 60
+      - silence_ms: 18
+      - start_freq: 783.99
+        end_freq: 987.77
+        ms: 95
+    envelope:
+      attack_ms: 7
+      release_ms: 28

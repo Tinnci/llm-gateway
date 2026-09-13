@@ -1,3 +1,4 @@
+import "./voice-harness-audio-settings";
 import "./voice-harness-navigation";
 import "./voice-harness-overview";
 import "./voice-harness-replay-inspector";

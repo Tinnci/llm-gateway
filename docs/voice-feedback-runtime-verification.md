@@ -7,7 +7,7 @@ trace data, in the Voice Harness UI, and through a manual debugging step.
 ## Consensus mapping
 
 Earcons are short, abstract, structured status sounds. The v0 pack keeps the
-surface small but covers the maintained voice states: `wake`, `captured`,
+surface small but covers the maintained voice states: `wake`, `follow_up`, `captured`,
 `listening_start`, `listening_end`, `processing_loop`, `thinking`, `search`,
 `confirmation`, `clarification`, `provider_fallback`, `deep_task`, `success`,
 `failure`, and `cancel`. The manifest records the semantic state, priority,
@@ -28,6 +28,61 @@ consume the same schema later instead of adding new status models.
 Observability requires one shared turn id. `voice_runs`, diagnostic traces,
 earcon events, display status events, and
 `/api/llm_gateway/harness/runs/{run_id}` use the same `run_id`.
+
+Scheduling an earcon leaves `played_at_ms` unknown. A completed HA playback
+service call records `dispatched=true`, `played=false`; it cannot establish
+physical playback time. First-response updates replace stored snapshots and
+return copies. The satellite independently reports player completion and the
+opening of a follow-up capture window. The dedicated follow-up cue belongs to
+that capture callback, not the model's request to continue.
+
+提示音计划、HA 服务下发、播放器退出与真实听感分别记录。仅有服务成功返回时，
+Harness 显示“已下发，播放未确认”；不会用计划时间伪造播放时间。
+
+## Audio settings / 声音设置
+
+The Lit audio card groups wake/follow-up, day/night speech and status feedback.
+Edits debounce for 400 ms, serialize partial updates and hot-apply in the display
+agent. A failed save retains pending edits for retry. Preview first flushes edits
+and accepts only six fixed audio fields. Mute and night mode share the same
+settings as the lock-screen buttons. The UI caps linear gain at 1.0.
+
+Install the updated `phosh-ha-status/home-assistant/packages/kukui_display.yaml`
+and satellite agent together. The card calls `rest_command.kukui_voice_config_read`,
+`kukui_voice_config_update` and `kukui_voice_audio_preview` with HA's
+`?return_response`; a successful service transport without a successful agent
+response is an error. Add `/llm_gateway/static/voice-harness-components.js` as a
+JavaScript module resource to use this dashboard card:
+
+```yaml
+type: custom:voice-harness-audio-settings
+```
+
+默认线性增益：唤醒和追问 1.0，白天播报 1.0，夜间播报 0.72，处理中提示 0.58。
+调节后自动保存，无需“应用”按钮；每一项支持在平板试听。普通音量修改不重启录音。
+
+## 2026-09-13 target validation / 本轮实机验证
+
+The deployed Fast/Mid model `minimaxai/minimax-m3` returned HTTP 410 because it
+retired on September 9. A live provider catalog and short probes confirmed the
+already configured Deep model `nvidia/nemotron-3-super-120b-a12b` was available.
+Fast/Mid were migrated to that model on the same provider, retaining their
+token/time limits. HTTP 410 now permits an already configured fallback candidate;
+request errors and exhausted quota remain terminal under their existing rules.
+
+A controlled quiz used synthetic speech played into the kukui microphone.
+The real wake detector, Doubao ASR, Gateway, Edge TTS, satellite player and
+follow-up capture completed two turns with the same conversation ID. Gateway
+latencies were 1,219 and 1,375 ms, with zero recorded errors. This is a near-field
+device test, not a human far-field or listening-quality result. Satellite timing,
+gain measurements and remaining operator checks are owned by
+`phosh-ha-status/docs/phase7-target-validation-2026-09-13.md`.
+
+Validation: 385 Gateway Python tests, 28 Bun tests, 7 mastering tests, Ruff,
+tsgo type checking and panel build passed. The actual Lit component was checked
+in desktop/mobile Chinese and mobile English at 390 px, including saving,
+preview and mute. That browser fixture mocked HA transport; physical playback
+was measured separately on the target.
 
 ## Runtime evidence
 
@@ -89,12 +144,24 @@ uv run ha-earcon render packs/ha_voice_minimal_v0.yaml \
 uv run ha-earcon lint \
   ../../custom_components/llm_gateway/frontend/earcons/ha_voice_minimal_v0/*.wav \
   --max-duration-ms 420 \
-  --target-lufs -24 \
-  --lufs-tolerance 3 \
-  --max-peak-dbfs -3
+  --target-lufs -10.5 \
+  --lufs-tolerance 2 \
+  --max-peak-dbfs -0.99
+uv run pytest tests/test_mastering.py -q
 ```
 
 Expected result: every wav reports `OK`.
+
+The tablet pack uses 120 Hz high-pass filtering, soft-knee compression and a
+2 ms lookahead limiter, followed by 4× oversampled peak normalization to −1 dBFS.
+Encoded WAVs have 6–9 dB crest factors. LUFS is measured, not used as a second
+normalization target; the lint window above checks the rendered pack's roughly
+−10.5 LUFS short-clip range. Other packs retain the original loudness mode and
+CLI defaults. These waveform checks do not measure the tablet speaker or room.
+
+平板提示音采用 120 Hz 高通、软拐点压缩与前瞻限幅，编码后峰均比为
+6–9 dB，过采样峰值不超过 −1 dBFS。LUFS 仅记录实测值；扬声器失真、
+房间听感与回声消除仍需实机测量。
 
 ## Manual Home Assistant steps
 

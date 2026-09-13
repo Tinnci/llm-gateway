@@ -358,7 +358,7 @@ const I18N = {
     "config.first_response_audio": "First response audio",
     "config.saved": "Configuration saved.",
     "satellite.title": "Satellite and voice controls",
-    "satellite.description": "These controls use HA entities and the typed local apply API exposed by the display agent. Applying wake or mic changes restarts the local satellite path.",
+    "satellite.description": "These controls use HA entities and the typed local apply API exposed by the display agent. Volume changes apply immediately. Wake or mic changes restart capture.",
     "satellite.overview": "Runtime overview",
     "satellite.quick_pause": "Quick pause",
     "satellite.controls": "Controls",
@@ -2210,6 +2210,7 @@ class VoiceHarnessPanel extends HTMLElement {
   }
 
   _render() {
+    const existingAudioSettings = this.shadowRoot.querySelector("voice-harness-audio-settings");
     // Keep edits through loading and unrelated actions. Values remain in memory.
     const formValues = this._discardFormValues ? [] : [.../** @type {NodeListOf<HTMLInputElement>} */ (this.shadowRoot.querySelectorAll(
       'form[data-form="config"] input, form[data-form="config"] select, form[data-form="config"] textarea, [data-satellite-config], [data-satellite-minutes]',
@@ -2269,6 +2270,17 @@ class VoiceHarnessPanel extends HTMLElement {
     }
     /** @type {import("./voice-harness-overview.js").VoiceHarnessOverview | null} */
     const overview = this.shadowRoot.querySelector("voice-harness-overview");
+    const audioPlaceholder = this.shadowRoot.querySelector("voice-harness-audio-settings");
+    if (existingAudioSettings && audioPlaceholder) audioPlaceholder.replaceWith(existingAudioSettings);
+    /** @type {import("./voice-harness-audio-settings.js").VoiceHarnessAudioSettings | null} */
+    const audioSettings = this.shadowRoot.querySelector("voice-harness-audio-settings");
+    if (audioSettings) {
+      audioSettings.hass = this.hass;
+      audioSettings.language = this._locale();
+    }
+    this.shadowRoot.querySelectorAll("[data-satellite-config]").forEach((input) => {
+      input.addEventListener("change", () => { void this._satelliteAction("save-config"); });
+    });
     if (overview && this._renderedOverviewModel) {
       overview.model = this._renderedOverviewModel;
       overview.openSections = [...this._overviewOpenSections];
@@ -2955,19 +2967,12 @@ class VoiceHarnessPanel extends HTMLElement {
               <div class="meta">${escapeHtml(this._t("satellite.description"))}</div>
             </div>
           </div>
-          <div class="settingsTriples">
-            ${configKeys.map(([key, min, max, step]) => this._satelliteConfigInput(key, states[key], min, max, step)).join("")}
-          </div>
-          <div class="satelliteControls compact">
-            <button type="button" data-satellite-action="save-config" ${services.set_number ? "" : "disabled"}>
-              <ha-icon icon="mdi:content-save-outline"></ha-icon>
-              <span>${escapeHtml(this._t("satellite.save_config"))}</span>
-            </button>
-            <button type="button" data-satellite-action="apply-config" ${services.set_number && services.apply_config ? "" : "disabled"}>
-              <ha-icon icon="mdi:check-circle-outline"></ha-icon>
-              <span>${escapeHtml(this._t("satellite.apply_config"))}</span>
-            </button>
-          </div>
+          <voice-harness-audio-settings></voice-harness-audio-settings>
+          <details><summary>${escapeHtml(this._t("satellite.config"))}</summary>
+            <div class="settingsTriples">
+              ${configKeys.slice(0, 4).map(([key, min, max, step]) => this._satelliteConfigInput(key, states[key], min, max, step)).join("")}
+            </div>
+          </details>
         </article>
         ${this._satelliteStatePanel(states)}
         ${this._satelliteAsrPanel(states.asr_metrics, snapshot)}
@@ -4213,7 +4218,8 @@ class VoiceHarnessPanel extends HTMLElement {
           ])}
           ${this._detailItem(this._t("runs.first_response_audio"), [
             audio.scheduled ? "scheduled" : "not scheduled",
-            audio.played ? `played · ${Number(audio.played_at_ms || 0)} ms` : "not played",
+            audio.played ? `played · ${Number(audio.played_at_ms || 0)} ms`
+              : audio.dispatched ? "dispatched · playback unconfirmed" : "playback unconfirmed",
             audio.source || "",
             audio.backend || "",
             audio.tts_entity ? `tts=${audio.tts_entity}` : "",

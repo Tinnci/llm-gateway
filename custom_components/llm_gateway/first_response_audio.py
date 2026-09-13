@@ -496,8 +496,9 @@ class FirstResponsePlayer:
 
         updated = self._store.update_first_response_audio(
             event_id,
-            played=True,
-            played_at_ms=_scheduled_at_ms(self._store, turn_id, event_id),
+            # Service completion confirms dispatch, not speaker playback.
+            played=False,
+            dispatched=True,
             source=source,
             backend=route.backend,
             adapter=route.adapter,
@@ -513,6 +514,7 @@ def first_response_audio_trace_attrs(event: dict[str, Any]) -> dict[str, Any]:
     return {
         "first_response_text": event.get("text") or "",
         "first_response_audio.scheduled": bool(event.get("scheduled")),
+        "first_response_audio.dispatched": bool(event.get("dispatched")),
         "first_response_audio.played": bool(event.get("played")),
         "first_response_audio.played_at_ms": event.get("played_at_ms"),
         "first_response_audio.source": event.get("source") or "",
@@ -536,14 +538,3 @@ def _mark_audio(turn_id: str, marker: RunMarker, event: dict[str, Any]) -> None:
         status="error" if event.get("suppressed_reason") else "ok",
         attrs=first_response_audio_trace_attrs(event),
     )
-
-
-def _scheduled_at_ms(
-    store: VoiceFeedbackStore,
-    turn_id: str,
-    event_id: str,
-) -> int:
-    for event in store.first_response_audio_for_turn(turn_id):
-        if event.get("id") == event_id:
-            return int(event.get("scheduled_at_ms") or 0)
-    return 0

@@ -14,6 +14,7 @@ from rich.table import Table
 
 from .loudness import limit_peak, measure_lufs, normalize_lufs, peak_dbfs
 from .manifest import write_manifest
+from .mastering import crest_factor_db, master_earcon
 from .synth import render_earcon
 
 app = typer.Typer(no_args_is_help=True)
@@ -89,24 +90,30 @@ def render(
     sample_rate = int(data.get("sample_rate", 16000))
     target_lufs = float(data.get("target_lufs", -24.0))
     true_peak_dbfs = float(data.get("true_peak_dbfs", -3.0))
+    tablet_mastering = data.get("mastering") == "tablet"
     out.mkdir(parents=True, exist_ok=True)
 
     manifest: dict[str, Any] = {
         "pack": data.get("name") or pack.stem,
         "sample_rate": sample_rate,
-        "target_lufs": target_lufs,
+        "target_lufs": None if tablet_mastering else target_lufs,
+        "mastering": "tablet" if tablet_mastering else "loudness",
         "true_peak_dbfs": true_peak_dbfs,
         "files": {},
     }
 
     for name, spec in data["earcons"].items():
         audio = render_earcon(spec, sample_rate)
-        audio = normalize_lufs(audio, sample_rate, target_lufs)
-        audio = limit_peak(audio, true_peak_dbfs)
+        if tablet_mastering:
+            audio = master_earcon(audio, sample_rate, peak=true_peak_dbfs)
+        else:
+            audio = normalize_lufs(audio, sample_rate, target_lufs)
+            audio = limit_peak(audio, true_peak_dbfs)
 
         path = out / f"{name}.wav"
         sf.write(path, audio, sample_rate, subtype="PCM_16")
 
+        audio, _ = sf.read(path, dtype="float32")
         duration_ms = round(len(audio) / sample_rate * 1000, 1)
         loudness = round(measure_lufs(audio, sample_rate), 1)
         peak = round(peak_dbfs(audio), 1)
@@ -116,6 +123,8 @@ def render(
             "duration_ms": duration_ms,
             "lufs": loudness,
             "peak_dbfs": peak,
+            "crest_factor_db": round(crest_factor_db(audio), 2),
+            "highpass_hz": 120 if tablet_mastering else None,
             **_earcon_metadata(name, spec),
         }
         console.print(

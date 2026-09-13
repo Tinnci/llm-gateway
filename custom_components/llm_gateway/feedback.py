@@ -127,7 +127,7 @@ class VoiceFeedbackStore:
             "earcon_name": earcon_name,
             "semantic_state": spec["semantic_state"],
             "scheduled_at_ms": max(0, int(scheduled_at_ms)),
-            "played_at_ms": None if suppressed_reason else max(0, int(scheduled_at_ms)),
+            "played_at_ms": None,
             "duration_ms": int(spec["duration_ms"]),
             "priority": int(spec["priority"]),
             "can_play_while_listening": bool(spec["can_play_while_listening"]),
@@ -215,6 +215,7 @@ class VoiceFeedbackStore:
             "phrase_key": phrase_key,
             "scheduled": scheduled,
             "scheduled_at_ms": max(0, int(scheduled_at_ms)),
+            "dispatched": False,
             "played": False,
             "played_at_ms": None,
             "source": source,
@@ -229,13 +230,14 @@ class VoiceFeedbackStore:
         }
         self._first_response_audio.insert(0, event)
         self._first_response_audio = self._first_response_audio[: self._limit]
-        return event
+        return dict(event)
 
     def update_first_response_audio(  # noqa: PLR0913 - mirrors trace schema fields.
         self,
         event_id: str,
         *,
         played: bool,
+        dispatched: bool = False,
         played_at_ms: int | None = None,
         source: str | None = None,
         backend: str | None = None,
@@ -247,9 +249,11 @@ class VoiceFeedbackStore:
         suppressed_reason: str = "",
     ) -> dict[str, Any] | None:
         """Update a previously scheduled first-response audio event."""
-        for event in self._first_response_audio:
+        for index, stored in enumerate(self._first_response_audio):
+            event = dict(stored)
             if event.get("id") != event_id:
                 continue
+            event["dispatched"] = dispatched
             event["played"] = played
             event["played_at_ms"] = (
                 max(0, int(played_at_ms)) if played_at_ms is not None else None
@@ -269,13 +273,14 @@ class VoiceFeedbackStore:
             if selection_reason is not None:
                 event["selection_reason"] = selection_reason
             event["suppressed_reason"] = suppressed_reason
-            return event
+            self._first_response_audio[index] = event
+            return dict(event)
         return None
 
     def first_response_audio_for_turn(self, turn_id: str) -> list[dict[str, Any]]:
         """Return first-response audio events for one turn in chronological order."""
         return [
-            event
+            dict(event)
             for event in reversed(self._first_response_audio)
             if event.get("turn_id") == turn_id
         ]

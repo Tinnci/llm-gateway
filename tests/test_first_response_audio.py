@@ -46,7 +46,7 @@ async def test_first_response_audio_schedules_when_spoken_hint_exists(hass) -> N
     assert events[-1]["attrs"]["first_response_audio.scheduled"] is True
 
 
-async def test_first_response_audio_marks_played_when_local_script_available(
+async def test_first_response_audio_records_dispatch_without_claiming_playback(
     hass,
 ) -> None:
     calls = []
@@ -69,13 +69,16 @@ async def test_first_response_audio_marks_played_when_local_script_available(
 
     [updated] = store.first_response_audio_for_turn("turn-search")
     assert event["scheduled"] is True
-    assert updated["played"] is True
-    assert updated["played_at_ms"] is not None
+    assert updated["dispatched"] is True
+    assert updated["played"] is False
+    assert updated["played_at_ms"] is None
+    assert event["dispatched"] is False
     assert updated["adapter"] == "local"
     assert updated["backend"] == "script.llm_gateway_first_response"
     assert calls[0]["message"] == "我查一下。"
     assert calls[0]["adapter"] == "display_agent"
-    assert events[-1]["attrs"]["first_response_audio.played"] is True
+    assert events[-1]["attrs"]["first_response_audio.played"] is False
+    assert events[-1]["attrs"]["first_response_audio.dispatched"] is True
 
 
 async def test_first_response_audio_prefers_display_agent_rest_command(hass) -> None:
@@ -99,7 +102,8 @@ async def test_first_response_audio_prefers_display_agent_rest_command(hass) -> 
 
     [updated] = store.first_response_audio_for_turn("turn-search")
     assert event["backend"] == "rest_command.kukui_voice_feedback"
-    assert updated["played"] is True
+    assert updated["dispatched"] is True
+    assert updated["played"] is False
     assert updated["selection_reason"] == "auto_discovered_local_service"
     assert updated["local_service"] == "rest_command.kukui_voice_feedback"
     assert calls[0]["turn_id"] == "turn-search"
@@ -146,7 +150,8 @@ async def test_first_response_audio_auto_discovers_tts_and_media_player(hass) ->
 
     [updated] = store.first_response_audio_for_turn("turn-search")
     assert event["backend"] == "tts.speak"
-    assert updated["played"] is True
+    assert updated["dispatched"] is True
+    assert updated["played"] is False
     assert updated["adapter"] == "ha_media_player"
     assert updated["selection_reason"] == "auto_discovered_tts_media_player"
     assert updated["tts_entity"] == "tts.edge_tts_service_edge_tts"
