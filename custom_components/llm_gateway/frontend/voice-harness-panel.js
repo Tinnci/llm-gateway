@@ -4,17 +4,9 @@ import {
   asrEndpointFromSources,
   diagnosticCheckDetail,
   diagnosticLayerCounts,
-  harnessOverview,
-  runSummary,
-  runTone,
   satelliteEntityTone,
   satelliteValue,
 } from "./voice-harness-model.js";
-import {
-  parseScenarioExpected,
-  scenarioPreflight,
-  searchProviders,
-} from "./voice-harness-scenario.js";
 import {
   chip,
   iconButton,
@@ -23,20 +15,12 @@ import {
   parseHarnessStatus,
   requestHarnessJson,
 } from "./voice-harness-api.js";
-import { resolveReplayPair } from "./voice-harness-components.js";
-import {
-  defineDiagnosticTabs,
-} from "./voice-harness-diagnostic-tabs.js";
-import {
-  defineHarnessViews,
-} from "./voice-harness-view-registry.js";
+import { renderHarnessShell, voiceSettingsRequest } from "./voice-harness-components.js";
 import {
   escapeHtml,
   firstResponseAdapter,
   formatTime,
-  groundingTone,
   localize,
-  routeKind,
   safeId,
   translate,
 } from "./voice-harness-utils.js";
@@ -75,44 +59,32 @@ import {
 
 // This is the UI composition root. Each view owns its metadata and dispatch
 // function; navigation consumes the validated static definition.
-const HARNESS_VIEWS = defineHarnessViews([
+const HARNESS_VIEWS = [
   {
     id: "overview",
     labelKey: "tab.overview",
     icon: "mdi:view-dashboard-outline",
     order: 10,
-    render: (panel, entries) => panel._renderOverview(entries),
   },
   {
     id: "runs",
     labelKey: "tab.runs",
     icon: "mdi:play-circle-outline",
     order: 20,
-    render: (panel, entries) => panel._renderRuns(entries),
   },
   {
     id: "test",
     labelKey: "tab.test",
     icon: "mdi:flask-outline",
     order: 30,
-    render: (panel, entries) => panel._renderTest(entries),
   },
   {
     id: "settings",
     labelKey: "tab.settings",
     icon: "mdi:cog-outline",
     order: 40,
-    render: (panel, entries) => panel._renderSettings(entries),
   },
-]);
-
-const DEFAULT_EXPECTED = {
-  must_search: false,
-  spoken_response: {
-    max_sentences: 2,
-    must_not_mention: ["entity_id"],
-  },
-};
+];
 
 const I18N = {
   en: {
@@ -1033,24 +1005,13 @@ const I18N = {
   },
 };
 
-const DEFAULT_DRAFTS = {
-  en: {
-    user: "Turn on the living room light",
-    response: "**Done.** Living room light is on.",
-    expected: JSON.stringify(DEFAULT_EXPECTED, null, 2),
-  },
-  "zh-Hans": {
-    user: "打开客厅灯",
-    response: "**已打开** 客厅灯。",
-    expected: JSON.stringify(DEFAULT_EXPECTED, null, 2),
-  },
-};
-
 class VoiceHarnessPanel extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
-    this._activeTab = "runs";
+    this._activeTab = "overview";
+    this._visitedTabs = new Set(["overview"]);
+    this._poll = null;
     /** @type {Record<string, Record<string, any>>} */
     this._runDetails = {};
     this._discardFormValues = false;
@@ -1060,7 +1021,8 @@ class VoiceHarnessPanel extends HTMLElement {
     this._data = null;
     this._error = "";
     this._busy = false;
-    this._result = null;
+    this._savingConfig = false;
+    this._configLoading = false;
     /** @type {any} */
     this._configData = null;
     this._configSaved = "";
@@ -1082,32 +1044,12 @@ class VoiceHarnessPanel extends HTMLElement {
     /** @type {Record<string, boolean>} */
     this._actionBusy = {};
     this._openPicker = "";
-    this._replayStatus = "";
-    this._replayComparison = null;
-    this._trajectoryQuery = "";
-    this._selectedTrajectory = null;
-    this._trajectoryExpandedRunId = "";
-    /** @type {Record<string, string>} */
-    this._selectedRuns = {};
     /** @type {Set<"diagnostics" | "memory">} */
     this._overviewOpenSections = new Set();
-    /** @type {import("./voice-harness-overview.js").HarnessOverviewModel | null} */
-    this._renderedOverviewModel = null;
-    /** @type {Record<string, string>} */
-    this._diagnosticTabs = {};
-    this._draftLocale = this._locale();
-    this._draftTouched = false;
-    /** @type {ScenarioDraft} */
-    this._draft = this._defaultDraft(this._draftLocale);
   }
 
   set hass(value) {
     this._hass = value;
-    const locale = this._locale();
-    if (!this._draftTouched && this._draftLocale !== locale) {
-      this._draftLocale = locale;
-      this._draft = this._defaultDraft(locale);
-    }
     if (this.isConnected && !this._data && !this._busy) {
       this._load();
     }
@@ -1132,6 +1074,13 @@ class VoiceHarnessPanel extends HTMLElement {
     }
     this._render();
     this._load();
+    this._poll = setInterval(() => {
+      if (document.visibilityState !== "hidden") void this._load();
+    }, 5000);
+  }
+
+  disconnectedCallback() {
+    clearInterval(this._poll);
   }
 
   async _load() {
@@ -1145,26 +1094,26 @@ class VoiceHarnessPanel extends HTMLElement {
       const status = /** @type {HarnessStatus} */ (parseHarnessStatus(
         await this._api("GET", "llm_gateway/harness/status"),
       ));
-      this._runDetails = {};
-      await Promise.all(status.entries.map(async (entry) => {
+      const entries = await Promise.all(status.entries.map(async (entry) => {
         const entryId = encodeURIComponent(entry.entry_id);
         const [runtime, runs] = await Promise.all([
           this._api("GET", `llm_gateway/harness/runtime?entry_id=${entryId}`),
           this._api("GET", `llm_gateway/harness/runs?entry_id=${entryId}&limit=30`),
         ]);
-        entry.memory = runtime.memory;
-        entry.feedback = runtime.feedback;
-        entry.deep_tasks = runtime.deep_tasks;
-        entry.voice_runs = runtime.voice_runs;
-        entry.provider_health = runtime.provider_health;
-        entry.traces = {
-          records: Array.isArray(runs.records) ? runs.records : [],
-          storage: runtime.trace_storage || {},
+        return {
+          ...entry,
+          memory: runtime.memory,
+          feedback: runtime.feedback,
+          deep_tasks: runtime.deep_tasks,
+          voice_runs: runtime.voice_runs,
+          provider_health: runtime.provider_health,
+          traces: {
+            records: Array.isArray(runs.records) ? runs.records : [],
+            storage: runtime.trace_storage || {},
+          },
         };
-        const selected = this._selectedRunRecord(entry.entry_id, entry.traces.records);
-        if (this._activeTab === "runs" && selected) await this._loadRunDetail(entry, this._runId(selected));
       }));
-      this._data = status;
+      this._data = { ...status, entries };
       this._updatedAt = new Date().toISOString();
     } catch (err) {
       this._error = err.message || String(err);
@@ -1175,10 +1124,10 @@ class VoiceHarnessPanel extends HTMLElement {
   }
 
   async _loadConfig() {
-    if (!this.hass || this._busy) {
+    if (!this.hass || this._configLoading) {
       return;
     }
-    this._busy = true;
+    this._configLoading = true;
     this._error = "";
     this._render();
     try {
@@ -1186,21 +1135,7 @@ class VoiceHarnessPanel extends HTMLElement {
     } catch (err) {
       this._error = err.message || String(err);
     } finally {
-      this._busy = false;
-      this._render();
-    }
-  }
-
-  async _evaluate(payload) {
-    this._busy = true;
-    this._error = "";
-    this._render();
-    try {
-      this._result = await this._api("POST", "llm_gateway/harness/evaluate", payload);
-    } catch (err) {
-      this._error = err.message || String(err);
-    } finally {
-      this._busy = false;
+      this._configLoading = false;
       this._render();
     }
   }
@@ -1208,7 +1143,6 @@ class VoiceHarnessPanel extends HTMLElement {
   async _replayRun(runId, entryId) {
     this._busy = true;
     this._error = "";
-    this._replayStatus = "";
     this._render();
     try {
       const result = await this._api(
@@ -1218,23 +1152,12 @@ class VoiceHarnessPanel extends HTMLElement {
       );
       const entry = this._data?.entries?.find((item) => item.entry_id === entryId);
       if (entry?.traces?.records && result.record) {
-        const source = entry.traces.records.find(
-          (record) => String(record.run_id || record.id || "") === String(runId),
-        );
-        entry.traces.records = [result.record, ...entry.traces.records];
-        entry.traces.storage = {
-          ...(entry.traces.storage || {}),
-          records: Number(entry.traces.storage?.records || 0) + 1,
-        };
-        if (source) {
-          this._replayComparison = {
-            sourceId: String(runId),
-            forkId: String(result.record.run_id || result.record.id || ""),
-          };
-        }
+        this._data = { ...this._data, entries: this._data.entries.map((item) => item.entry_id !== entryId ? item : {
+          ...item, traces: {...item.traces, records: [result.record, ...item.traces.records]},
+        }) };
       }
-      this._replayStatus = this._t("runs.replay_complete");
-    } catch (err) {
+      return result.record || null;
+      } catch (err) {
       this._error = err.message || String(err);
     } finally {
       this._busy = false;
@@ -1351,31 +1274,8 @@ class VoiceHarnessPanel extends HTMLElement {
       this._selectTab(tab);
       return;
     }
-    if (button.dataset.diagnosticTab && button.dataset.diagnosticKey) {
-      this._diagnosticTabs[button.dataset.diagnosticKey] = button.dataset.diagnosticTab;
-      this._render();
-      return;
-    }
     if (button.dataset.action === "refresh") {
       this._load();
-      return;
-    }
-    if (button.dataset.trajectoryIndex !== undefined) {
-      this._selectedTrajectory = {
-        runId: button.dataset.trajectoryRun || "",
-        index: Number(button.dataset.trajectoryIndex || 0),
-      };
-      this._trajectoryExpandedRunId = button.dataset.trajectoryRun || "";
-      this._render();
-      return;
-    }
-    if (button.dataset.action === "close-trajectory-inspector") {
-      this._selectedTrajectory = null;
-      this._render();
-      return;
-    }
-    if (button.dataset.replayRun) {
-      this._replayRun(button.dataset.replayRun, button.dataset.entryId || "");
       return;
     }
     if (button.dataset.pausePreset) {
@@ -1478,57 +1378,21 @@ class VoiceHarnessPanel extends HTMLElement {
       }
       return;
     }
-    const loadSampleId = button.dataset.loadSample;
-    if (loadSampleId) {
-      const sample = this._data?.sample_scenarios?.find((item) => item.id === loadSampleId);
-      if (sample) {
-        this._draftTouched = true;
-        this._draft = {
-          user: this._sampleUser(sample),
-          response: this._sampleResponse(sample),
-          expected: JSON.stringify(this._sampleExpected(sample), null, 2),
-        };
-        this._render();
-      }
-      return;
-    }
-    const sampleId = button.dataset.sample;
-    if (sampleId) {
-      const sample = this._data?.sample_scenarios?.find((item) => item.id === sampleId);
-      if (sample) {
-        const user = this._sampleUser(sample);
-        const response = this._sampleResponse(sample);
-        const expected = this._sampleExpected(sample);
-        this._draft = {
-          user,
-          response,
-          expected: JSON.stringify(expected, null, 2),
-        };
-        this._activeTab = "test";
-        this._evaluate({
-          user,
-          response,
-          expected,
-        });
-      }
-    }
   }
 
   _selectTab(tab) {
-    if (!this._visibleHarnessViews().some((view) => view.id === tab)) {
-      return;
+    if (!this._visibleHarnessViews().some((view) => view.id === tab) || tab === this._activeTab) return;
+    const change = () => {
+      this._activeTab = tab;
+      this._visitedTabs.add(tab);
+      this._render();
+      if (tab === "settings" && !this._configData) void this._loadConfig();
+    };
+    if (document.startViewTransition && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      document.startViewTransition(change);
+    } else {
+      change();
     }
-    this._activeTab = tab;
-    if (tab === "settings" && !this._configData) {
-      this._loadConfig();
-    }
-    if (tab === "runs") {
-      for (const entry of this._data?.entries || []) {
-        const selected = this._selectedRunRecord(entry.entry_id, entry.traces?.records || []);
-        if (selected) this._loadRunDetail(entry, this._runId(selected)).then(() => this._render());
-      }
-    }
-    this._render();
   }
 
   _onInput(event) {
@@ -1554,25 +1418,18 @@ class VoiceHarnessPanel extends HTMLElement {
       }
       return;
     }
-    if (event.target.dataset.trajectorySearch !== undefined) {
-      const query = String(event.target.value || "").trim().toLocaleLowerCase();
-      this._trajectoryQuery = query;
-      const ledger = event.target.closest(".trajectoryLedger");
-      ledger?.querySelectorAll("[data-trajectory-row]").forEach((row) => {
-        row.hidden = Boolean(query) && !String(row.dataset.searchText || "").includes(query);
-      });
-      return;
-    }
-    const field = event.target.dataset.field;
-    if (!field) {
-      return;
-    }
-    this._draftTouched = true;
-    this._draft = { ...this._draft, [field]: event.target.value };
   }
 
 
   _onKeydown(event) {
+    const path = event.composedPath();
+    if (!event.ctrlKey && !event.metaKey && !event.altKey && ["1", "2", "3", "4"].includes(event.key)
+      && !path.some((node) => node instanceof HTMLElement && (node.matches("input, textarea, select, dialog") || node.isContentEditable))) {
+      event.preventDefault();
+      this._selectTab(["overview", "runs", "test", "settings"][Number(event.key) - 1]);
+      return;
+    }
+
     const target = event.target;
     if (!(target instanceof HTMLElement) || !target.dataset) {
       return;
@@ -1613,24 +1470,7 @@ class VoiceHarnessPanel extends HTMLElement {
   _onSubmit(event) {
     event.preventDefault();
     const form = event.target;
-    if (form.dataset.form === "config") {
-      this._submitConfigForm(form);
-      return;
-    }
-    if (form.dataset.form !== "scenario") {
-      return;
-    }
-    const { valid, expected } = parseScenarioExpected(this._draft.expected);
-    if (!valid) {
-      this._error = this._t("error.invalid_expected_json");
-      this._render();
-      return;
-    }
-    this._evaluate({
-      user: this._draft.user,
-      response: this._draft.response,
-      expected,
-    });
+    if (form.dataset.form === "config") this._submitConfigForm(form);
   }
 
 
@@ -1716,6 +1556,7 @@ class VoiceHarnessPanel extends HTMLElement {
 
   async _saveConfig(payload) {
     this._busy = true;
+    this._savingConfig = true;
     this._error = "";
     this._configSaved = "";
     this._render();
@@ -1747,6 +1588,7 @@ class VoiceHarnessPanel extends HTMLElement {
       return;
     } finally {
       this._busy = false;
+      this._savingConfig = false;
       this._render();
     }
     await this._load();
@@ -2210,128 +2052,105 @@ class VoiceHarnessPanel extends HTMLElement {
   }
 
   _render() {
-    const existingAudioSettings = this.shadowRoot.querySelector("voice-harness-audio-settings");
-    // Keep edits through loading and unrelated actions. Values remain in memory.
-    const formValues = this._discardFormValues ? [] : [.../** @type {NodeListOf<HTMLInputElement>} */ (this.shadowRoot.querySelectorAll(
-      'form[data-form="config"] input, form[data-form="config"] select, form[data-form="config"] textarea, [data-satellite-config], [data-satellite-minutes]',
-    ))].map((input) => ({
-      name: input.name,
-      entryId: input.closest("form")?.dataset.entryId,
-      satellite: input.dataset.satelliteConfig,
-      minutes: input.hasAttribute("data-satellite-minutes"),
-      value: input.value,
-      type: input.type,
-      checked: input.checked,
-    }));
-    this._discardFormValues = false;
     const entries = this._data?.entries || [];
-    this._renderedReplayPair = null;
-    this._renderedReplayLabels = null;
-    this._renderedOverviewModel = null;
-    // Full innerHTML replacement would snap every collapsible card back to
-    // its template default; carry the user's expansion layout across.
-    const openKeys = new Set(
-      [...this.shadowRoot.querySelectorAll("details[data-open-key]")]
-        .filter((card) => card instanceof HTMLDetailsElement && card.open)
-        .map((card) => (card instanceof HTMLDetailsElement ? card.dataset.openKey : "") || ""),
-    );
-    if (this._trajectoryExpandedRunId) {
-      // The trajectory-inspector button flow targets a card that was not
-      // necessarily open pre-render; keep it authoritative.
-      openKeys.add(`record:${this._trajectoryExpandedRunId}`);
+    this._visitedTabs.add(this._activeTab);
+    const satellite = this._data?.satellite || {};
+    const configChanged = this._renderedConfig !== this._configData;
+    const formValues = configChanged && !this._discardFormValues
+      ? [.../** @type {NodeListOf<HTMLInputElement>} */ (this.shadowRoot.querySelectorAll('form[data-form="config"] input, form[data-form="config"] select, form[data-form="config"] textarea'))].map((input) => ({
+        name: input.getAttribute("name"), entryId: input.closest("form").dataset.entryId,
+        value: input.value, checked: input.checked, type: input.type,
+      })) : [];
+    if (configChanged) {
+      this._configHtml = this._configData ? this._renderConfig(entries) : `<div class="loading">${escapeHtml(this._t("status.loading"))}</div>`;
+      this._renderedConfig = this._configData;
     }
-    const views = this._visibleHarnessViews();
-    this.shadowRoot.innerHTML = `
-      <style>${styles}</style>
-      <main class="shell">
-        <header class="topbar">
-          <div>
-            <h1>${escapeHtml(this._t("app.title"))}</h1>
-            <div class="subline">${escapeHtml(this._statusLine(entries))}</div>
-          </div>
-          ${iconButton({
-            data: { action: "refresh" },
-            icon: "mdi:refresh",
-            title: this._t("common.refresh"),
-          })}
-        </header>
-        ${this._error ? `<div class="banner error">${escapeHtml(this._error)}</div>` : ""}
-        <voice-harness-navigation></voice-harness-navigation>
-        <section class="content">
-          ${this._busy && !this._data ? this._renderLoading() : this._renderActive(entries)}
-        </section>
-      </main>
-    `;
-    /** @type {any} */
-    const inspector = this.shadowRoot.querySelector("voice-harness-replay-inspector");
-    if (inspector && this._renderedReplayPair) {
-      inspector.pair = this._renderedReplayPair;
-      inspector.labels = this._renderedReplayLabels;
+    this._discardFormValues = false;
+    renderHarnessShell(this.shadowRoot, {
+      active: this._activeTab,
+      visited: this._visitedTabs,
+      language: this._locale(),
+      title: this._t("app.title"),
+      statusLine: this._statusLine(entries),
+      error: this._error,
+      busy: this._busy,
+      loaded: Boolean(this._data),
+      hass: this.hass,
+      entries,
+      satellite,
+      configuration: this._configData || {},
+      updatedAt: this._updatedAt,
+      navigation: this._visibleHarnessViews().map((view) => ({id: view.id, icon: view.icon, label: this._t(view.labelKey)})),
+      scenarios: (this._data?.sample_scenarios || []).map((sample) => ({
+        id: sample.id, title: this._sampleName(sample), user: this._sampleUser(sample),
+        response: this._sampleResponse(sample), expected: this._sampleExpected(sample),
+      })),
+      openSections: [...this._overviewOpenSections],
+      diagnostics: this._satelliteDiagnosticPanel(satellite.diagnostic_snapshot || {}),
+      memory: this._visitedTabs.has("overview") ? this._renderMemory(entries) : "",
+      config: this._configHtml || "",
+      pipeline: this._visitedTabs.has("settings") ? this._renderSatellite() : "",
+      policies: this._visitedTabs.has("test") ? this._renderPolicies(entries) : "",
+      earcons: this._visitedTabs.has("settings") ? this._renderEarcons() : "",
+      refresh: () => void this._load(),
+      select: (id) => this._selectTab(id),
+      loadDetail: async (entryId, runId) => {
+        const entry = this._data?.entries.find((item) => item.entry_id === entryId);
+        await this._loadRunDetail(entry, runId);
+        const record = this._runDetails[`${entryId}:${runId}`];
+        if (!record) throw new Error(this._error || "Run evidence is unavailable");
+        return record;
+      },
+      replay: async (entryId, runId) => {
+        const result = await this._replayRun(runId, entryId);
+        if (!result) throw new Error(this._error || "Replay failed");
+        return result;
+      },
+      applyTuning: (entryId, config) => this._applyTuning(entryId, config),
+    }, styles);
+    for (const input of this.shadowRoot.querySelectorAll("[data-satellite-config]")) {
+      if (input instanceof HTMLInputElement) input.onchange = () => { void this._satelliteAction("save-config"); };
     }
-    /** @type {import("./voice-harness-overview.js").VoiceHarnessOverview | null} */
-    const overview = this.shadowRoot.querySelector("voice-harness-overview");
-    const audioPlaceholder = this.shadowRoot.querySelector("voice-harness-audio-settings");
-    if (existingAudioSettings && audioPlaceholder) audioPlaceholder.replaceWith(existingAudioSettings);
-    /** @type {import("./voice-harness-audio-settings.js").VoiceHarnessAudioSettings | null} */
-    const audioSettings = this.shadowRoot.querySelector("voice-harness-audio-settings");
-    if (audioSettings) {
-      audioSettings.hass = this.hass;
-      audioSettings.language = this._locale();
+    for (const form of this.shadowRoot.querySelectorAll('form[data-form="config"]')) {
+      if (form instanceof HTMLElement) form.inert = this._savingConfig;
     }
-    this.shadowRoot.querySelectorAll("[data-satellite-config]").forEach((input) => {
-      input.addEventListener("change", () => { void this._satelliteAction("save-config"); });
-    });
-    if (overview && this._renderedOverviewModel) {
-      overview.model = this._renderedOverviewModel;
-      overview.openSections = [...this._overviewOpenSections];
-      overview.addEventListener("harness-overview-navigate", (event) => {
-        if (event instanceof CustomEvent) {
-          this._selectTab(String(event.detail?.destination || ""));
-        }
-      });
-      overview.addEventListener("harness-overview-disclosure-toggle", (event) => {
-        if (!(event instanceof CustomEvent)) return;
-        const id = event.detail?.id;
-        if (id !== "diagnostics" && id !== "memory") return;
-        if (event.detail?.open) this._overviewOpenSections.add(id);
-        else this._overviewOpenSections.delete(id);
-      });
-    }
-    /** @type {import("./voice-harness-navigation.js").VoiceHarnessNavigation | null} */
-    const navigation = this.shadowRoot.querySelector("voice-harness-navigation");
-    if (navigation) {
-      navigation.active = this._activeTab;
-      navigation.items = views.map((view) => ({
-        icon: view.icon,
-        id: view.id,
-        label: this._t(view.labelKey),
-      }));
-      navigation.addEventListener("harness-view-select", (event) => {
-        if (event instanceof CustomEvent) {
-          this._selectTab(String(event.detail?.id || ""));
-        }
-      });
-    }
-    this._wireRunLists(entries);
     for (const saved of formValues) {
-      const input = [.../** @type {NodeListOf<HTMLInputElement>} */ (this.shadowRoot.querySelectorAll("input, select, textarea"))].find((candidate) => (
-        saved.minutes ? candidate.hasAttribute("data-satellite-minutes")
-          : saved.satellite ? candidate.dataset.satelliteConfig === saved.satellite
-            : saved.name && candidate.name === saved.name && candidate.closest("form")?.dataset.entryId === saved.entryId
-              && (!["checkbox", "radio"].includes(saved.type) || candidate.value === saved.value)
+      const input = [.../** @type {NodeListOf<HTMLInputElement>} */ (this.shadowRoot.querySelectorAll('form[data-form="config"] input, form[data-form="config"] select, form[data-form="config"] textarea'))].find((candidate) => (
+        candidate.getAttribute("name") === saved.name && candidate.closest("form").dataset.entryId === saved.entryId
+        && (saved.type !== "checkbox" || candidate.value === saved.value)
       ));
       if (input) {
         input.value = saved.value;
         if (saved.checked !== undefined) input.checked = saved.checked;
-        const pickerKey = input.closest("[data-picker-key]")?.getAttribute("data-picker-key");
-        if (saved.type === "hidden" && pickerKey) this._renderPicker(pickerKey);
+        const key = input.closest("[data-picker-key]")?.getAttribute("data-picker-key");
+        if (saved.type === "hidden" && key) this._renderPicker(key);
       }
     }
-    for (const card of this.shadowRoot.querySelectorAll("details[data-open-key]")) {
-      if (card instanceof HTMLDetailsElement && openKeys.has(card.dataset.openKey || "")) {
-        card.open = true;
+  }
+
+  async _applyTuning(entryId, config) {
+    let gatewaySaved = false;
+    if (config.gateway && Object.keys(config.gateway).length) {
+      const entry = this._configData?.entries?.find((item) => item.entry_id === entryId);
+      await this._saveConfig({entry_id: entryId, revision: entry?.revision || "", options: config.gateway});
+      if (!this._configSaved) throw new Error(this._error || "Gateway settings could not be saved");
+      gatewaySaved = true;
+    }
+    if (config.audio && Object.keys(config.audio).length) {
+      try {
+        const audio = /** @type {import("./voice-harness-audio-settings").VoiceHarnessAudioSettings | null} */ (this.shadowRoot.querySelector("voice-harness-audio-settings"));
+        if (audio) {
+          audio.saver.editPatch(config.audio);
+          await audio.saver.flush();
+        } else {
+          const response = await voiceSettingsRequest(this.hass, "update", {config: config.audio});
+          if (!response.apply?.applied) throw new Error("Audio settings were saved but not applied");
+        }
+      } catch (error) {
+        throw new Error((gatewaySaved ? this._localize({en:"Gateway saved; audio not applied: ", "zh-Hans":"网关配置已保存；音频未应用："}) : "") + String(error.message || error));
       }
     }
+    return this._localize({en:"Tuning saved; included audio settings confirmed by the satellite.", "zh-Hans":"调音配置已保存；如含音频参数，卫星已确认应用。"});
   }
 
   _statusLine(entries) {
@@ -2344,52 +2163,12 @@ class VoiceHarnessPanel extends HTMLElement {
     return `${this._t("status.entries", { count: entries.length })} · ${this._formatTime(this._updatedAt)}`;
   }
 
-  _renderActive(entries) {
-    if (!this._data) {
-      return this._renderLoading();
-    }
-    const views = this._visibleHarnessViews();
-    const active = views.find((view) => view.id === this._activeTab) || views[0];
-    return active ? active.render(this, entries) : this._renderLoading();
-  }
-
   _visibleHarnessViews() {
-    return HARNESS_VIEWS.filter((view) => !view.visible || view.visible(this));
-  }
-
-  _wireRunLists(entries) {
-    for (const list of this.shadowRoot.querySelectorAll("voice-harness-run-list")) {
-      const entryId = list.dataset.entryId || "";
-      const entry = entries.find((item) => item.entry_id === entryId);
-      const records = entry?.traces?.records || [];
-      const selected = this._selectedRunRecord(entryId, records);
-      list.items = records.map((record) => ({
-        id: this._runId(record),
-        latency: `${Number(record.latency_ms || 0)} ms`,
-        route: this._routeLabel(record.route?.kind || record.route || ""),
-        status: runTone(record),
-        subtitle: `${this._formatTime(record.created_at)} · ${String(record.final_speech_text || "")}`,
-        title: String(record.user_text || record.conversation_id || ""),
-      }));
-      list.selected = selected ? this._runId(selected) : "";
-      list.addEventListener("harness-run-select", async (event) => {
-        if (!(event instanceof CustomEvent)) return;
-        const runId = String(event.detail?.id || "");
-        this._selectedRuns[entryId] = runId;
-        await this._loadRunDetail(entry, runId);
-        this._render();
-      });
-    }
+    return HARNESS_VIEWS;
   }
 
   _runId(record) {
     return String(record?.run_id || record?.id || "");
-  }
-
-  _selectedRunRecord(entryId, records) {
-    const selectedId = this._selectedRuns[entryId] || "";
-    const summary = records.find((record) => this._runId(record) === selectedId) || records[0] || null;
-    return this._runDetails[`${entryId}:${this._runId(summary)}`] || summary;
   }
 
   async _loadRunDetail(entry, runId) {
@@ -2407,166 +2186,6 @@ class VoiceHarnessPanel extends HTMLElement {
     } catch (err) {
       this._error = err.message || String(err);
     }
-  }
-
-  _renderLoading() {
-    return `
-      <div class="grid">
-        <div class="surface skeleton"></div>
-        <div class="surface skeleton"></div>
-        <div class="surface skeleton wide"></div>
-      </div>
-    `;
-  }
-
-  _renderOverview(entries) {
-    const satellite = this._data?.satellite || {};
-    const states = satellite.states || {};
-    const services = satellite.services || {};
-    const snapshot = /** @type {Record<string, any>} */ (satellite.diagnostic_snapshot
-      || states.diagnostic_snapshot?.attributes?.snapshot
-      || {});
-    const checks = Array.isArray(snapshot.checks) ? snapshot.checks : [];
-    const summary = harnessOverview(entries, checks);
-    const issueCount = summary.diagnosticIssues + summary.providerIssues + summary.recentErrors;
-    const first = snapshot.first_failing_check
-      || checks.find((check) => check.status === "error" || check.status === "warning")
-      || null;
-    this._renderedOverviewModel = {
-      actions: [
-        { destination: "runs", icon: "mdi:play-circle-outline", label: this._t("overview.open_runs") },
-        { destination: "test", icon: "mdi:flask-outline", label: this._t("overview.open_test") },
-      ],
-      ariaLabel: this._t("overview.health"),
-      diagnosticsLabel: this._t("overview.advanced"),
-      focusHint: issueCount
-        ? (first?.repair_hint || this._t("overview.attention_hint"))
-        : this._t("overview.ready_hint"),
-      focusIcon: issueCount ? "mdi:alert-decagram-outline" : "mdi:check-circle-outline",
-      focusTitle: issueCount
-        ? (first?.id || this._t("overview.attention"))
-        : this._t("overview.ready"),
-      headline: this._t("overview.health"),
-      memoryLabel: this._t("overview.memory"),
-      metrics: [
-        { icon: "mdi:lan-connect", label: this._t("overview.gateway_entries"), value: String(summary.entryCount), tone: summary.entryCount ? "ok" : "bad" },
-        { icon: "mdi:progress-clock", label: this._t("overview.active_runs"), value: String(summary.running), tone: summary.running ? "warning" : "muted" },
-        { icon: "mdi:alert-circle-outline", label: this._t("overview.recent_errors"), value: String(summary.recentErrors), tone: summary.recentErrors ? "bad" : "ok" },
-        { icon: "mdi:stethoscope", label: this._t("overview.issues"), value: String(summary.diagnosticIssues + summary.providerIssues), tone: issueCount ? "warning" : "ok" },
-      ],
-      stateLabel: issueCount ? this._t("overview.attention") : this._t("overview.ready"),
-      stateTone: issueCount ? "warning" : "ok",
-      statusLine: this._statusLine(entries),
-    };
-    return `
-      <voice-harness-overview>
-        <div class="overview-slot" slot="satellite">${this._satelliteOverviewPanel(states, services, snapshot)}</div>
-        <div class="overview-slot" slot="diagnostics">${this._satelliteDiagnosticPanel(snapshot)}</div>
-        <div class="overview-slot" slot="memory">${this._renderMemory(entries)}</div>
-      </voice-harness-overview>
-    `;
-  }
-
-  _renderTest(entries) {
-    return `
-      <div class="testStack">
-        ${this._renderScenarioLab(entries)}
-        <details class="surface overviewDisclosure" data-open-key="test:policies">
-          <summary>${escapeHtml(this._t("test.policies"))}</summary>
-          ${this._renderPolicies(entries)}
-        </details>
-      </div>
-    `;
-  }
-
-  _renderSettings(entries) {
-    return `
-      <div class="settingsStack">
-        ${this._renderConfig(entries)}
-        <details class="surface overviewDisclosure" data-open-key="settings:satellite">
-          <summary>${escapeHtml(this._t("settings.satellite"))}</summary>
-          ${this._renderSatellite()}
-        </details>
-        <details class="surface overviewDisclosure" data-open-key="settings:earcons">
-          <summary>${escapeHtml(this._t("settings.earcons"))}</summary>
-          ${this._renderEarcons()}
-        </details>
-      </div>
-    `;
-  }
-
-  _stat(icon, label, value, tone = "muted") {
-    return `<voice-harness-stat icon="${escapeHtml(icon)}" label="${escapeHtml(label)}" value="${escapeHtml(value)}" tone="${escapeHtml(tone)}"></voice-harness-stat>`;
-  }
-
-  _renderRuns(entries) {
-    if (!entries.length) {
-      return `<div class="empty">${escapeHtml(this._t("runs.empty"))}</div>`;
-    }
-    return `
-      <div class="entryGrid">
-        ${entries.map((entry) => `
-          <article class="surface entry">
-            <div class="sectionHead">
-              <div>
-                <h2>${escapeHtml(entry.title)}</h2>
-                <div class="meta">${escapeHtml(entry.base_url || this._t("entry.base_url_missing"))}</div>
-              </div>
-              <span class="chip ok">${escapeHtml(entry.state || "unknown")}</span>
-            </div>
-            ${this._liveStatusBanner(entry)}
-            ${this._renderTracePanel(entry)}
-            <details class="runtimeConfigDrawer" data-open-key="${entry.entry_id}:runtime_config">
-              <summary>
-                <span>${escapeHtml(this._t("runs.runtime_config"))}</span>
-                <span class="meta">${(entry.routes || []).length} routes</span>
-              </summary>
-              <div class="runtimeConfigContent">
-                <div class="routeGrid">
-                  ${(entry.routes || []).map((route) => this._routeCard(route)).join("")}
-                </div>
-                ${this._providerPanel(entry)}
-              </div>
-            </details>
-          </article>
-        `).join("")}
-      </div>
-    `;
-  }
-
-  _liveStatusBanner(entry) {
-    const event = entry.feedback?.latest_display;
-    if (!event) {
-      const nativeUi = this._data?.satellite?.diagnostic_snapshot?.native_ui || {};
-      const lockScreenEnabled = nativeUi.enabled === true;
-      if (!lockScreenEnabled) {
-        return `<div class="empty mini">${escapeHtml(this._t("runs.no_live_status"))}</div>`;
-      }
-      return `
-        <div class="liveStatus idle">
-          <ha-icon icon="mdi:cellphone-lock"></ha-icon>
-          <div>
-            <strong>${escapeHtml(this._t("runs.lock_screen_ready"))}</strong>
-            <span>${escapeHtml(this._t("runs.lock_screen_idle_hint"))}</span>
-          </div>
-          <span class="chip ok">ready</span>
-        </div>
-      `;
-    }
-    return `
-      <div class="liveStatus ${escapeHtml(event.state || "")}">
-        <div>
-          <strong>${escapeHtml(this._t("runs.live_status"))}: ${escapeHtml(event.title || event.state || "")}</strong>
-          <span>${escapeHtml(event.short_text || "")}</span>
-          <span>${escapeHtml(event.turn_id || "")}</span>
-        </div>
-        <div class="summaryChips">
-          <span class="chip muted">${escapeHtml(event.progress || "none")}</span>
-          <span class="chip muted">${escapeHtml(this._t("runs.privacy"))}: ${escapeHtml(event.privacy_level || "")}</span>
-          ${(event.action_buttons || []).length ? `<span class="chip warning">${escapeHtml(this._t("runs.actions_available"))}: ${escapeHtml((event.action_buttons || []).join(", "))}</span>` : ""}
-        </div>
-      </div>
-    `;
   }
 
   _audioRoutePanel(audioStatus, feedbackPolicy) {
@@ -2689,14 +2308,14 @@ class VoiceHarnessPanel extends HTMLElement {
             <h2>${escapeHtml(this._t("config.title"))}</h2>
             <div class="meta">${escapeHtml(entry.title)} · ${escapeHtml(cfg.base_url || this._t("entry.base_url_missing"))}</div>
           </div>
-          <button class="primary" type="submit" ${this._busy ? "disabled" : ""}>
+          <button class="primary" type="submit">
             <ha-icon icon="mdi:content-save-outline"></ha-icon>
             <span>${escapeHtml(this._t("common.save"))}</span>
           </button>
         </div>
         <p class="settingsNote">${escapeHtml(this._t("config.description"))}</p>
 
-        <details class="configCard" open data-open-key="${entry.entry_id}:core">
+        <details class="configCard" open data-settings-section="routing" data-open-key="${entry.entry_id}:core">
           <summary>${escapeHtml(this._t("config.group_core"))}</summary>
 
           <fieldset>
@@ -2773,7 +2392,7 @@ class VoiceHarnessPanel extends HTMLElement {
           </fieldset>
         </details>
 
-        <details class="configCard" data-open-key="${entry.entry_id}:ha_prompt">
+        <details class="configCard" data-settings-section="routing" data-open-key="${entry.entry_id}:ha_prompt">
           <summary>${escapeHtml(this._t("config.group_ha_prompt"))}</summary>
           <fieldset>
             <legend>${escapeHtml(this._t("config.ha_llm_api"))}</legend>
@@ -2791,7 +2410,7 @@ class VoiceHarnessPanel extends HTMLElement {
           </fieldset>
         </details>
 
-        <details class="configCard" data-open-key="${entry.entry_id}:search_fallbacks">
+        <details class="configCard" data-settings-section="routing" data-open-key="${entry.entry_id}:search_fallbacks">
           <summary>${escapeHtml(this._t("config.group_search_fallbacks"))}</summary>
           <fieldset>
             <legend>${escapeHtml(this._t("config.search"))}</legend>
@@ -2832,8 +2451,8 @@ class VoiceHarnessPanel extends HTMLElement {
           </fieldset>
         </details>
 
-        <details class="configCard" data-open-key="${entry.entry_id}:audio_traces">
-          <summary>${escapeHtml(this._t("config.group_audio_traces"))}</summary>
+        <details class="configCard" data-settings-section="pipeline" data-open-key="${entry.entry_id}:audio_traces" open>
+          <summary>${escapeHtml(this._t("config.first_response_audio"))}</summary>
           <fieldset>
             <legend>${escapeHtml(this._t("config.first_response_audio"))}</legend>
             <label class="checkRow">
@@ -2871,6 +2490,9 @@ class VoiceHarnessPanel extends HTMLElement {
             </div>
             ${this._audioCandidatePanel(audioStatus, entry.entry_id)}
           </fieldset>
+        </details>
+        <details class="configCard" data-settings-section="system" data-open-key="${entry.entry_id}:traces" open>
+          <summary>${escapeHtml(this._t("config.traces"))}</summary>
           <fieldset>
             <legend>${escapeHtml(this._t("config.traces"))}</legend>
             <label class="checkRow">
@@ -2967,7 +2589,6 @@ class VoiceHarnessPanel extends HTMLElement {
               <div class="meta">${escapeHtml(this._t("satellite.description"))}</div>
             </div>
           </div>
-          <voice-harness-audio-settings></voice-harness-audio-settings>
           <details><summary>${escapeHtml(this._t("satellite.config"))}</summary>
             <div class="settingsTriples">
               ${configKeys.slice(0, 4).map(([key, min, max, step]) => this._satelliteConfigInput(key, states[key], min, max, step)).join("")}
@@ -3476,552 +3097,6 @@ class VoiceHarnessPanel extends HTMLElement {
     return satelliteEntityTone(key, state);
   }
 
-  _renderTracePanel(entry) {
-    const trace = entry.trace || {};
-    const records = entry.traces?.records || [];
-    const liveRuns = Array.isArray(entry.voice_runs) ? entry.voice_runs : [];
-    const storage = entry.traces?.storage || {};
-    const hasRecords = records.length > 0;
-    const hasLiveRuns = liveRuns.length > 0;
-    const selectedRecord = this._selectedRunRecord(entry.entry_id, records);
-    return `
-      <section class="tracePanel">
-        <div class="traceHeader">
-          <div>
-            <h2>${escapeHtml(trace.enabled ? this._t("runs.trace_enabled") : this._t("runs.trace_disabled"))}</h2>
-            <div class="meta">${escapeHtml(this._t("runs.retention", {
-              count: trace.max_runs || 0,
-              hours: trace.retention_hours || 0,
-            }))} · ${escapeHtml(trace.include_raw_messages ? this._t("runs.raw_enabled") : this._t("runs.raw_disabled"))}</div>
-          </div>
-          <span class="chip muted">${escapeHtml(this._t("runs.storage", {
-            records: storage.records || 0,
-            bytes: storage.compressed_bytes || 0,
-          }))}</span>
-        </div>
-        ${this._runSummaryPanel(records, liveRuns)}
-        ${this._replayDiffInspector(records.map((record) => this._runDetails[`${entry.entry_id}:${this._runId(record)}`] || record))}
-        ${hasRecords ? `
-          <div class="runInvestigator">
-            <voice-harness-run-list data-entry-id="${escapeHtml(entry.entry_id)}"></voice-harness-run-list>
-            <div class="runDetail">
-              ${this._replayStatus ? `<div class="banner success">${escapeHtml(this._replayStatus)}</div>` : ""}
-              ${selectedRecord ? this._traceCard(selectedRecord, entry.entry_id, true) : ""}
-            </div>
-          </div>
-        ` : this._traceReadinessPanel(trace, storage)}
-        ${hasLiveRuns ? `
-          <h3>${escapeHtml(this._t("runs.live"))}</h3>
-          <div class="traceList">
-            ${liveRuns.map((run) => this._liveRunCard(run)).join("")}
-          </div>
-        ` : (hasRecords ? `<div class="traceIdle">${escapeHtml(this._t("runs.live_idle"))}</div>` : "")}
-      </section>
-    `;
-  }
-
-  _replayDiffInspector(records) {
-    const pair = resolveReplayPair(records, this._replayComparison);
-    if (!pair) return "";
-    const labels = {
-      route: this._t("runs.route"),
-      actions: this._t("runs.proposed_actions"),
-      speech: this._t("runs.final_speech"),
-      events: this._t("runs.trajectory"),
-    };
-    this._renderedReplayPair = pair;
-    this._renderedReplayLabels = labels;
-    return `<voice-harness-replay-inspector></voice-harness-replay-inspector>`;
-  }
-
-  _traceReadinessPanel(trace, storage) {
-    const enabled = Boolean(trace.enabled);
-    return `
-      <article class="traceReadiness ${enabled ? "ok" : "warning"}">
-        <ha-icon icon="${enabled ? "mdi:database-check-outline" : "mdi:database-off-outline"}"></ha-icon>
-        <div>
-          <strong>${escapeHtml(enabled ? this._t("runs.trace_ready") : this._t("runs.trace_disabled"))}</strong>
-          <span>${escapeHtml(enabled ? this._t("runs.trace_waiting_hint") : this._t("runs.trace_disabled_hint"))}</span>
-          <div class="meterRow">
-            <span>${escapeHtml(this._t("runs.retention", {
-              count: trace.max_runs || 0,
-              hours: trace.retention_hours || 0,
-            }))}</span>
-            <span>${escapeHtml(trace.include_raw_messages ? this._t("runs.raw_enabled") : this._t("runs.raw_disabled"))}</span>
-            <span>${escapeHtml(this._t("runs.storage", {
-              records: storage.records || 0,
-              bytes: storage.compressed_bytes || 0,
-            }))}</span>
-          </div>
-        </div>
-        <button class="secondary" data-tab="settings">
-          <ha-icon icon="mdi:tune-variant"></ha-icon>
-          <span>${escapeHtml(this._t("runs.open_settings"))}</span>
-        </button>
-      </article>
-    `;
-  }
-
-  _runSummaryPanel(records, liveRuns) {
-    const summary = runSummary(records, liveRuns);
-    return `
-      <div class="runSummary" aria-label="${escapeHtml(this._t("runs.summary"))}">
-        ${this._stat("mdi:database-clock-outline", this._t("runs.recorded"), summary.recorded)}
-        ${this._stat("mdi:progress-clock", this._t("runs.live_running"), summary.running)}
-        ${this._stat("mdi:alert-circle-outline", this._t("runs.error_count"), summary.errors, summary.errors ? "bad" : "ok")}
-        ${this._stat("mdi:timer-outline", this._t("runs.avg_latency"), summary.avgLatency ? `${summary.avgLatency} ms` : "-")}
-        ${this._stat("mdi:routes", this._t("runs.latest_route"), summary.latestRoute ? this._routeLabel(summary.latestRoute) : "-")}
-      </div>
-    `;
-  }
-
-  _liveRunCard(run) {
-    const timeline = Array.isArray(run.events) ? run.events : [];
-    const duration = Number(run.running_duration_ms || 0);
-    const lastStage = run.last_active_stage || (timeline.length ? this._eventStage(timeline[timeline.length - 1]) : "");
-    const isRunning = run.status === "running";
-    return `
-      <details class="traceCard" data-open-key="live:${run.id}">
-        <summary>
-          <div>
-            <strong>${escapeHtml(this._formatTime(Number(run.created_at || 0) * 1000))}</strong>
-            <span>${escapeHtml(run.conversation_id || run.id || "")}</span>
-            <span>${escapeHtml(run.user_text || "")}</span>
-            <span>${escapeHtml(`${this._t("runs.active_stage")}: ${lastStage || "-"}`)}</span>
-          </div>
-          <span class="chip ${run.status === "error" ? "bad" : (isRunning ? "warning" : "ok")}">${escapeHtml(run.status || "")}</span>
-        </summary>
-        <div class="traceBody">
-          <div class="traceText">
-            <strong>${escapeHtml(this._t("runs.user"))}</strong>
-            <p>${escapeHtml(run.user_text || "")}</p>
-          </div>
-          <div class="meterRow">
-            <span>${escapeHtml(this._routeLabel(run.route))}</span>
-            <span>${escapeHtml(run.provider || "")}</span>
-            <span>${escapeHtml(this._t("runs.active_stage"))}: ${escapeHtml(lastStage || "-")}</span>
-            <span>${escapeHtml(this._t(isRunning ? "runs.running_duration" : "runs.completion"))}: ${duration} ms</span>
-          </div>
-          <div class="attemptList timelineList">
-            ${timeline.map((event) => {
-              const stage = this._eventStage(event);
-              const status = this._eventStatus(event);
-              const attrs = this._eventAttrs(event);
-              return `
-                <div class="attempt ${status === "error" ? "bad" : "ok"}">
-                  <strong>${escapeHtml(stage || "")}</strong>
-                  <span>${Number(event.monotonic_ms ?? event.t_ms ?? 0)} ms</span>
-                  ${Object.keys(attrs).length ? `<span class="meta" title="${escapeHtml(JSON.stringify(attrs))}">${escapeHtml(this._summarizeEventAttrs(attrs))}</span>` : ""}
-                </div>
-              `;
-            }).join("")}
-          </div>
-        </div>
-      </details>
-    `;
-  }
-
-  _traceCard(record, entryId, open = false) {
-    const rawMeta = record.raw_payload_meta || {};
-    const route = record.route || {};
-    const provider = route.provider || {};
-    const attempts = Array.isArray(route.provider_attempts) ? route.provider_attempts : [];
-    const timeline = Array.isArray(record.timeline_spans) && record.timeline_spans.length
-      ? record.timeline_spans
-      : (Array.isArray(record.timeline) ? record.timeline.map((event) => ({
-          stage: this._eventStage(event),
-          start_ms: event.monotonic_ms ?? event.t_ms ?? 0,
-          duration_ms: 0,
-          status: this._eventStatus(event),
-          attrs: this._eventAttrs(event),
-        })) : []);
-    const tools = Array.isArray(record.tools) ? record.tools : [];
-    const errors = Array.isArray(record.errors) ? record.errors : [];
-    const input = record.input || {};
-    const firstResponse = record.first_response_decision || {};
-    const searchGate = record.search_gate || {};
-    const completion = record.completion || {};
-    const speech = record.speech || {};
-    const causalChain = record.causal_chain || {};
-    const loopName = record.loop?.name || record.loop_name || `${route.kind || "auto"}-turn-loop`;
-    return `
-      <details class="traceCard" data-open-key="record:${record.run_id || record.id}" ${open ? "open" : ""}>
-        <summary>
-          <div class="runIdentity">
-            <div class="runEyebrow">
-              <span>${escapeHtml(this._formatTime(record.created_at))}</span>
-              <span>${escapeHtml(record.run_id || record.id || "")}</span>
-            </div>
-            <strong>${escapeHtml(record.user_text || "")}</strong>
-            <span>${escapeHtml(record.final_speech_text || record.assistant_text || record.first_response_text || firstResponse.spoken_hint || "")}</span>
-            <div class="runMeta">
-              <span>${escapeHtml(this._routeLabel(route.kind))}</span>
-              <span>${escapeHtml(loopName)}</span>
-              <span>${Number(record.latency_ms || 0)} ms</span>
-            </div>
-          </div>
-          <div class="summaryChips">
-            ${this._runFlagChips(record)}
-            <span class="chip ${record.status === "error" ? "bad" : "ok"}">${escapeHtml(this._traceStatusLabel(record.status))}</span>
-          </div>
-        </summary>
-        <div class="traceBody">
-          <div class="runCommandBar">
-            <div>
-              <span class="runCommandLabel">${escapeHtml(this._t("runs.loop"))}</span>
-              <strong>${escapeHtml(loopName)}</strong>
-            </div>
-            <button
-              class="primary replayButton"
-              data-replay-run="${escapeHtml(record.run_id || record.id || "")}"
-              data-entry-id="${escapeHtml(entryId || "")}"
-              ${this._busy || record.lineage?.mode === "dry_run" ? "disabled" : ""}
-            >
-              <ha-icon icon="mdi:source-fork"></ha-icon>
-              <span>${escapeHtml(this._t("runs.replay"))}</span>
-            </button>
-          </div>
-          <div class="runFlags compactFlags">
-            ${this._runFlagChips(record)}
-            ${record.verifier_mode && record.verifier_mode !== "disabled" ? `<span class="chip muted">${escapeHtml(this._t("runs.verifier_mode"))}: ${escapeHtml(this._verifierModeLabel(record.verifier_mode))}</span>` : ""}
-          </div>
-          ${this._turnSummaryPanel(record)}
-          <div class="turnOverview">
-            ${this._detailItem(this._t("runs.input"), [
-              input.text || record.user_text || "",
-            ])}
-            ${this._detailItem(this._t("runs.route"), [
-              `${this._routeLabel(route.kind)} · ${route.model || ""}`,
-              provider.name ? `${this._t("runs.provider")}: ${provider.name}` : "",
-            ])}
-            ${this._detailItem(this._t("runs.first_response"), [
-              firstResponse.task_type || "",
-              record.first_response_text || firstResponse.spoken_hint || "",
-              firstResponse.reason || "",
-              firstResponse.spoken_hint || "",
-            ])}
-            ${this._detailItem(this._t("runs.search_gate"), [
-              searchGate.decision || "",
-              searchGate.reason || "",
-              searchGate.searched === true ? "searched=true" : "searched=false",
-            ])}
-            ${this._detailItem(this._t("runs.completion"), [
-              completion.complete === false ? "running" : (completion.status || record.status || ""),
-              completion.last_active_stage ? `${this._t("runs.active_stage")}: ${completion.last_active_stage}` : "",
-              completion.running_duration_ms ? `${this._t("runs.running_duration")}: ${Number(completion.running_duration_ms)} ms` : "",
-            ])}
-            ${Object.keys(record.usage || {}).length ? this._detailItem(
-              this._t("runs.usage"),
-              Object.entries(record.usage).map(
-                ([key, value]) => `${key}: ${Number(value).toLocaleString()}`,
-              ),
-            ) : ""}
-            ${this._detailItem(this._t("runs.final_speech"), [
-              speech.final || record.final_speech_text || record.assistant_text || "",
-              `${Number(record.latency_ms || 0)} ms`,
-            ])}
-          </div>
-          ${this._trajectoryPanel(record, timeline, causalChain)}
-          ${this._diagnosticDrawer(record, {
-            timeline,
-            tools,
-            errors,
-            attempts,
-            firstResponse,
-            route,
-            provider,
-            rawMeta,
-            causalChain,
-          })}
-        </div>
-      </details>
-    `;
-  }
-
-  _runFlagChips(record) {
-    const flags = record.debug_flags || {};
-    return [
-      flags.search ? this._flagChip("S", true, "warning", this._t("runs.search")) : "",
-      flags.deep_route ? this._flagChip("D", true, "warning", this._t("runs.deep_model")) : "",
-      flags.deep_verifier_waited ? this._flagChip("V", true, "bad", this._t("runs.deep_verifier")) : "",
-      flags.high_risk ? this._flagChip("R", true, "bad", this._t("runs.high_risk")) : "",
-      flags.final_modified_by_grounding ? this._flagChip("G", true, "warning", this._t("runs.final_modified")) : "",
-      flags.polluted_evidence_present
-        ? this._flagChip("E", true, flags.polluted_evidence_used ? "bad" : "warning", this._t("runs.polluted_evidence"))
-        : "",
-    ].filter(Boolean).join("");
-  }
-
-  _turnSummaryPanel(record) {
-    const summary = record.turn_summary || {};
-    const routeDecision = record.route_decision || {};
-    if (Object.keys(summary).length === 0 && Object.keys(routeDecision).length === 0) {
-      return "";
-    }
-    const parts = [
-      routeDecision.task_family || summary.task_family || "",
-      routeDecision.task_type || summary.task_type || "",
-      routeDecision.matched_capability || summary.matched_capability || "",
-    ].filter(Boolean);
-    return `
-      <div class="turnSummary">
-        <div class="turnSummaryHead">
-          <strong>${escapeHtml(this._t("runs.turn_summary"))}</strong>
-          ${parts.length ? `<span class="chip muted">${escapeHtml(parts.join(" · "))}</span>` : ""}
-          ${summary.tools?.length ? `<span class="chip muted">${escapeHtml(summary.tools.join(", "))}</span>` : ""}
-        </div>
-        <div class="meterRow">
-          <span>${escapeHtml(this._routeLabel(summary.route || ""))}</span>
-          ${summary.model ? `<span>${escapeHtml(summary.model)}</span>` : ""}
-          ${summary.next_action ? `<span>${escapeHtml(summary.next_action)}</span>` : ""}
-          <span>${Number(summary.latency_ms || record.latency_ms || 0)} ms</span>
-        </div>
-      </div>
-    `;
-  }
-  _diagnosticDrawer(record, {
-    timeline,
-    tools,
-    errors,
-    attempts,
-    firstResponse,
-    route,
-    provider,
-    rawMeta,
-    causalChain,
-  }) {
-    const key = `drawer:${this._rid(record)}:diagnostics`;
-    const ctx = {
-      timeline,
-      tools,
-      errors,
-      attempts,
-      firstResponse,
-      route,
-      provider,
-      rawMeta,
-      causalChain,
-    };
-    const tabs = DIAGNOSTIC_TABS
-      .map((entry) => ({
-        id: entry.id,
-        label: this._t(entry.labelKey),
-        html: entry.render(this, record, ctx),
-      }))
-      .filter((tab) => tab.html.trim().length > 0);
-    const active = tabs.some((tab) => tab.id === this._diagnosticTabs[key])
-      ? this._diagnosticTabs[key]
-      : (tabs[0]?.id || "");
-    const activeTab = tabs.find((tab) => tab.id === active) || tabs[0] || null;
-    return `
-      <details class="diagnosticDrawer" data-open-key="${escapeHtml(key)}">
-        <summary>
-          <span>${escapeHtml(this._t("runs.inspect_evidence"))}</span>
-          <span class="meta">${escapeHtml(this._t("runs.tools", { count: tools.length }))} · ${errors.length} ${escapeHtml(this._t("runs.errors").toLowerCase())}${record.schema_version !== undefined ? ` · schema ${record.schema_version}` : ""}</span>
-        </summary>
-        <div class="diagnosticContent">
-          ${tabs.length ? `
-            <div class="diagnosticTabs" role="tablist" aria-label="${escapeHtml(this._t("runs.inspect_evidence"))}">
-              ${tabs.map((tab) => `
-                <button
-                  type="button"
-                  class="diagnosticTab ${tab.id === active ? "active" : ""}"
-                  data-diagnostic-tab="${escapeHtml(tab.id)}"
-                  data-diagnostic-key="${escapeHtml(key)}"
-                  role="tab"
-                  aria-selected="${tab.id === active ? "true" : "false"}"
-                >${escapeHtml(tab.label)}</button>
-              `).join("")}
-            </div>
-          ` : ""}
-          <div class="diagnosticTabBody" role="tabpanel">
-            ${activeTab ? activeTab.html : `<div class="empty">${escapeHtml(this._t("runs.no_evidence"))}</div>`}
-          </div>
-        </div>
-      </details>
-    `;
-  }
-
-  _diagnosticOverviewTab(record, { firstResponse, route, provider, rawMeta, causalChain }) {
-    const parts = [
-      this._causalChainPanel(causalChain),
-      this._firstResponsePanel(firstResponse, record.first_response_audio || {}, this._rid(record)),
-      this._searchPathPanel(record),
-      this._inventoryPanel(record),
-    ];
-    const text = `
-      <div class="traceText">
-        <strong>${escapeHtml(this._t("runs.user"))}</strong>
-        <p>${escapeHtml(record.user_text || "")}</p>
-        <strong>${escapeHtml(this._t("runs.assistant"))}</strong>
-        <p>${escapeHtml(record.assistant_text || "")}</p>
-      </div>
-      <div class="meterRow">
-        <span>${escapeHtml(this._routeLabel(route.kind))}</span>
-        <span>${escapeHtml(route.model || "")}</span>
-        ${provider.name ? `<span>${escapeHtml(this._t("runs.provider"))}: ${escapeHtml(provider.name)}${provider.fallback_used ? " ↳" : ""}</span>` : ""}
-        <span>${Number(record.latency_ms || 0)} ms</span>
-        <span>${escapeHtml(this._t("runs.tools", { count: (record.tools || []).length }))}</span>
-        ${rawMeta.compressed_bytes ? `<span>${rawMeta.compressed_bytes}/${rawMeta.uncompressed_bytes} B</span>` : ""}
-      </div>
-    `;
-    return [...parts, text].join("");
-  }
-
-  _causalChainPanel(causalChain) {
-    if (!causalChain || Object.keys(causalChain).length === 0) {
-      return "";
-    }
-    return `
-      <div class="detailGrid">
-        ${this._detailItem(this._t("runs.causal_chain"), [
-          causalChain.applicable === false
-            ? this._t("runs.not_applicable")
-            : (causalChain.complete ? "complete" : "incomplete"),
-          causalChain.applicable === false
-            ? ""
-            : (causalChain.ordered ? "ordered" : "not ordered"),
-          (causalChain.missing_event_types || []).join(", "),
-          causalChain.barge_in_stop_latency_ms === null || causalChain.barge_in_stop_latency_ms === undefined
-            ? ""
-            : `${Number(causalChain.barge_in_stop_latency_ms)} ms`,
-        ])}
-      </div>
-    `;
-  }
-
-  _diagnosticEvidenceTab(record) {
-    return [
-      this._groundingPanel(record),
-      this._evidencePanel(record),
-    ].join("");
-  }
-
-  _diagnosticAudioTab(record) {
-    return [
-      this._audioGraphPanel(record),
-      this._earconEventsPanel(record),
-      this._displayStatusPanel(record),
-    ].join("");
-  }
-  _diagnosticToolsTab({ record, tools, errors, attempts }) {
-    const parts = [
-      this._toolIterationsPanel(record),
-      this._duplicateSuppressionsPanel(record),
-      this._criticalPathPanel(record),
-      this._actionsPanel(record),
-      this._toolEventsPanel(tools, this._rid(record)),
-      this._errorsPanel(errors),
-    ];
-    if (attempts.length) {
-      parts.push(`
-        <h3>${escapeHtml(this._t("runs.provider_attempts"))}</h3>
-        <div class="attemptList">
-          ${attempts.map((attempt) => `
-            <div class="attempt ${attempt.status === "complete" ? "ok" : "bad"}">
-              <strong>${escapeHtml(attempt.provider || "")}</strong>
-              <span>${escapeHtml(attempt.model || "")}</span>
-              <span>${escapeHtml(attempt.status || "")} · ${Number(attempt.latency_ms || 0)} ms</span>
-              ${attempt.error ? `<span>${escapeHtml(attempt.error)}</span>` : ""}
-            </div>
-          `).join("")}
-        </div>
-      `);
-    }
-    return parts.join("");
-  }
-
-  _diagnosticTimelineTab(timeline) {
-    if (!timeline.length) {
-      return "";
-    }
-    return `
-      <h3>${escapeHtml(this._t("runs.timeline"))}</h3>
-      <div class="attemptList timelineList">
-        ${timeline.map((event) => `
-          <details class="attempt timelineEvent ${event.status === "error" ? "bad" : "ok"}">
-            <summary>
-              <strong>${escapeHtml(event.stage || "")}</strong>
-              <span>${Number(event.start_ms ?? event.t_ms ?? 0)} ms</span>
-              <span>${Number(event.duration_ms || 0)} ms</span>
-              ${event.attrs ? `<span class="meta">${escapeHtml(this._summarizeEventAttrs(event.attrs))}</span>` : ""}
-            </summary>
-            <pre>${escapeHtml(JSON.stringify(event.attrs || {}, null, 2))}</pre>
-          </details>
-        `).join("")}
-      </div>
-    `;
-  }
-
-  _diagnosticRawTab(record) {
-    const raw = record.raw_payload
-      ? this._jsonDetails(this._t("runs.raw_payload"), record.raw_payload, `record:${this._rid(record)}:raw_payload`)
-      : "";
-    const generic = this._genericDiagnosticPanels(record);
-    return [raw, generic].join("");
-  }
-
-  _genericDiagnosticPanels(record) {
-    const rid = this._rid(record);
-    const known = new Set([
-      "id", "run_id", "created_at", "conversation_id", "user_text", "assistant_text",
-      "final_speech_text", "latency_ms", "status", "schema_version", "route",
-      "route_decision", "turn_summary", "tools", "errors", "timeline",
-      "timeline_spans", "event_stream", "input", "first_response",
-      "first_response_audio", "search_gate", "search_debug",
-      "weather_context_path", "search_path", "audio_graph",
-      "earcon_diagnostics", "aec_diagnostics", "critical_path",
-      "critical_path_flags", "duplicate_tool_suppressions",
-      "tool_calls_by_iteration", "actions", "earcons", "display_status",
-      "grounding", "raw_payload_meta", "raw_payload", "causal_chain",
-      "usage", "completion", "speech", "verifier_mode", "loop",
-      "debug_flags", "lineage", "provider_attempts", "storage",
-      "proposed_actions", "first_response_decision", "first_response_text",
-      "diagnostic_snapshot",
-    ]);
-    const panels = [];
-    for (const [key, value] of Object.entries(record || {})) {
-      if (known.has(key)) {
-        continue;
-      }
-      if (value === null || value === undefined || value === "" || value === false || value === 0) {
-        continue;
-      }
-      if (typeof value !== "object") {
-        continue;
-      }
-      const display = Array.isArray(value) ? value : Object.keys(value);
-      if (!display.length) {
-        continue;
-      }
-      panels.push(`
-        <div class="debugSection">
-          <h3>${escapeHtml(key)}</h3>
-          <div class="detailGrid">
-            ${this._detailItem(key, [
-              Array.isArray(value)
-                ? `${value.length} items`
-                : Object.keys(value).slice(0, 5).join(", "),
-            ])}
-          </div>
-          ${this._jsonDetails(key, value, `record:${rid}:${key}`)}
-        </div>
-      `);
-    }
-    return panels.join("");
-  }
-
-  /**
-   * @param {string} label
-   * @param {boolean} enabled
-   * @param {"ok" | "warning" | "bad" | "error" | "muted"} [tone]
-   * @param {string} [title]
-   */
-  _flagChip(label, enabled, tone = "muted", title = "") {
-    const state = enabled ? this._t("common.enabled") : this._t("common.disabled");
-    return chip(`${label}: ${state}`, tone, title || label);
-  }
-
   _detailItem(label, lines) {
     const visible = (Array.isArray(lines) ? lines : []).filter((line) => String(line || "").trim());
     return `
@@ -4032,724 +3107,12 @@ class VoiceHarnessPanel extends HTMLElement {
     `;
   }
 
-  _eventStage(event) {
-    const eventType = String(event?.event_type || event?.stage || "");
-    if (eventType === "playback.interrupt.requested") {
-      return "barge_in_requested";
-    }
-    if (eventType === "gateway.result.late_dropped") {
-      return "stale_result_discarded";
-    }
-    if (eventType === "gateway.turn.superseded") {
-      return "turn_cancelled";
-    }
-    if (eventType.startsWith("gateway.")) {
-      return eventType.slice("gateway.".length).replaceAll(".", "_");
-    }
-    return eventType;
-  }
-
-  _eventAttrs(event) {
-    const payload = event?.payload;
-    if (payload === null || payload === undefined || typeof payload !== "object") {
-      return {};
-    }
-    const attrs = {};
-    for (const [key, value] of Object.entries(payload)) {
-      if (key !== "status") {
-        attrs[key] = value;
-      }
-    }
-    return attrs;
-  }
-
-  _eventStatus(event) {
-    const payload = event?.payload;
-    return (payload && typeof payload === "object" && payload.status) || event?.status || "ok";
-  }
-
-  _summarizeEventAttrs(attrs) {
-    if (attrs === null || attrs === undefined || typeof attrs !== "object") {
-      return "";
-    }
-    const preferred = [
-      "name", "source", "task_type", "task_family", "route", "status",
-      "reason", "iteration", "llm_used", "tools_used", "tool_name",
-      "display_state", "earcon_name", "effective_text",
-    ];
-    const picked = [];
-    for (const key of preferred) {
-      const value = attrs[key];
-      if (value === undefined || value === null || value === "") {
-        continue;
-      }
-      const text = typeof value === "object" ? JSON.stringify(value) : String(value);
-      picked.push(`${key}=${text}`);
-      if (picked.length >= 3) {
-        break;
-      }
-    }
-    if (picked.length === 0) {
-      const entries = Object.entries(attrs).slice(0, 3);
-      for (const [key, value] of entries) {
-        if (value === undefined || value === null || value === "") {
-          continue;
-        }
-        const text = typeof value === "object" ? JSON.stringify(value) : String(value);
-        picked.push(`${key}=${text}`);
-      }
-    }
-    return picked.join(" · ");
-  }
-
-  _trajectoryPanel(record, timeline, causalChain) {
-    const stream = Array.isArray(record.event_stream) ? record.event_stream : [];
-    const streamTimes = stream.map((event) => {
-      if (event.monotonic_ms !== null && event.monotonic_ms !== undefined && Number.isFinite(Number(event.monotonic_ms))) {
-        return Number(event.monotonic_ms);
-      }
-      const parsed = Date.parse(event.occurred_at || "");
-      return Number.isFinite(parsed) ? parsed : null;
-    }).filter((value) => value !== null);
-    const streamOrigin = streamTimes.length ? Math.min(...streamTimes) : 0;
-    const events = stream.length
-      ? stream.map((event) => {
-          const monotonic = event.monotonic_ms !== null && event.monotonic_ms !== undefined
-            ? Number(event.monotonic_ms)
-            : Number.NaN;
-          const occurredAt = Date.parse(event.occurred_at || "");
-          const absolute = Number.isFinite(monotonic) ? monotonic : occurredAt;
-          const derivedStart = Number.isFinite(absolute) ? Math.max(0, absolute - streamOrigin) : 0;
-          return {
-            label: event.type || event.event_type || event.name || "event",
-            source: event.source || event.component || "runtime",
-            start: Number(event.offset_ms ?? event.t_ms ?? derivedStart),
-            duration: Number(event.duration_ms || 0),
-            status: event.status || "ok",
-            payload: event.payload || event.attrs || {},
-          };
-        })
-      : timeline.map((event) => ({
-          label: event.stage || this._eventStage(event) || "event",
-          source: event.attrs?.source || event.attrs?.name || this._eventAttrs(event).source || "gateway",
-          start: Number(event.start_ms ?? event.monotonic_ms ?? event.t_ms ?? 0),
-          duration: Number(event.duration_ms || 0),
-          status: event.status || this._eventStatus(event),
-          payload: event.attrs || this._eventAttrs(event),
-        }));
-    if (!events.length) return "";
-    const runId = String(record.run_id || record.id || "");
-    const selectedIndex = this._selectedTrajectory?.runId === runId ? this._selectedTrajectory.index : -1;
-    const classify = (event) => {
-      const key = `${event.source}/${event.label}`.toLowerCase();
-      if (/tool|service|search|entity|weather/.test(key)) return "tool";
-      if (/tts|audio|playback|speech|earcon/.test(key)) return "output";
-      if (/gateway|route|model|reason|loop|prompt|llm/.test(key)) return "model";
-      return "input";
-    };
-    const summarize = (event) => {
-      const payload = event.payload || {};
-      const keys = ["text", "transcript", "route", "decision", "reason", "service", "entity_id", "trigger", "name"];
-      return keys.filter((key) => payload[key] !== undefined && payload[key] !== null && payload[key] !== "")
-        .slice(0, 2)
-        .map((key) => `${key}=${typeof payload[key] === "object" ? JSON.stringify(payload[key]) : payload[key]}`)
-        .join(" · ") || event.source;
-    };
-    events.forEach((event) => {
-      event.kind = classify(event);
-      event.content = summarize(event);
-    });
-    const end = Math.max(1, ...events.map((event) => event.start + Math.max(event.duration, 1)));
-    const chainTone = causalChain.applicable === false
-      ? "muted"
-      : (causalChain.complete && causalChain.ordered ? "ok" : "warning");
-    const selected = events[selectedIndex] || null;
-    const lanes = [["input", "Input"], ["model", "Gateway"], ["tool", "Tools"], ["output", "Output"]];
-    return `
-      <section class="trajectoryLedger">
-        <div class="trajectoryToolbar">
-          <strong>${escapeHtml(this._t("runs.trajectory"))}</strong>
-          <label class="trajectorySearch"><ha-icon icon="mdi:magnify"></ha-icon><input data-trajectory-search value="${escapeHtml(this._trajectoryQuery)}" placeholder="${escapeHtml(this._t("runs.trajectory_search"))}" aria-label="${escapeHtml(this._t("runs.trajectory_search"))}"></label>
-          <span class="chip ${chainTone}">${escapeHtml(causalChain.applicable === false ? "causal chain not applicable" : (causalChain.complete ? "causal chain complete" : "causal chain incomplete"))}</span>
-        </div>
-        <div class="trajectoryOverview" aria-label="${escapeHtml(this._t("runs.trajectory_hint"))}">
-          ${lanes.map(([kind, label]) => `<span class="trajectoryLaneLabel">${label}</span><div class="trajectoryLane">${events.map((event, index) => event.kind === kind ? `<i class="${kind} ${event.status === "error" ? "bad" : ""} ${index === selectedIndex ? "selected" : ""}" style="left:${Math.min(99, Math.max(0, (event.start / end) * 100)).toFixed(2)}%;width:${Math.max(0.6, Math.min(100, (Math.max(event.duration, end * 0.006) / end) * 100)).toFixed(2)}%"></i>` : "").join("")}</div>`).join("")}
-          <span class="trajectoryOverviewStart">0 ms</span><span class="trajectoryOverviewEnd">${Math.round(end)} ms</span>
-        </div>
-        <div class="trajectorySplit ${selected ? "withInspector" : ""}">
-          <div class="trajectoryTable">
-            <div class="trajectoryTableHead"><span>${escapeHtml(this._t("runs.trajectory_event"))}</span><span>${escapeHtml(this._t("runs.trajectory_content"))}</span><span>Time</span></div>
-            <div class="trajectoryRows">${events.map((event, index) => {
-              const searchText = `${event.label} ${event.source} ${event.content}`.toLocaleLowerCase();
-              return `<button class="trajectoryRow ${event.status === "error" ? "bad" : ""} ${index === selectedIndex ? "selected" : ""}" data-trajectory-row data-trajectory-run="${escapeHtml(runId)}" data-trajectory-index="${index}" data-search-text="${escapeHtml(searchText)}" ${this._trajectoryQuery && !searchText.includes(this._trajectoryQuery) ? "hidden" : ""}><span class="trajectoryEvent"><span class="trajectoryIndex">${String(index + 1).padStart(2, "0")}</span><span class="trajectoryKind ${event.kind}">${escapeHtml(event.kind)}</span><strong>${escapeHtml(event.label)}</strong></span><span class="trajectoryContent">${escapeHtml(event.content)}</span><span class="trajectoryTime">${event.start} ms${event.duration ? ` · ${event.duration} ms` : ""}</span></button>`;
-            }).join("")}</div>
-          </div>
-          ${selected ? `<aside class="trajectoryInspector"><header><div><span class="trajectoryKind ${selected.kind}">${escapeHtml(selected.kind)}</span><strong>${escapeHtml(selected.label)}</strong></div><button class="iconButton" data-action="close-trajectory-inspector" aria-label="Close"><ha-icon icon="mdi:close"></ha-icon></button></header><div class="trajectoryInspectorBody"><span class="trajectoryInspectorLabel">${escapeHtml(this._t("runs.trajectory_inspector"))}</span><dl><div><dt>Status</dt><dd>${escapeHtml(selected.status)}</dd></div><div><dt>${escapeHtml(this._t("runs.trajectory_started"))}</dt><dd>${selected.start} ms</dd></div><div><dt>${escapeHtml(this._t("runs.trajectory_duration"))}</dt><dd>${selected.duration} ms</dd></div><div><dt>${escapeHtml(this._t("runs.trajectory_source"))}</dt><dd>${escapeHtml(selected.source)}</dd></div></dl><pre>${escapeHtml(JSON.stringify(selected.payload || {}, null, 2))}</pre></div></aside>` : ""}
-        </div>
-      </section>
-    `;
-  }
-
-  _firstResponsePanel(decision, audio = {}, rid = "") {
-    const keys = [...Object.keys(decision || {}), ...Object.keys(audio || {})];
-    if (!keys.length) {
-      return "";
-    }
-    const deadline = Number(decision.deadline_ms || 0);
-    const triggered = Number(decision.triggered_ms || decision.actual_ms || 0);
-    const inTarget = deadline > 0 && triggered > 0 ? triggered <= deadline : null;
-    return `
-      <div class="debugSection">
-        <h3>${escapeHtml(this._t("runs.first_response_detail"))}</h3>
-        <div class="detailGrid">
-          ${this._detailItem(this._t("runs.first_response"), [
-            decision.task_type || "",
-            decision.cue || "",
-            decision.spoken_hint || decision.text || decision.earcon || "",
-          ])}
-          ${this._detailItem(this._t("runs.timing"), [
-            deadline ? `${deadline} ms deadline` : "",
-            triggered ? `${triggered} ms actual` : "",
-            inTarget === null ? "" : this._t(inTarget ? "runs.within_target" : "runs.missed_target"),
-          ])}
-          ${this._detailItem(this._t("runs.reason"), [
-            decision.reason || "",
-            decision.selection_reason || "",
-          ])}
-          ${this._detailItem(this._t("runs.first_response_audio"), [
-            audio.scheduled ? "scheduled" : "not scheduled",
-            audio.played ? `played · ${Number(audio.played_at_ms || 0)} ms`
-              : audio.dispatched ? "dispatched · playback unconfirmed" : "playback unconfirmed",
-            audio.source || "",
-            audio.backend || "",
-            audio.tts_entity ? `tts=${audio.tts_entity}` : "",
-            audio.media_player_entity ? `media=${audio.media_player_entity}` : "",
-            audio.selection_reason || "",
-            audio.suppressed_reason || "",
-          ])}
-        </div>
-        ${this._jsonDetails(this._t("runs.first_response_detail"), decision, `record:${rid}:first_response_detail`)}
-        ${this._jsonDetails(this._t("runs.first_response_audio"), audio, `record:${rid}:first_response_audio`)}
-      </div>
-    `;
-  }
-
-  _audioGraphPanel(record) {
-    const graph = record.audio_graph || {};
-    const earcon = record.earcon_diagnostics || {};
-    const aec = record.aec_diagnostics || {};
-    const flags = record.critical_path_flags || {};
-    if (!Object.keys(graph).length && !Object.keys(earcon).length && !Object.keys(aec).length) {
-      return "";
-    }
-    const mode = String(earcon.full_duplex_mode || "");
-    const tone = mode === "full" ? "ok" : (mode === "degraded" ? "warning" : "muted");
-    return `
-      <div class="debugSection">
-        <h3>${escapeHtml(this._t("runs.audio_graph"))}</h3>
-        <div class="runFlags">
-          ${mode ? `<span class="chip ${tone}">${escapeHtml(this._t("runs.full_duplex"))}: ${escapeHtml(mode === "degraded" ? this._t("runs.degraded") : mode)}</span>` : ""}
-          <span class="chip ${graph.aec_enabled ? "ok" : "muted"}">AEC: ${escapeHtml(graph.aec_enabled ? this._t("common.enabled") : this._t("common.disabled"))}</span>
-          <span class="chip ${graph.aec_reference_active ? "ok" : "warning"}">reference: ${escapeHtml(graph.aec_reference_active ? "active" : "inactive")}</span>
-          <span class="chip ${flags.feedback_blocking_critical_path ? "bad" : "ok"}">feedback blocking: ${escapeHtml(String(Boolean(flags.feedback_blocking_critical_path)))}</span>
-        </div>
-        <div class="detailGrid">
-          ${this._detailItem("Input sources", [
-            graph.raw_mic_source ? `raw=${graph.raw_mic_source}` : "",
-            graph.aec_mic_source ? `aec=${graph.aec_mic_source}` : "",
-            graph.vad_source ? `vad=${graph.vad_source}` : "",
-            graph.endpoint_source ? `endpoint=${graph.endpoint_source}` : "",
-            graph.asr_source ? `asr=${graph.asr_source}` : "",
-            graph.wake_word_source ? `wake=${graph.wake_word_source}` : "",
-          ])}
-          ${this._detailItem("Playback / reference", [
-            graph.playback_sink ? `sink=${graph.playback_sink}` : "",
-            graph.render_reference_source ? `reference=${graph.render_reference_source}` : "",
-            `earcon_ref=${Boolean(graph.earcon_in_aec_reference)}`,
-            `tts_ref=${Boolean(graph.tts_in_aec_reference)}`,
-          ])}
-          ${this._detailItem(this._t("runs.earcon_diagnostics"), [
-            earcon.earcon_name || "",
-            earcon.can_play_while_listening === undefined ? "" : `can_play_while_listening=${Boolean(earcon.can_play_while_listening)}`,
-            earcon.mic_open_during_earcon === undefined || earcon.mic_open_during_earcon === null ? "mic_open=unknown" : `mic_open=${Boolean(earcon.mic_open_during_earcon)}`,
-            earcon.ignore_window_ms === undefined ? "" : `ignore_window=${Number(earcon.ignore_window_ms || 0)} ms`,
-            earcon.false_vad_during_earcon === undefined || earcon.false_vad_during_earcon === null ? "false_vad=unknown" : `false_vad=${Boolean(earcon.false_vad_during_earcon)}`,
-            earcon.degraded_reason || "",
-          ])}
-          ${this._detailItem(this._t("runs.aec_diagnostics"), [
-            aec.echo_suppression_db === undefined || aec.echo_suppression_db === null ? "echo_suppression=unknown" : `echo_suppression=${aec.echo_suppression_db} dB`,
-            aec.raw_echo_rms === undefined || aec.raw_echo_rms === null ? "" : `raw_rms=${aec.raw_echo_rms}`,
-            aec.aec_echo_rms === undefined || aec.aec_echo_rms === null ? "" : `aec_rms=${aec.aec_echo_rms}`,
-            aec.residual_echo_likelihood ? `residual=${aec.residual_echo_likelihood}` : "",
-          ])}
-        </div>
-        ${this._jsonDetails(this._t("runs.audio_graph"), graph, `record:${this._rid(record)}:audio_graph`)}
-        ${this._jsonDetails(this._t("runs.earcon_diagnostics"), earcon, `record:${this._rid(record)}:earcon_diagnostics`)}
-        ${this._jsonDetails(this._t("runs.aec_diagnostics"), aec, `record:${this._rid(record)}:aec_diagnostics`)}
-      </div>
-    `;
-  }
-
-  _inventoryPanel(record) {
-    const attrs = this._inventoryAttrs(record);
-    if (!attrs) {
-      return "";
-    }
-    const areas = Array.isArray(attrs.areas) ? attrs.areas : [];
-    const domains = Array.isArray(attrs.domains) ? attrs.domains : [];
-    const entities = Array.isArray(attrs.entities) ? attrs.entities : [];
-    const tools = Array.isArray(attrs.tools_used) ? attrs.tools_used : [];
-    return `
-      <div class="debugSection">
-        <h3>${escapeHtml(this._t("runs.inventory"))}</h3>
-        <div class="detailGrid">
-          ${this._detailItem(this._t("runs.route"), [
-            attrs.task_type || "",
-            attrs.source || "",
-          ])}
-          ${this._detailItem(this._t("runs.inventory_scope"), [
-            attrs.area ? `area=${attrs.area}` : "",
-            attrs.domain ? `domain=${attrs.domain}` : "",
-            attrs.capability ? `capability=${attrs.capability}` : "",
-            `entities=${Number(attrs.entity_count || entities.length || 0)}`,
-          ])}
-          ${this._detailItem(this._t("runs.inventory_execution"), [
-            `llm_used=${Boolean(attrs.llm_used)}`,
-            `tools_used=${tools.length ? tools.join(", ") : "[]"}`,
-          ])}
-          ${this._detailItem("Areas / domains", [
-            areas.length ? areas.join(", ") : "",
-            domains.length ? domains.join(", ") : "",
-          ])}
-        </div>
-        ${entities.length ? `
-          <details class="jsonDetails" data-open-key="record:${record.run_id || record.id}:inventory_entities">
-            <summary>${escapeHtml(this._t("runs.inventory_entities"))}</summary>
-            <div class="attemptList compact">
-              ${entities.map((entity) => `
-                <div class="attempt compactAttempt">
-                  <strong>${escapeHtml(entity.name || "")}</strong>
-                  <span>${escapeHtml(entity.domain || "")}</span>
-                  <span>${escapeHtml(Array.isArray(entity.areas) ? entity.areas.join(", ") : "")}</span>
-                  <span>${escapeHtml(entity.can_control ? "control" : "read")}</span>
-                </div>
-              `).join("")}
-            </div>
-          </details>
-        ` : ""}
-        ${this._jsonDetails(this._t("runs.inventory"), attrs, `record:${this._rid(record)}:inventory`)}
-      </div>
-    `;
-  }
-
-  _inventoryAttrs(record) {
-    const rawTimeline = Array.isArray(record.timeline) ? record.timeline : [];
-    const rawEvent = rawTimeline.find((event) => this._eventStage(event) === "local_inventory_render");
-    if (rawEvent) {
-      const attrs = this._eventAttrs(rawEvent);
-      if (Object.keys(attrs).length) {
-        return attrs;
-      }
-    }
-    const spans = Array.isArray(record.timeline_spans) ? record.timeline_spans : [];
-    const span = spans.find((event) => event?.stage === "local_inventory_render");
-    return span?.attrs && typeof span.attrs === "object" ? span.attrs : null;
-  }
-
-  _toolIterationsPanel(record) {
-    const iterations = Array.isArray(record.tool_calls_by_iteration)
-      ? record.tool_calls_by_iteration
-      : [];
-    if (!iterations.length) {
-      return "";
-    }
-    return `
-      <div class="debugSection">
-        <h3>${escapeHtml(this._t("runs.tool_iterations"))}</h3>
-        <div class="attemptList">
-          ${iterations.map((item) => {
-            const calls = Array.isArray(item.calls) ? item.calls : [];
-            const results = Array.isArray(item.results) ? item.results : [];
-            const suppressions = Array.isArray(item.suppressions) ? item.suppressions : [];
-            const tone = suppressions.length ? "warning" : "ok";
-            return `
-              <div class="attempt ${tone}">
-                <strong>#${Number(item.iteration || 0)}</strong>
-                <span>${escapeHtml(calls.join(", ") || "-")}</span>
-                <span>${escapeHtml(results.map((result) => `${result.name}:${result.status || "ok"}`).join(", ") || "-")}</span>
-                <span>${escapeHtml(suppressions.map((entry) => `${entry.name}:${entry.reason}`).join(", ") || item.forced_final_reason || "")}</span>
-              </div>
-            `;
-          }).join("")}
-        </div>
-        ${this._jsonDetails(this._t("runs.tool_iterations"), iterations, `record:${this._rid(record)}:tool_iterations`)}
-      </div>
-    `;
-  }
-
-  _duplicateSuppressionsPanel(record) {
-    const suppressions = Array.isArray(record.duplicate_tool_suppressions)
-      ? record.duplicate_tool_suppressions
-      : [];
-    if (!suppressions.length) {
-      return "";
-    }
-    return `
-      <div class="debugSection">
-        <h3>${escapeHtml(this._t("runs.duplicate_suppressions"))}</h3>
-        <div class="attemptList">
-          ${suppressions.map((item) => `
-            <div class="attempt warning">
-              <strong>${escapeHtml(item.name || "")}</strong>
-              <span>#${Number(item.iteration || 0)}</span>
-              <span>${Number(item.start_ms || 0)} ms</span>
-              <span>${escapeHtml(item.reason || "")}</span>
-            </div>
-          `).join("")}
-        </div>
-        ${this._jsonDetails(this._t("runs.duplicate_suppressions"), suppressions, `record:${this._rid(record)}:duplicate_suppressions`)}
-      </div>
-    `;
-  }
-
-  _criticalPathPanel(record) {
-    const path = Array.isArray(record.critical_path) ? record.critical_path : [];
-    if (!path.length) {
-      return "";
-    }
-    return `
-      <div class="debugSection">
-        <h3>${escapeHtml(this._t("runs.critical_path"))}</h3>
-        <div class="attemptList timelineList">
-          ${path.map((span) => {
-            const blocking = Boolean(span.blocking);
-            const tone = span.status === "error" ? "bad" : (blocking ? "warning" : "muted");
-            return `
-              <div class="attempt ${tone}">
-                <strong>${escapeHtml(span.stage || "")}</strong>
-                <span>${Number(span.start_ms || 0)} ms</span>
-                <span>${Number(span.duration_ms || 0)} ms</span>
-                <span>${escapeHtml(blocking ? this._t("runs.blocking") : this._t("runs.non_blocking"))}</span>
-              </div>
-            `;
-          }).join("")}
-        </div>
-        ${this._jsonDetails(this._t("runs.critical_path"), path, `record:${this._rid(record)}:critical_path`)}
-      </div>
-    `;
-  }
-
-  _searchPathPanel(record) {
-    const path = record.search_path || {};
-    const gate = path.gate || record.search_gate || {};
-    const weather = path.weather || record.weather_context_path || {};
-    const debug = path.debug || record.search_debug || {};
-    if (!Object.keys(gate).length && !Object.keys(weather).length && !Object.keys(debug).length) {
-      return "";
-    }
-    const queries = Array.isArray(debug.queries) ? debug.queries : [];
-    const providers = Array.isArray(debug.providers) ? debug.providers : [];
-    const results = Array.isArray(debug.results) ? debug.results : [];
-    const pathActive = weather.active !== false && (weather.path || weather.active);
-    return `
-      <div class="debugSection">
-        <h3>${escapeHtml(this._t("runs.search_path"))}</h3>
-        <div class="detailGrid">
-          ${this._detailItem(this._t("runs.search_gate"), [
-            gate.decision || "",
-            gate.reason || "",
-            gate.searched === true ? "searched=true" : "searched=false",
-          ])}
-          ${pathActive ? this._detailItem(this._t("runs.weather_path"), [
-            weather.path || "",
-            `task_type=${weather.task_type || ""}`,
-            `local_state_cache=${Boolean(weather.local_state_cache)}`,
-            `weather_entity=${Boolean(weather.weather_entity)}`,
-          ]) : ""}
-          ${this._detailItem("Live context", [
-            `GetLiveContext calls=${Number(weather.get_live_context_calls || 0)}`,
-            `results=${Number(weather.get_live_context_results || 0)}`,
-            weather.duplicate_live_context_suppressed ? "duplicate_live_context_suppressed=true" : "",
-          ])}
-          ${Object.keys(debug).length ? this._detailItem(this._t("runs.search_gate_reason"), [
-            debug.searched ? this._t("common.enabled") : this._t("common.disabled"),
-            debug.gate_reason || "",
-          ]) : ""}
-          ${Object.keys(debug).length ? this._detailItem("Latency", [
-            `${Number(debug.latency_ms || 0)} ms`,
-            `${Number(debug.result_count || 0)} results`,
-            `${Number(debug.evidence_extracted || 0)} evidence`,
-          ]) : ""}
-          ${Object.keys(debug).length ? this._detailItem(this._t("runs.debug_flags"), [
-            debug.timeout ? this._t("runs.timeout") : "",
-            debug.cache_hit ? this._t("runs.cache_hit") : "",
-            debug.polluted_result ? this._t("runs.polluted_result") : "",
-          ]) : ""}
-        </div>
-        ${queries.length ? `
-          <div class="ruleList compact">
-            <strong>${escapeHtml(this._t("runs.search_queries"))}</strong>
-            ${queries.map((query) => `<span>${escapeHtml(query)}</span>`).join("")}
-          </div>
-        ` : ""}
-        ${providers.length ? `
-          <div class="attemptList compact">
-            <strong>${escapeHtml(this._t("runs.search_providers"))}</strong>
-            ${providers.map((provider) => `
-              <div class="attempt compactAttempt ${provider.status === "error" ? "bad" : "ok"}">
-                <span>${escapeHtml(provider.provider || "")}</span>
-                <span>${escapeHtml(provider.error || provider.status || "ok")}</span>
-              </div>
-            `).join("")}
-          </div>
-        ` : ""}
-        ${results.length ? `
-          <div class="attemptList">
-            <strong>${escapeHtml(this._t("runs.search_results"))}</strong>
-            ${results.map((result) => `
-              <div class="attempt searchResult">
-                <strong>${escapeHtml(result.title || "")}</strong>
-                <span>${escapeHtml(result.url || "")}</span>
-                <span>${escapeHtml(result.content || "")}</span>
-              </div>
-            `).join("")}
-          </div>
-        ` : ""}
-        ${this._jsonDetails(this._t("runs.search_path"), path, `record:${this._rid(record)}:search_path`)}
-      </div>
-    `;
-  }
-
-  _actionsPanel(record) {
-    const actions = Array.isArray(record.actions) ? record.actions : [];
-    if (!actions.length) {
-      return "";
-    }
-    return `
-      <div class="debugSection">
-        <h3>${escapeHtml(this._t("runs.actions"))}</h3>
-        <div class="attemptList">
-          ${actions.map((action) => {
-            const tone = action.status === "error" || action.policy === "blocked"
-              ? "bad"
-              : (action.risk === "high" ? "warning" : "ok");
-            return `
-              <div class="attempt ${tone}">
-                <strong>${escapeHtml(action.tool || "")}</strong>
-                <span>${escapeHtml([action.area, action.domain, action.entity].filter(Boolean).join(" · "))}</span>
-                <span>${escapeHtml(`${action.policy || ""} · ${action.risk || ""} · ${action.status || "ok"}`)}</span>
-                <span>${escapeHtml(action.error || (action.unintended_state_change ? this._t("runs.unintended_state_change") : ""))}</span>
-              </div>
-            `;
-          }).join("")}
-        </div>
-        ${this._jsonDetails(this._t("runs.actions"), actions, `record:${this._rid(record)}:actions`)}
-      </div>
-    `;
-  }
-
-  _earconEventsPanel(record) {
-    const earcons = Array.isArray(record.earcons) ? record.earcons : [];
-    if (!earcons.length) {
-      return "";
-    }
-    return `
-      <div class="debugSection">
-        <h3>${escapeHtml(this._t("runs.earcons"))}</h3>
-        <div class="attemptList">
-          ${earcons.map((event) => `
-            <div class="attempt ${event.suppressed_reason ? "muted" : "ok"}">
-              <strong>${escapeHtml(event.earcon_name || "")}</strong>
-              <span>${Number(event.scheduled_at_ms || 0)} ms → ${event.played_at_ms === null ? "-" : Number(event.played_at_ms || 0) + " ms"}</span>
-              <span>${escapeHtml(`${event.volume_profile || ""} · ${event.duration_ms || 0} ms`)}</span>
-              <span>${escapeHtml(event.suppressed_reason || event.trace_event_name || "")}</span>
-            </div>
-          `).join("")}
-        </div>
-        ${this._jsonDetails(this._t("runs.earcons"), earcons, `record:${this._rid(record)}:earcons`)}
-      </div>
-    `;
-  }
-
-  _displayStatusPanel(record) {
-    const events = Array.isArray(record.display_status?.events)
-      ? record.display_status.events
-      : [];
-    if (!events.length) {
-      return "";
-    }
-    return `
-      <div class="debugSection">
-        <h3>${escapeHtml(this._t("runs.display_status"))}</h3>
-        <div class="attemptList">
-          ${events.map((event) => `
-            <div class="attempt ${event.state === "failed" ? "bad" : (event.state === "confirming" ? "warning" : "ok")}">
-              <strong>${escapeHtml(event.state || "")}</strong>
-              <span>${escapeHtml(event.title || "")}</span>
-              <span>${escapeHtml(event.short_text || "")}</span>
-              <span>${escapeHtml((event.action_buttons || []).join(", ") || event.deep_link || "")}</span>
-            </div>
-          `).join("")}
-        </div>
-        ${this._jsonDetails(this._t("runs.display_status"), events, `record:${this._rid(record)}:display_status`)}
-      </div>
-    `;
-  }
-
-  _errorsPanel(errors) {
-    if (!errors.length) {
-      return "";
-    }
-    return `
-      <div class="debugSection">
-        <h3>${escapeHtml(this._t("runs.errors"))}</h3>
-        <div class="attemptList">
-          ${errors.map((error) => `
-            <div class="attempt bad">
-              <strong>${escapeHtml(error.type || "")}</strong>
-              <span>${escapeHtml(error.stage || "")}</span>
-              <span>${escapeHtml(error.message || "")}</span>
-            </div>
-          `).join("")}
-        </div>
-      </div>
-    `;
-  }
-
-  _toolEventsPanel(tools, rid = "") {
-    if (!tools.length) {
-      return "";
-    }
-    return `
-      <div class="debugSection">
-        <h3>${escapeHtml(this._t("runs.tool_events"))}</h3>
-        <div class="attemptList">
-          ${tools.map((tool) => `
-            <div class="attempt ${tool.status === "error" || tool.error ? "bad" : "ok"}">
-              <strong>${escapeHtml(tool.name || "")}</strong>
-              <span>${escapeHtml(tool.phase || "")}${tool.external ? " · external" : ""}</span>
-              <span>${escapeHtml(tool.status || "ok")}</span>
-              <span>${escapeHtml(tool.error || tool.tool_call_id || "")}</span>
-            </div>
-          `).join("")}
-        </div>
-        ${this._jsonDetails(this._t("runs.tool_events"), tools, `record:${rid}:tool_events`)}
-      </div>
-    `;
-  }
-
-  _evidencePanel(record) {
-    const grounding = record.grounding || record.raw_payload?.grounding || {};
-    const evidence = Array.isArray(grounding.evidence) ? grounding.evidence : [];
-    if (!evidence.length) {
-      return "";
-    }
-    return `
-      <div class="debugSection">
-        <h3>${escapeHtml(this._t("runs.evidence"))}</h3>
-        <div class="evidenceTable">
-          ${evidence.map((item) => `
-            <div class="evidenceRow ${item.included_in_final ? "included" : ""}">
-              <span>${escapeHtml(item.evidence_id || "")}</span>
-              <span>${escapeHtml(this._evidenceTypeLabel(item.evidence_type))}</span>
-              <span>${escapeHtml(item.text || "")}</span>
-              <span>${escapeHtml(item.included_in_final ? this._t("common.enabled") : this._t("common.disabled"))}</span>
-            </div>
-          `).join("")}
-        </div>
-        ${this._jsonDetails(this._t("runs.evidence"), evidence, `record:${this._rid(record)}:evidence`)}
-      </div>
-    `;
-  }
-
-  /** Stable identity for a trace/run record across re-renders. */
-  _rid(record) {
-    return String(record?.run_id || record?.id || "");
-  }
-
   _jsonDetails(label, value, key = "") {
     return `
       <details class="jsonDetails" ${key ? `data-open-key="${escapeHtml(key)}"` : ""}>
         <summary>${escapeHtml(label)}</summary>
         <pre>${escapeHtml(JSON.stringify(value, null, 2))}</pre>
       </details>
-    `;
-  }
-
-  _groundingPanel(record) {
-    const grounding = record.grounding || record.raw_payload?.grounding || {};
-    const status = String(grounding.status || "");
-    if (!status || status === "not_required") {
-      return "";
-    }
-    const tone = this._groundingTone(status);
-    const candidates = Array.isArray(grounding.candidates) ? grounding.candidates : [];
-    const canonical = Array.isArray(grounding.canonical_answers) ? grounding.canonical_answers : [];
-    const repairs = Array.isArray(grounding.repairs) ? grounding.repairs : [];
-    return `
-      <div class="groundingBox ${tone}">
-        <div class="groundingHead">
-          <h3>${escapeHtml(this._t("runs.grounding"))}</h3>
-          <span class="chip ${tone}">${escapeHtml(this._groundingStatusLabel(status))}</span>
-        </div>
-        ${candidates.length ? `
-          <div class="ruleList compact">
-            <strong>${escapeHtml(this._t("runs.grounding_candidates"))}</strong>
-            ${candidates.map((candidate) => `<span>${escapeHtml(candidate)}</span>`).join("")}
-          </div>
-        ` : ""}
-        ${canonical.length ? `
-          <div class="ruleList compact">
-            <strong>${escapeHtml(this._t("runs.grounding_canonical"))}</strong>
-            ${canonical.map((answer) => `<span>${escapeHtml(answer)}</span>`).join("")}
-          </div>
-        ` : ""}
-        ${repairs.length ? `
-          <div class="attemptList compact">
-            <strong>${escapeHtml(this._t("runs.grounding_repairs"))}</strong>
-            ${repairs.map((repair) => `
-              <div class="attempt ok compactAttempt">
-                <span>${escapeHtml(repair.from || "")}</span>
-                <span>${escapeHtml(repair.to || "")}</span>
-              </div>
-            `).join("")}
-          </div>
-        ` : ""}
-      </div>
-    `;
-  }
-
-  _providerPanel(entry) {
-    const providers = entry.model_providers || {};
-    const primary = providers.primary || {};
-    const fallbacks = Array.isArray(providers.fallbacks) ? providers.fallbacks : [];
-    const health = Array.isArray(entry.provider_health) ? entry.provider_health : [];
-    if (providers.config_error) {
-      return `<div class="providerPanel error">${escapeHtml(this._t("providers.config_error", { message: providers.config_error }))}</div>`;
-    }
-    return `
-      <div class="providerPanel">
-        <div>
-          <strong>${escapeHtml(this._t("providers.title"))}</strong>
-          <span>${escapeHtml(this._t("providers.primary"))}: ${escapeHtml(primary.base_url || entry.base_url || "")}</span>
-        </div>
-        <div class="ruleList">
-          ${fallbacks.map((provider) => `
-            <span title="${escapeHtml(provider.base_url || "")}">
-              ${escapeHtml(provider.name || "")}
-            </span>
-          `).join("") || `<span>${escapeHtml(this._t("providers.none"))}</span>`}
-        </div>
-        <span class="meta">${escapeHtml(this._t("providers.fallbacks", { count: fallbacks.length }))}</span>
-        <div class="providerHealth">
-          <strong>${escapeHtml(this._t("providers.health"))}</strong>
-          ${health.map((item) => `
-            <span class="chip ${Number(item.cooldown_remaining_s || 0) > 0 ? "warning" : "muted"}">
-              ${escapeHtml(item.provider || "")} · ${escapeHtml(this._routeLabel(item.route))} · ${escapeHtml(this._t("providers.cooldown", { seconds: Number(item.cooldown_remaining_s || 0) }))}
-            </span>
-          `).join("") || `<span class="meta">${escapeHtml(this._t("providers.health_empty"))}</span>`}
-        </div>
-      </div>
     `;
   }
 
@@ -4773,149 +3136,6 @@ class VoiceHarnessPanel extends HTMLElement {
         `).join("") || `<div class="empty">${escapeHtml(this._t("policies.empty"))}</div>`}
       </div>
     `;
-  }
-
-  _renderScenarioLab(entries) {
-    return `
-      <div class="scenarioPanel">
-        <div class="workbench scenarioWorkbench">
-          <form class="surface form" data-form="scenario">
-            ${this._sampleButtonRail()}
-            <label>
-              <span>${escapeHtml(this._t("scenario.user"))}</span>
-              <textarea data-field="user" rows="3">${escapeHtml(this._draft.user)}</textarea>
-            </label>
-            <label>
-              <span>${escapeHtml(this._t("scenario.response"))}</span>
-              <textarea data-field="response" rows="4">${escapeHtml(this._draft.response)}</textarea>
-            </label>
-            <label>
-              <span>${escapeHtml(this._t("scenario.expected"))}</span>
-              <textarea class="codeInput" data-field="expected" rows="9">${escapeHtml(this._draft.expected)}</textarea>
-            </label>
-            <button class="primary" type="submit">
-              <ha-icon icon="mdi:play"></ha-icon>
-              <span>${escapeHtml(this._t("scenario.run"))}</span>
-            </button>
-          </form>
-          <div class="scenarioSide">
-            ${this._renderScenarioStatus(entries)}
-            ${this._renderResult(entries)}
-          </div>
-        </div>
-        ${this._renderScenarioSamples()}
-      </div>
-    `;
-  }
-
-  _sampleButtonRail(compact = false) {
-    const samples = this._data?.sample_scenarios || [];
-    if (!samples.length) {
-      return "";
-    }
-    const visible = compact
-      ? samples.filter((sample) => this._sampleExpected(sample)?.must_search).slice(0, 3)
-      : samples.slice(0, 5);
-    const fallback = visible.length ? visible : samples.slice(0, 3);
-    return `
-      <div class="sampleRail">
-        <strong>${escapeHtml(this._t("scenario.samples"))}</strong>
-        <div>
-          ${fallback.map((sample) => `
-            <button type="button" class="sampleChip" data-load-sample="${escapeHtml(sample.id)}">
-              ${escapeHtml(this._sampleName(sample))}
-            </button>
-          `).join("")}
-        </div>
-      </div>
-    `;
-  }
-
-  _renderScenarioStatus(entries) {
-    const providers = searchProviders(entries);
-    return `
-      <article class="surface scenarioStatus">
-        <div class="sectionHead">
-          <div>
-            <h2>${escapeHtml(this._t("search.gating"))}</h2>
-            <div class="meta">${providers.length ? providers.join(", ") : escapeHtml(this._t("search.no_providers"))}</div>
-          </div>
-          <span class="chip ${providers.length ? "ok" : "warning"}">${escapeHtml(this._t("scenario.provider_count", { count: providers.length }))}</span>
-        </div>
-      </article>
-    `;
-  }
-
-  _renderDraftPreflight(entries) {
-    const checks = scenarioPreflight(this._draft, entries);
-    return `
-      <article class="surface result preflight">
-        <div class="sectionHead">
-          <div>
-            <h2>${escapeHtml(this._t("scenario.preflight"))}</h2>
-            <div class="meta">${escapeHtml(this._t("result.empty"))}</div>
-          </div>
-          <span class="chip ${checks.every((check) => check.ok) ? "ok" : "warning"}">${escapeHtml(this._t("scenario.preflight"))}</span>
-        </div>
-        <div class="preflightList">
-          ${checks.map((check) => `
-            <div class="preflightRow ${check.ok ? "ok" : "warning"}">
-              <ha-icon icon="${check.ok ? "mdi:check-circle-outline" : "mdi:alert-circle-outline"}"></ha-icon>
-              <div>
-                <strong>${escapeHtml(this._scenarioCheckLabel(check))}</strong>
-                <span>${escapeHtml(this._scenarioCheckDetail(check))}</span>
-              </div>
-            </div>
-          `).join("")}
-        </div>
-      </article>
-    `;
-  }
-
-  _scenarioCheckLabel(check) {
-    switch (check.kind) {
-      case "required_fields":
-        return this._t("scenario.required_fields");
-      case "expected_json":
-        return this._t("scenario.expected_json");
-      case "search_gate":
-        return this._t("scenario.search_gate");
-      case "spoken_length":
-        return this._t("scenario.spoken_length");
-      case "question_length":
-        return this._t("scenario.question_length");
-      case "hidden_internals":
-        return this._t("scenario.hidden_internals");
-      case "required_phrase":
-        return this._t("scenario.required_phrase");
-      default:
-        return String(check.kind || "");
-    }
-  }
-
-  _scenarioCheckDetail(check) {
-    switch (check.kind) {
-      case "required_fields":
-        return check.ok ? this._t("scenario.required_ready") : this._t("scenario.required_missing");
-      case "expected_json":
-        return check.ok ? this._t("scenario.expected_valid") : this._t("scenario.expected_invalid");
-      case "search_gate":
-        return check.mustSearch ? this._t("scenario.search_required") : this._t("scenario.search_not_required");
-      case "spoken_length":
-        return this._t("scenario.sentences_with_limit", { count: check.count || 0, limit: check.limit || 0 });
-      case "question_length":
-        return this._t("scenario.questions_with_limit", { count: check.count || 0, limit: check.limit || 0 });
-      case "hidden_internals":
-        return (check.terms || []).length
-          ? this._t("scenario.forbidden_terms", { terms: (check.terms || []).join(", ") })
-          : this._t("scenario.no_forbidden_terms");
-      case "required_phrase":
-        return (check.terms || []).length
-          ? this._t("scenario.required_phrase_missing", { terms: (check.terms || []).join(", ") })
-          : this._t("scenario.required_phrase_ok");
-      default:
-        return "";
-    }
   }
 
   _renderMemory(entries) {
@@ -4991,92 +3211,6 @@ class VoiceHarnessPanel extends HTMLElement {
     `;
   }
 
-  _renderScenarioSamples() {
-    const samples = this._data?.sample_scenarios || [];
-    if (!samples.length) {
-      return "";
-    }
-    return `
-      <section class="surface scenarioSamples">
-        <div class="sectionHead">
-          <div>
-            <h2>${escapeHtml(this._t("scenario.sample_runs"))}</h2>
-            <div class="meta">${escapeHtml(this._t("scenario.samples"))}</div>
-          </div>
-        </div>
-        <div class="scenarioSampleList">
-          ${samples.map((sample) => {
-            const expected = this._sampleExpected(sample);
-            return `
-              <article class="sample">
-                <div>
-                  <h2>${escapeHtml(this._sampleName(sample))}</h2>
-                  <p>${escapeHtml(this._sampleUser(sample))}</p>
-                </div>
-                <div class="sampleActions">
-                  <span class="chip ${expected.must_search ? "warning" : "muted"}">${escapeHtml(expected.must_search ? this._t("scenario.search_required") : this._t("scenario.search_not_required"))}</span>
-                  <button class="secondary" data-load-sample="${escapeHtml(sample.id)}">
-                    <ha-icon icon="mdi:file-document-edit-outline"></ha-icon>
-                    <span>${escapeHtml(this._t("scenario.load"))}</span>
-                  </button>
-                  <button class="secondary" data-sample="${escapeHtml(sample.id)}">
-                    <ha-icon icon="mdi:play-outline"></ha-icon>
-                    <span>${escapeHtml(this._t("scenario.run_sample"))}</span>
-                  </button>
-                </div>
-              </article>
-            `;
-          }).join("")}
-        </div>
-      </section>
-    `;
-  }
-
-  _routeCard(route) {
-    return `
-      <div class="route ${escapeHtml(route.kind)}">
-        <span class="routeKind">${escapeHtml(this._routeLabel(route.kind))}</span>
-        <strong>${escapeHtml(route.model)}</strong>
-        <span>${escapeHtml(this._t("route.tokens", { count: route.max_tokens }))} · ${escapeHtml(this._t("route.timeout", { seconds: route.timeout_s }))}</span>
-      </div>
-    `;
-  }
-
-  _renderResult(entries = []) {
-    if (!this._result) {
-      return this._renderDraftPreflight(entries);
-    }
-    const result = this._result;
-    const passed = result.passed ? this._t("result.passed") : this._t("result.failed");
-    const route = result.route || {};
-    const searchInfo = result.search || {};
-    const search = searchInfo.allowed ? this._t("search.allowed") : this._t("search.blocked");
-    const routeLabel = this._routeLabel(route.kind);
-    return `
-      <article class="surface result">
-        <div class="sectionHead">
-          <div>
-            <h2>${escapeHtml(passed)}</h2>
-            <div class="meta">${escapeHtml(this._t("result.meta", { route: routeLabel, search }))}</div>
-          </div>
-          <span class="chip ${result.passed ? "ok" : "bad"}">${escapeHtml(passed)}</span>
-        </div>
-        <div class="meterRow resultFacts">
-          <span>${escapeHtml(routeLabel)}</span>
-          ${route.model ? `<span>${escapeHtml(route.model)}</span>` : ""}
-          <span>${escapeHtml(search)}</span>
-        </div>
-        <div class="spoken">${escapeHtml(result.spoken || "")}</div>
-        ${(result.violations || []).length ? `
-          <ul class="violations">
-            ${result.violations.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
-          </ul>
-        ` : ""}
-        ${this._jsonDetails(this._t("result.raw"), result, "result:raw")}
-      </article>
-    `;
-  }
-
   _locale() {
     let storedLanguage = "";
     try {
@@ -5098,10 +3232,6 @@ class VoiceHarnessPanel extends HTMLElement {
 
   _t(key, params = {}) {
     return translate(I18N, this._locale(), key, params);
-  }
-
-  _defaultDraft(locale) {
-    return { ...(DEFAULT_DRAFTS[locale] || DEFAULT_DRAFTS.en) };
   }
 
   _localize(value, fallback = "") {
@@ -5155,19 +3285,9 @@ class VoiceHarnessPanel extends HTMLElement {
     return this._lookup(`adapter.${adapter}`, adapter);
   }
 
-  /** @returns {RouteKind} */
-  _routeKind(value) {
-    return routeKind(value);
-  }
-
   /** @returns {FirstResponsePlaybackAdapter} */
   _firstResponseAdapter(value) {
     return firstResponseAdapter(value);
-  }
-
-  _routeLabel(value) {
-    const kind = String(value || "unknown");
-    return this._lookup(`mode.${kind}`, kind);
   }
 
   _tierLabel(value) {
@@ -5183,30 +3303,6 @@ class VoiceHarnessPanel extends HTMLElement {
   _ruleLabel(value) {
     const rule = String(value || "");
     return this._lookup(`rule.${rule}`, rule);
-  }
-
-  _traceStatusLabel(value) {
-    const status = String(value || "unknown");
-    return this._lookup(`trace.status.${status}`, status);
-  }
-
-  _groundingStatusLabel(value) {
-    const status = String(value || "not_required");
-    return this._lookup(`grounding.status.${status}`, status);
-  }
-
-  _verifierModeLabel(value) {
-    const mode = String(value || "disabled");
-    return this._lookup(`verifier.${mode}`, mode);
-  }
-
-  _evidenceTypeLabel(value) {
-    const type = String(value || "");
-    return this._lookup(`evidence.${type}`, type);
-  }
-
-  _groundingTone(value) {
-    return groundingTone(value);
   }
 
   _lookup(key, fallback = "") {
@@ -7419,45 +5515,6 @@ const styles = `
 
 // Diagnostic drawer tabs remain a keyed module boundary. The composition root
 // defines the complete static set while the drawer only consumes renderers.
-const DIAGNOSTIC_TABS = defineDiagnosticTabs([
-  {
-    id: "overview",
-    labelKey: "runs.diag_overview",
-    order: 10,
-    render: (panel, record, ctx) => panel._diagnosticOverviewTab(record, ctx),
-  },
-  {
-    id: "evidence",
-    labelKey: "runs.diag_evidence",
-    order: 20,
-    render: (panel, record) => panel._diagnosticEvidenceTab(record),
-  },
-  {
-    id: "audio",
-    labelKey: "runs.diag_audio",
-    order: 30,
-    render: (panel, record) => panel._diagnosticAudioTab(record),
-  },
-  {
-    id: "tools",
-    labelKey: "runs.diag_tools",
-    order: 40,
-    render: (panel, record, ctx) =>
-      panel._diagnosticToolsTab({ record, ...ctx }),
-  },
-  {
-    id: "timeline",
-    labelKey: "runs.diag_timeline",
-    order: 50,
-    render: (panel, record, ctx) => panel._diagnosticTimelineTab(ctx.timeline),
-  },
-  {
-    id: "raw",
-    labelKey: "runs.diag_raw",
-    order: 60,
-    render: (panel, record) => panel._diagnosticRawTab(record),
-  },
-]);
 
 try {
   if (!customElements.get("voice-harness-panel")) {

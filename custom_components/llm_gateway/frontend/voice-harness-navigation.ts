@@ -71,7 +71,8 @@ export class VoiceHarnessNavigation extends LitElement {
     let next = current < 0 ? 0 : current;
     if (event.key === "Home") next = 0;
     if (event.key === "End") next = this.items.length - 1;
-    if (event.key === "ArrowLeft") next = (next - 1 + this.items.length) % this.items.length;
+    if (event.key === "ArrowLeft")
+      next = (next - 1 + this.items.length) % this.items.length;
     if (event.key === "ArrowRight") next = (next + 1) % this.items.length;
     const item = this.items[next];
     if (!item) return;
@@ -82,16 +83,67 @@ export class VoiceHarnessNavigation extends LitElement {
     button?.focus();
   }
 
-  static styles = [harnessFoundationStyles, harnessButtonStyles, css`
-    :host { display: block; margin: 14px 0 18px; }
-    nav { display: flex; gap: var(--vh-space-xs); padding: var(--vh-space-xs); overflow-x: auto; border: 1px solid var(--divider-color); border-radius: var(--vh-radius-m); background: var(--card-background-color); }
-    button { min-width: 0; flex: 1 0 132px; display: inline-flex; align-items: center; justify-content: center; gap: var(--vh-space-s); padding: 0 var(--vh-space-m); background: transparent; white-space: nowrap; }
-    button:hover { background: color-mix(in srgb, var(--primary-color) 8%, transparent); }
-    button[aria-selected="true"] { background: color-mix(in srgb, var(--primary-color) 14%, var(--card-background-color)); color: var(--primary-color); }
-    ha-icon { width: 20px; height: 20px; flex: 0 0 auto; }
-    span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-    @media (max-width: 560px) { button { flex-basis: 112px; justify-content: flex-start; } }
-  `];
+  static styles = [
+    harnessFoundationStyles,
+    harnessButtonStyles,
+    css`
+      :host {
+        display: block;
+        margin: 0;
+      }
+      nav {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 4px;
+        padding: 5px;
+        border: 1px solid var(--vh-line);
+        border-radius: 16px;
+        background: var(--vh-surface);
+      }
+      button {
+        min-width: 0;
+        min-height: 46px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 0 10px;
+        background: transparent;
+        white-space: nowrap;
+      }
+      button:hover {
+        background: color-mix(in srgb, var(--primary-color) 8%, transparent);
+      }
+      button[aria-selected="true"] {
+        background: var(--vh-soft);
+        color: var(--vh-accent);
+      }
+      ha-icon {
+        width: 20px;
+        height: 20px;
+        flex: 0 0 auto;
+      }
+      span {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      @media (max-width: 560px) {
+        button {
+          padding: 8px 4px;
+          flex-direction: column;
+          gap: 4px;
+          font-size: 11px;
+          min-height: 60px;
+        }
+        ha-icon {
+          width: 18px;
+          height: 18px;
+          --mdc-icon-size: 18px;
+        }
+      }
+    `,
+  ];
 }
 
 if (!customElements.get("voice-harness-navigation")) {

@@ -2,9 +2,11 @@
 
 ## Version sources
 
-The next planned release is **0.4.0**, including the live-context loop,
-continuation and diagnostics changes since 0.3.48. Versions stay at 0.3.48 until
-the automatic workflow performs the bump.
+The Phase 9 deployment uses **0.3.52**, including the four-panel redesign,
+streaming previews and the satellite's 22050 Hz PCM preview format. Its
+versioned asset path replaces the previously deployed browser modules.
+A Git push and household deployment do not publish a
+HACS release; use the automatic workflow below to publish an archive.
 
 | File | Version field |
 |---|---|
@@ -67,6 +69,6 @@ as `NOASSERTION`; custom-repository HACS validation omits only the default-index
 license eligibility check. Passing these checks does not claim eligibility for
 the default HACS catalogue.
 
-家庭安装目录与当前主分支存在源码差异，不能仅凭相同的 0.3.48 版本号判定两者相同。
-本轮完成源码、构建和发布流程准备；真实语音与续听体验在语音链路迭代中验证。
+Phase 9 的源码、构建与家庭部署验证见
+[实机验证记录](voice-harness-phase9-2026-09-13.md)。后续正式发版仍走 Release workflow。
 发版不会把工具派发或语音合成结果当成物理设备确认或实际播报完成。

@@ -1,4 +1,4 @@
-import { diffLines } from "diff";
+import { diffLines, diffWordsWithSpace } from "diff";
 
 export type ReplayDiffPart = {
   added?: boolean;
@@ -106,7 +106,7 @@ export function replayDiffSections(
     return {
       id,
       changed: left !== right,
-      parts: diffLines(`${left}\n`, `${right}\n`),
+      parts: id === "speech" ? diffWordsWithSpace(left, right) : diffLines(`${left}\n`, `${right}\n`),
     };
   });
 }

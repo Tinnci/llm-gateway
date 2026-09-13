@@ -8,12 +8,16 @@ import re
 import time
 from dataclasses import asdict, dataclass
 from http import HTTPStatus
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
 from homeassistant.exceptions import HomeAssistantError
 
 from .const import LOGGER, TIMEOUT_CHAT, TIMEOUT_MODELS
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
 
 type ToolChoice = str | dict[str, Any]
 
@@ -309,6 +313,58 @@ class LLMGatewayClient:
         )
         return sample
 
+    async def async_stream_preview(  # noqa: PLR0913 - explicit provider request fields
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        max_tokens: int,
+        timeout_s: int,
+        tools: list[dict[str, Any]] | None = None,
+        extra_body: dict[str, Any] | None = None,
+        temperature: float = 0.3,
+        top_p: float = 1.0,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Yield provider deltas for a diagnostic preview without executing tools."""
+        payload = dict(extra_body or {})
+        payload.update(
+            model=model,
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            stream=True,
+            stream_options={"include_usage": True},
+        )
+        if tools:
+            payload["tools"] = tools
+        else:
+            payload.pop("tools", None)
+            payload.pop("tool_choice", None)
+        try:
+            async with asyncio.timeout(timeout_s):
+                async with self._session.post(
+                    f"{self._base_url}/chat/completions",
+                    headers=self._headers,
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=timeout_s),
+                ) as response:
+                    if response.status in (
+                        HTTPStatus.UNAUTHORIZED,
+                        HTTPStatus.FORBIDDEN,
+                    ):
+                        raise LLMGatewayAuthError("Provider authentication failed")
+                    if response.status >= HTTPStatus.BAD_REQUEST:
+                        raise LLMGatewayHTTPError(
+                            response.status, "Preview request failed"
+                        )
+                    async for event in _preview_frames(response):
+                        yield event
+        except TimeoutError as err:
+            raise LLMGatewayConnectionError("Provider stream timed out") from err
+        except (aiohttp.ClientError, UnicodeDecodeError) as err:
+            raise LLMGatewayConnectionError("Provider stream disconnected") from err
+
     async def async_chat_completion(  # noqa: PLR0913 - explicit OpenAI-style kwargs
         self,
         *,
@@ -374,6 +430,47 @@ class LLMGatewayClient:
                 )
                 message["content"] = cleaned
         return message, _parse_usage(data)
+
+
+async def _preview_frames(
+    response: aiohttp.ClientResponse,
+) -> AsyncIterator[dict[str, Any]]:
+    """Parse provider SSE frames and require explicit completion evidence."""
+    finished = False
+    async for raw in response.content:
+        line = raw.decode("utf-8").strip()
+        if not line.startswith("data:"):
+            continue
+        body = line[5:].strip()
+        if body == "[DONE]":
+            finished = True
+            break
+        try:
+            chunk = json.loads(body)
+        except ValueError as err:
+            raise LLMGatewayError("Invalid provider stream frame") from err
+        if not isinstance(chunk, dict) or chunk.get("error"):
+            raise LLMGatewayError("Provider stream reported an error")
+        choices = chunk.get("choices") or []
+        if not isinstance(choices, list):
+            raise LLMGatewayError("Invalid provider choices")
+        if choices:
+            choice = choices[0]
+            if not isinstance(choice, dict) or not isinstance(
+                choice.get("delta", {}), dict
+            ):
+                raise LLMGatewayError("Invalid provider delta")
+            delta = choice.get("delta") or {}
+            if delta:
+                yield {"type": "delta", "delta": delta}
+            if choice.get("finish_reason"):
+                finished = True
+                yield {"type": "finish", "reason": choice["finish_reason"]}
+        usage = _parse_usage(chunk)
+        if usage:
+            yield {"type": "usage", "usage": usage}
+    if not finished:
+        raise LLMGatewayConnectionError("Provider stream ended before completion")
 
 
 def _parse_json(body: str) -> dict[str, Any]:

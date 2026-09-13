@@ -1,4 +1,5 @@
 import { css, html, LitElement, nothing } from "lit";
+import { harnessFoundationStyles } from "./voice-harness-styles";
 
 import { replayDiffSections, type ReplayPair } from "./voice-harness-replay-diff";
 
@@ -7,15 +8,18 @@ type Labels = Record<string, string>;
 export class VoiceHarnessReplayInspector extends LitElement {
   static properties = {
     pair: { attribute: false },
+    language: { type: String },
     labels: { attribute: false },
   };
 
   declare pair: ReplayPair | null;
+  declare language: string;
   declare labels: Labels;
 
   constructor() {
     super();
     this.pair = null;
+    this.language = "en";
     this.labels = {};
   }
 
@@ -23,11 +27,12 @@ export class VoiceHarnessReplayInspector extends LitElement {
     if (!this.pair) return nothing;
     const sections = replayDiffSections(this.pair.source, this.pair.fork);
     const changed = sections.filter((section) => section.changed).length;
+    const t = (en: string, zh: string) => this.language.startsWith("zh") ? zh : en;
     return html`
       <section>
         <header>
-          <div><span class="eyebrow">Replay / Fork</span><strong>Diff Inspector</strong></div>
-          <span class=${changed ? "chip warning" : "chip ok"}>${changed} changed</span>
+          <div><span class="eyebrow">REPLAY DIFF</span><strong>${t("Response comparison", "回答差异对比")}</strong></div>
+          <span class=${changed ? "chip warning" : "chip ok"}>${changed} ${t("changed sections", "处变化")}</span>
         </header>
         <div class="lineage">
           <span>${this.pair.sourceId}</span><b aria-hidden="true">→</b><span>${this.pair.forkId}</span>
@@ -38,7 +43,7 @@ export class VoiceHarnessReplayInspector extends LitElement {
               <summary>
                 <strong>${this.labels[item.id] || item.id}</strong>
                 <span class=${item.changed ? "chip warning" : "chip muted"}>
-                  ${item.changed ? "changed" : "unchanged"}
+                  ${item.changed ? t("Changed", "有变化") : t("Unchanged", "无变化")}
                 </span>
               </summary>
               <pre>${item.parts.map((part) => html`<span class=${part.added ? "added" : part.removed ? "removed" : "same"}>${part.value}</span>`)}</pre>
@@ -49,9 +54,9 @@ export class VoiceHarnessReplayInspector extends LitElement {
     `;
   }
 
-  static styles = css`
+  static styles = [harnessFoundationStyles, css`
     :host { display: block; margin: 14px 0; color: var(--primary-text-color); }
-    section { overflow: hidden; border: 1px solid var(--divider-color); border-radius: 8px; background: var(--card-background-color); }
+    section { overflow: hidden; border: 1px solid var(--divider-color); border-radius: 18px; background: var(--card-background-color); }
     header { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; padding: 0 12px; border-bottom: 1px solid var(--divider-color); }
     header > div { display: grid; gap: 2px; }
     .eyebrow { color: var(--secondary-text-color); font-size: 10px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
@@ -65,13 +70,13 @@ export class VoiceHarnessReplayInspector extends LitElement {
     .sections { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .diff { min-width: 0; border-right: 1px solid var(--divider-color); border-bottom: 1px solid var(--divider-color); }
     .diff:nth-child(2n) { border-right: 0; }
-    summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 38px; padding: 0 10px; cursor: pointer; font-size: 11px; }
-    pre { max-height: 220px; margin: 0; padding: 8px 10px; overflow: auto; border-top: 1px solid var(--divider-color); background: var(--primary-background-color); font: 10px/1.5 var(--code-font-family, Menlo, Consolas, monospace); white-space: pre-wrap; }
-    pre span { display: block; margin: 0 -10px; padding: 0 10px; }
+    summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 48px; padding: 0 10px; cursor: pointer; font-size: 11px; }
+    pre { max-height: 220px; margin: 0; padding: 8px 10px; overflow: auto; border-top: 1px solid var(--divider-color); background: var(--primary-background-color); font: 12px/1.75 var(--code-font-family, Menlo, Consolas, monospace); white-space: pre-wrap; }
+    pre span { display: inline; }
     .added { background: color-mix(in srgb, var(--success-color, #43a047) 16%, transparent); color: var(--success-color, #2e7d32); }
     .removed { background: color-mix(in srgb, var(--error-color) 13%, transparent); color: var(--error-color); text-decoration: line-through; }
     @media (max-width: 560px) { .sections { grid-template-columns: 1fr; } .diff { border-right: 0; } }
-  `;
+  `];
 }
 
 if (!customElements.get("voice-harness-replay-inspector")) {

@@ -10,6 +10,7 @@ from homeassistant.components import frontend
 from homeassistant.components.http import StaticPathConfig
 
 from .const import DOMAIN
+from .harness_stream import async_register_stream
 from .views import async_register_views
 
 if TYPE_CHECKING:
@@ -44,6 +45,7 @@ async def async_setup_panel(hass: HomeAssistant) -> None:
         ]
     )
     async_register_views(hass)
+    async_register_stream(hass)
     frontend.async_register_built_in_panel(
         hass,
         component_name="custom",

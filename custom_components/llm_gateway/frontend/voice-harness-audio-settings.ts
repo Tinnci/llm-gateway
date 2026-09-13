@@ -144,9 +144,11 @@ export const audioScenes = [
 ] as const;
 
 export class VoiceHarnessAudioSettings extends LitElement {
-  static properties = { hass: { attribute: false }, language: { type: String } };
+  static properties = { hass: { attribute: false }, language: { type: String }, active: { type: Boolean } };
   declare hass?: VoiceSettingsHass;
   declare language?: string;
+  declare active: boolean;
+  constructor() { super(); this.active = true; }
   private loaded = false;
   private loadError = "";
   private previewing = "";
@@ -178,7 +180,7 @@ export class VoiceHarnessAudioSettings extends LitElement {
   }
 
   protected updated(changes: PropertyValues): void {
-    if (changes.has("hass") && this.hass && !this.loaded) void this.refresh();
+    if ((changes.has("hass") || changes.has("active")) && this.hass && this.active) void this.refresh();
   }
 
   disconnectedCallback(): void {
@@ -191,7 +193,7 @@ export class VoiceHarnessAudioSettings extends LitElement {
 
   refresh(): Promise<void> {
     if (this.readFlight) return this.readFlight;
-    if (!this.hass?.callApi || this.saver.saving || document.visibilityState === "hidden") return Promise.resolve();
+    if (!this.active || !this.hass?.callApi || this.saver.saving || document.visibilityState === "hidden") return Promise.resolve();
     const savedBeforeRead = this.saver.saved;
     this.readFlight = (async () => {
       try {

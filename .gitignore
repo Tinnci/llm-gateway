@@ -5,6 +5,8 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 node_modules/
+.playwright-cli/
+output/playwright/
 *.egg-info/
 .mypy_cache/
 test_configuration/

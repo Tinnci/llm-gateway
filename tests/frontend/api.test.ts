@@ -46,4 +46,36 @@ describe("Voice Harness API boundary", () => {
       ["POST", "llm_gateway/harness/evaluate", { user: "hello" }],
     ]);
   });
+
+  test("retains HA response messages and conflict codes", async () => {
+    const request = requestHarnessJson(
+      {
+        callApi: async () => {
+          throw {
+            error: "BadRequest",
+            status_code: 400,
+            body: {
+              message: "Settings changed. Reload before saving.",
+              code: "revision_conflict",
+            },
+          };
+        },
+      },
+      "POST",
+      "llm_gateway/harness/config",
+      {},
+    );
+    try {
+      await request;
+      throw new Error("Request should fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe(
+        "Settings changed. Reload before saving.",
+      );
+      expect((error as Error & { code: string }).code).toBe(
+        "revision_conflict",
+      );
+    }
+  });
 });

@@ -1,10 +1,4 @@
-import {
-  array,
-  looseObject,
-  number,
-  safeParse,
-  string,
-} from "valibot";
+import { array, looseObject, number, safeParse, string } from "valibot";
 import type { InferOutput } from "valibot";
 
 export type HarnessHttpMethod = "GET" | "POST";
@@ -57,12 +51,30 @@ export async function requestHarnessJson<T = unknown>(
   payload?: unknown,
 ): Promise<T> {
   if (hass?.callApi) {
-    return (await hass.callApi(method, path, payload)) as T;
+    try {
+      return (await hass.callApi(method, path, payload)) as T;
+    } catch (error) {
+      if (!isRecord(error) || !isRecord(error.body)) throw error;
+      const body = error.body;
+      throw Object.assign(
+        new Error(
+          typeof body.message === "string"
+            ? body.message
+            : String(error.error || "Home Assistant request failed"),
+        ),
+        {
+          code: typeof body.code === "string" ? body.code : "",
+        },
+      );
+    }
   }
   const response = await fetch(`/api/${path}`, {
     method,
     credentials: "same-origin",
-    headers: payload === undefined ? undefined : { "Content-Type": "application/json" },
+    headers:
+      payload === undefined
+        ? undefined
+        : { "Content-Type": "application/json" },
     body: payload === undefined ? undefined : JSON.stringify(payload),
   });
   if (response.ok) {

@@ -54,17 +54,22 @@ Chinese batch terms such as `所有`, `全部`, `每个`, and `每一` can selec
 The integration adds an admin-only **Voice Harness** panel. The panel does not
 need a manual `panel_custom` configuration.
 
-The panel provides:
+The four views share a Lit design system, light and dark themes, and layouts
+for desktop, tablet, and phone:
 
-- recent runs and route evidence,
-- provider state and latency probes,
-- safe routing and retention settings,
-- prompt-policy evaluation,
-- bundled scenarios,
-- short-memory inspection,
-- earcon assets,
-- grouped satellite audio controls with automatic saving and per-field preview,
-- satellite diagnostic summaries.
+- **Overview / 概览**: system status, observed reply metrics, sparklines, and
+  fresh voice activity.
+- **Runs / 运行记录**: searchable conversations, six-stage timing, an evidence
+  drawer, reply comparison, token usage, and local WAV/PCM audition.
+- **Test / 测试**: scenario cards, policy assertions, real provider streaming,
+  tool proposals, cancellation, and replay of the last test.
+- **Settings / 设置**: audio, model routing, ASR/TTS and Wyoming, and storage;
+  connection probes and JSON/YAML tuning import/export.
+
+Missing timing remains unmeasured. Tool proposals and dispatched actions do
+not become physical confirmation. Model previews use the primary provider and
+do not execute tools. Recorded action replay evaluates supported local actions
+without changing devices.
 
 English and Simplified Chinese labels follow the Home Assistant or browser
 locale.
@@ -72,6 +77,9 @@ locale.
 The audio card requires the current `phosh-ha-status` Home Assistant package
 and display agent. It also works as `custom:voice-harness-audio-settings` in a
 dashboard. See [audio settings and runtime evidence](docs/voice-feedback-runtime-verification.md).
+For the four-panel implementation and target-device results, see
+[frontend design](docs/harness-frontend-design.md) and
+[Phase 9 verification / 实机验证](docs/voice-harness-phase9-2026-09-13.md).
 
 ## Installation
 
@@ -138,7 +146,9 @@ The panel route is `voice-harness`. It uses these integration endpoints:
 - `GET /api/llm_gateway/harness/runs/{run_id}/events`
 - `GET /api/llm_gateway/harness/runs/compare`
 - `POST /api/llm_gateway/harness/evaluate`
-- `/api/llm_gateway/static/...`
+- `POST /api/llm_gateway/harness/probe-wyoming`
+- Home Assistant WebSocket subscription `llm_gateway/harness/stream`
+- `/llm_gateway/assets/<installed-version>/...`
 
 The status endpoint returns configuration and availability summaries. Mutable
 memory, feedback, active-run, and deep-task collections are isolated in the
@@ -249,6 +259,10 @@ git diff --check
 
 TypeScript contract checks use `tsgo` through
 `@typescript/native-preview`.
+
+Use `bun run dev:panel` for the local fixture at `http://127.0.0.1:4174`.
+Fixture data tests layout; authenticate through Home Assistant to verify real
+streaming, probes, saved configuration, and runtime evidence.
 
 ## Security
 

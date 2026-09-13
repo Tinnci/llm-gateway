@@ -6,3 +6,6 @@ import "./voice-harness-run-list";
 import "./voice-harness-stat";
 
 export { resolveReplayPair } from "./voice-harness-replay-diff";
+
+export { renderHarnessShell } from "./voice-harness-shell";
+export { voiceSettingsRequest } from "./voice-harness-audio-settings";

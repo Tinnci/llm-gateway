@@ -3,8 +3,8 @@
 Voice Harness is a Home Assistant diagnostic tool. It is not a general LLM
 observability platform.
 
-This document compares relevant open-source interfaces and defines the
-frontend boundary for this repository.
+The four views use Lit and TypeScript. This document records their ownership,
+visual rules, and evidence boundary. 四个面板共享设计系统，同时保留观测与执行的边界。
 
 ## Open-source comparison
 
@@ -41,16 +41,55 @@ Create a custom element when a unit owns at least one of these concerns:
 Use a function for a pure data projection. Use shared CSS for visual rules
 without behavior. Do not create a component only to replace one `div`.
 
-Current foundation:
+Current ownership:
 
-- `voice-harness-navigation.ts` owns tab semantics and keyboard navigation;
-- `voice-harness-overview.ts` owns overview composition, navigation, and disclosure state;
-- `voice-harness-run-list.ts` owns compact run selection and list keyboard behavior;
-- `voice-harness-stat.ts` owns the shared status metric presentation;
-- `voice-harness-styles.ts` owns component box, spacing, control, and focus rules;
-- `voice-harness-api.ts` owns transport and runtime validation;
-- `voice-harness-model.ts` owns pure display projections;
-- `voice-harness-view-registry.js` owns top-level capability registration.
+| Module | Responsibility / 职责 |
+| --- | --- |
+| `voice-harness-shell.ts` | Four mounted views; switching keeps forms, selection, and stream state. |
+| `voice-harness-navigation.ts` | Tabs, arrow keys, Home/End, and 1–4 shortcuts outside editable fields. |
+| `voice-harness-overview.ts`, `voice-harness-stat.ts` | Bento composition, observed metrics, sparklines, and supporting diagnostics. |
+| `voice-harness-runs.ts` | Filters, modal trace drawer, stage disclosure, dialogue, local audio, and comparison. |
+| `voice-harness-playground.ts` | Scenario assertions and cancellable provider streaming. |
+| `voice-harness-settings.ts`, `voice-harness-audio-settings.ts` | Four settings groups, probes, 400 ms audio saving, scene presets, and preview. |
+| `voice-harness-portability.ts` | Allowlisted JSON/YAML tuning files; credentials remain excluded. |
+| `voice-harness-model.ts`, `voice-harness-live-model.ts` | Pure evidence projections, fresh activity, and PCM conversion. |
+| `voice-harness-styles.ts` | Shared surfaces, typography, spacing, colors, motion, controls, and focus. |
+| `voice-harness-api.ts` | HA transport, response validation, and useful HA error messages. |
+| `voice-harness-panel.js` | HA adapter and existing configuration editors; supplies snapshots and callbacks. |
+
+The adapter polls visible runtime data every five seconds. It assigns new
+entry snapshots and preserves configuration input nodes while polling. Saved
+configuration and unsaved form values have separate lifetimes. Closing a trace
+clears the selection and restores focus to its opener.
+
+## Visual and interaction rules / 视觉与交互
+
+Shared CSS tokens derive from Home Assistant theme colors. Warm and cool
+gradients stay behind readable content. Bento grids reflow without a second
+mobile interface; controls have a minimum 44 px touch target. Dialogs become
+full-width inspection surfaces on narrow screens.
+
+View Transitions enhance navigation when supported. Reduced-motion settings
+disable nonessential animation. Fresh display events may animate activity;
+expired events cannot imply a live microphone. Keyboard focus remains visible,
+and native modal dialogs provide Escape handling and focus containment.
+
+## Evidence and test boundaries / 证据边界
+
+- Metrics use retained, settled live turns. Dry-run forks cannot improve live
+  success rates. Empty samples and missing token counts render as unknown.
+- The six-stage waterfall uses recorded offsets and durations. Independent
+  producer clocks are never subtracted to invent a common timing axis.
+- Failed speech validation remains a failed outcome if its bounded repair
+  fails. A repaired answer may complete and request a follow-up normally.
+- Model previews stream the configured primary provider. Tool calls remain
+  proposals. Text scenarios do not measure acoustic or network reliability.
+- Action replay only supports recorded deterministic local actions. General
+  model replies can be compared; new model generation belongs in Test.
+- The trace store has no microphone recordings. WAV/PCM audition uses a file
+  selected by the administrator and keeps it inside the browser.
+- Wyoming probes measure TCP connection latency. TTS probes measure synthesis,
+  and audio preview reports the satellite's result; none proves human audibility.
 
 ## TypeScript and library policy
 
@@ -82,15 +121,7 @@ Pure projections use Bun tests. Lit components use a DOM implementation and
 assert rendered semantics and user events. A component test does not inspect
 private CSS class names.
 
-## Migration order
-
-1. Keep the four-task shell and shared foundation stable.
-2. Keep Overview's typed model and slotted domain evidence narrow.
-3. Continue moving selected-run detail sections out of the panel after the
-   run list and single-detail surface are stable.
-4. Move Test and Settings one complete workflow at a time.
-5. Convert the remaining panel container to Lit and replace manual full-root
-   `innerHTML` rendering.
-
-Do not split helpers only to lower line count. Each migration must remove an
-owned behavior from `voice-harness-panel.js`.
+The Phase 9 migration removes the obsolete Overview, Runs, Test, and Settings
+render paths from the adapter. Existing configuration editors remain slotted
+into the Lit settings view. See [target-device verification](voice-harness-phase9-2026-09-13.md)
+for measured layouts and runtime checks.

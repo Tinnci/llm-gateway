@@ -296,7 +296,16 @@ function parseHarnessStatus(input) {
 }
 async function requestHarnessJson(hass, method, path, payload) {
   if (hass?.callApi) {
-    return await hass.callApi(method, path, payload);
+    try {
+      return await hass.callApi(method, path, payload);
+    } catch (error) {
+      if (!isRecord(error) || !isRecord(error.body))
+        throw error;
+      const body = error.body;
+      throw Object.assign(new Error(typeof body.message === "string" ? body.message : String(error.error || "Home Assistant request failed")), {
+        code: typeof body.code === "string" ? body.code : ""
+      });
+    }
   }
   const response = await fetch(`/api/${path}`, {
     method,

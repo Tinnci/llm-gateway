@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, call, patch
 
 import pytest
 from homeassistant.components import frontend
 from homeassistant.const import CONF_API_KEY
 from homeassistant.setup import async_setup_component
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.llm_gateway.api import (
     LatencySample,
@@ -92,36 +93,50 @@ async def test_panel_static_module_is_served(hass, hass_client):
     assert "immutable" not in legacy.headers.get("Cache-Control", "")
 
 
-async def test_panel_uses_task_navigation_and_one_config_form(hass, hass_client):
-    """The panel serves four task views and no legacy settings form."""
+async def test_harness_unknown_sensor_stays_unavailable(hass, hass_client):
+    """An existing entity with no physical state is not an available observation."""
     assert await async_setup_component(hass, "http", {})
-
+    hass.states.async_set("sensor.kukui_asr_metrics", "unavailable")
     await async_setup_panel(hass)
     client = await hass_client()
+    response = await client.get("/api/llm_gateway/harness/status")
+    state = (await response.json())["satellite"]["states"]["asr_metrics"]
+    assert state["state"] == "unavailable"
+    assert state["available"] is False
 
-    response = await client.get(PANEL_MODULE)
+
+async def test_wyoming_probe_reports_transport_evidence_for_configured_hosts(
+    hass, hass_client
+):
+    """A probe cannot target an imported host or imply speech recognition."""
+    assert await async_setup_component(hass, "http", {})
+    for title, port in (("ASR", 10700), ("Wake", 10400)):
+        MockConfigEntry(
+            domain="wyoming", title=title, data={"host": "127.0.0.1", "port": port}
+        ).add_to_hass(hass)
+    await async_setup_panel(hass)
+    client = await hass_client()
+    writer = SimpleNamespace(close=Mock(), wait_closed=AsyncMock())
+    with patch(
+        "custom_components.llm_gateway.views.asyncio.open_connection",
+        side_effect=[(None, writer), OSError("offline")],
+    ) as connect:
+        response = await client.post(
+            "/api/llm_gateway/harness/probe-wyoming",
+            json={"host": "unconfigured.invalid", "port": 1234},
+        )
     assert response.status == 200
-    body = await response.text()
-    # The task navigation is small and the settings view keeps one config form.
-    assert 'labelKey: "tab.overview"' in body
-    assert 'labelKey: "tab.runs"' in body
-    assert 'labelKey: "tab.test"' in body
-    assert 'labelKey: "tab.settings"' in body
-    assert "<voice-harness-overview>" in body
-    assert 'data-form="config"' in body
-    assert "configCard" in body
-    assert "config.group_core" in body
-    assert "config.group_audio_traces" in body
-    # Legacy Settings form and its API path are gone from the bundle.
-    assert 'data-form="settings"' not in body
-    assert 'labelKey: "tab.config"' not in body
-    assert 'labelKey: "tab.satellite"' not in body
-    assert 'labelKey: "tab.policies"' not in body
-    assert 'labelKey: "tab.scenarios"' not in body
-    assert 'labelKey: "tab.memory"' not in body
-    # Earcons stay inside Settings instead of returning as a dedicated tab.
-    assert '"tab.earcons"' not in body
-    assert "_renderEarcons()" in body
+    results = (await response.json())["results"]
+    assert results[0]["connected"] is True
+    assert results[0]["evidence"] == "tcp_connection"
+    assert results[0]["latency_ms"] >= 0
+    assert results[1] == {"name": "Wake", "connected": False, "error": "unreachable"}
+    assert connect.call_args_list == [
+        call("127.0.0.1", 10700),
+        call("127.0.0.1", 10400),
+    ]
+    writer.close.assert_called_once()
+    writer.wait_closed.assert_awaited_once()
 
 
 async def test_harness_config_api_get_redacts_secrets(

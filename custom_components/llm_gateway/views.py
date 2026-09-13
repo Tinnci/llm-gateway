@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
 
@@ -458,6 +459,7 @@ def async_register_views(hass: HomeAssistant) -> None:
     hass.http.register_view(HarnessConfigTestView)
     hass.http.register_view(HarnessConfigModelsView)
     hass.http.register_view(HarnessConfigLatencyView)
+    hass.http.register_view(HarnessWyomingProbeView)
     hass.http.register_view(HarnessFactsView)
 
 
@@ -1193,6 +1195,42 @@ class HarnessConfigLatencyView(HomeAssistantView):
         return self.json({"results": [sample.as_dict() for sample in samples]})
 
 
+class HarnessWyomingProbeView(HomeAssistantView):
+    """Measure transport reachability of the configured Wyoming services."""
+
+    name = f"api:{DOMAIN}:harness:probe_wyoming"
+    url = f"{API_BASE}/harness/probe-wyoming"
+
+    @require_admin
+    async def post(self, request: web.Request) -> web.Response:
+        """Probe configured hosts without sending capture or playback commands."""
+        hass: HomeAssistant = request.app["hass"]
+        endpoints = [
+            (entry.title, str(entry.data.get("host") or ""), entry.data.get("port"))
+            for entry in hass.config_entries.async_entries("wyoming")
+        ]
+
+        async def probe(name: str, host: str, port: object) -> dict[str, Any]:
+            started = time.monotonic()
+            try:
+                async with asyncio.timeout(5):
+                    _, writer = await asyncio.open_connection(host, int(port))
+                    writer.close()
+                    await writer.wait_closed()
+                return {
+                    "name": name,
+                    "connected": True,
+                    "latency_ms": round((time.monotonic() - started) * 1000),
+                    "evidence": "tcp_connection",
+                }
+            except (OSError, TimeoutError, ValueError, TypeError):
+                return {"name": name, "connected": False, "error": "unreachable"}
+
+        return self.json(
+            {"results": await asyncio.gather(*(probe(*item) for item in endpoints))}
+        )
+
+
 class HarnessFactsView(HomeAssistantView):
     """Create one explicit evidence-backed fact from the admin Harness."""
 
@@ -1415,7 +1453,7 @@ def _entity_state(hass: HomeAssistant, entity_id: str) -> dict[str, Any]:
     return {
         "entity_id": entity_id,
         "state": state.state,
-        "available": True,
+        "available": state.state not in {"unknown", "unavailable"},
         "name": state.attributes.get("friendly_name") or entity_id,
         "unit": state.attributes.get("unit_of_measurement") or "",
         "attributes": {

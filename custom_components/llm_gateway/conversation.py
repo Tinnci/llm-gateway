@@ -1575,7 +1575,7 @@ class LLMGatewayConversationEntity(
             turn_token,
         )
 
-    async def _async_finalize_turn(  # noqa: PLR0913, PLR0917
+    async def _async_finalize_turn(  # noqa: PLR0913, PLR0915, PLR0917
         self,
         user_input: conversation.ConversationInput,
         chat_log: conversation.ChatLog,
@@ -1644,6 +1644,7 @@ class LLMGatewayConversationEntity(
         _safe_assistant_text, output_modified, output_reason = enforce_output_contract(
             assistant_text
         )
+        output_failed = output_modified
         if output_modified:
             self._mark_run(
                 runtime,
@@ -1669,6 +1670,7 @@ class LLMGatewayConversationEntity(
                     enforce_output_contract(repaired_text)
                 )
                 if not repaired_modified:
+                    output_failed = False
                     assistant_text = repaired_safe
                     result.response.async_set_speech(assistant_text)
                     self._mark_run(
@@ -1718,6 +1720,15 @@ class LLMGatewayConversationEntity(
                         "result": "repair_unavailable",
                     },
                 )
+        if output_failed:
+            route_trace = {
+                **route_trace,
+                "terminal_outcome": "failed",
+                "outcome_verdict": {
+                    "answerable": False,
+                    "reason": "output_contract_failed",
+                },
+            }
         frame_stack = self._dialogue_frames.get(
             dialogue_pending_key(
                 user_input.conversation_id,
@@ -1728,7 +1739,7 @@ class LLMGatewayConversationEntity(
         awaiting_reply = bool(frame_stack and frame_stack.active_frame())
         result.continue_conversation = bool(
             assistant_text.strip()
-            and not output_modified
+            and not output_failed
             and (awaiting_reply or assistant_text.rstrip().endswith(("?", "？", ";")))
         )
         self._mark_run(
@@ -1747,7 +1758,7 @@ class LLMGatewayConversationEntity(
             assistant_text,
         )
         latency_ms = int((time.monotonic() - started) * 1000)
-        status = _trace_status(assistant_text)
+        status = "error" if output_failed else _trace_status(assistant_text)
         self._final_feedback(runtime, run_id, status, latency_ms, assistant_text)
         timeline = runtime.voice_runs.finish(
             run_id,

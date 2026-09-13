@@ -130,7 +130,7 @@ describe("Voice Harness overview", () => {
     document.body.append(overview);
     await overview.updateComplete;
 
-    expect(overview.shadowRoot?.querySelectorAll("voice-harness-stat")).toHaveLength(1);
+    expect(overview.shadowRoot?.querySelectorAll("voice-harness-stat")).toHaveLength(4);
     const disclosures = overview.shadowRoot?.querySelectorAll("details") || [];
     expect(disclosures).toHaveLength(2);
     expect(disclosures[1]?.open).toBe(true);

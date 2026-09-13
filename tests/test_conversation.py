@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from typing import ClassVar
 from unittest.mock import patch
 
+import pytest
 from homeassistant.components import conversation
 from homeassistant.const import ATTR_ENTITY_ID, CONF_LLM_HASS_API
 from homeassistant.core import Context, SupportsResponse
@@ -2327,17 +2328,26 @@ async def test_converse_sanitizes_markdown_for_tts(
     assert result.continue_conversation is False
 
 
+@pytest.mark.parametrize(
+    ("repaired", "continues"),
+    [
+        (
+            (
+                "李清照很有代表性的名作是《如梦令·常记溪亭日暮》。"
+                "全文是：常记溪亭日暮，沉醉不知归路。"
+            ),
+            False,
+        ),
+        ("李清照的《如梦令》很有名。想听全文吗？", True),
+    ],
+)
 async def test_converse_retries_unsafe_reasoning_repetition_output(
-    hass, aioclient_mock, mock_config_entry
+    hass, aioclient_mock, mock_config_entry, repaired, continues
 ):
     unsafe = (
         "We need to respond with spoken answer, plain text, no markdown. "
         "The user wants to search and give the full text. "
         'Likely "如梦令·常记溪亭日暮". ' + 'She also wrote "如梦令·常记溪亭日暮". ' * 12
-    )
-    repaired = (
-        "李清照很有代表性的名作是《如梦令·常记溪亭日暮》。"
-        "全文是：常记溪亭日暮，沉醉不知归路。"
     )
     aioclient_mock.get(
         MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
@@ -2383,7 +2393,11 @@ async def test_converse_retries_unsafe_reasoning_repetition_output(
         )
 
     assert result.response.speech["plain"]["speech"] == repaired
+    assert result.continue_conversation is continues
     trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+    assert trace["status"] == "complete"
+    assert trace["route"]["terminal_outcome"] != "failed"
+    assert trace["display_status"]["latest"]["state"] == "done"
     spans = trace["timeline_spans"]
     validator = next(
         span for span in spans if span["stage"] == "output_contract_validator"
@@ -2399,6 +2413,64 @@ async def test_converse_retries_unsafe_reasoning_repetition_output(
     assert repair_call["tools"] is None
     assert repair_call["tool_choice"] == "none"
     assert "被拦截的输出片段" in repair_call["messages"][-1]["content"]
+
+
+@pytest.mark.parametrize("repair_result", ["rejected", "empty", "provider_error"])
+async def test_failed_output_repair_records_terminal_failure(
+    hass, aioclient_mock, mock_config_entry, repair_result
+):
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {CONF_DIAGNOSTIC_TRACES: True, CONF_TRACE_INCLUDE_RAW_MESSAGES: True},
+    )
+    unsafe = "We need to respond with spoken answer, plain text, no markdown."
+    completion_calls = 0
+
+    async def fake_completion(**kwargs: object):
+        nonlocal completion_calls
+        completion_calls += 1
+        if completion_calls == 2 and repair_result == "provider_error":
+            raise LLMGatewayConnectionError("Repair provider unavailable")
+        content = unsafe if completion_calls == 1 or repair_result == "rejected" else ""
+        return SimpleNamespace(
+            message={"role": "assistant", "content": content},
+            provider={"name": "primary", "fallback_used": False},
+            attempts=[],
+        )
+
+    with patch(
+        "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
+        side_effect=fake_completion,
+    ):
+        result = await conversation.async_converse(
+            hass, "我不知道，请直接告诉我谜底。", None, Context(), agent_id=agent_id
+        )
+
+    assert "自动重试失败" in result.response.speech["plain"]["speech"]
+    assert result.continue_conversation is False
+    assert completion_calls == 2
+    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+    assert trace["status"] == "error"
+    assert trace["route"]["terminal_outcome"] == "failed"
+    assert trace["route"]["outcome_verdict"] == {
+        "answerable": False,
+        "reason": "output_contract_failed",
+    }
+    assert trace["display_status"]["latest"]["state"] == "failed"
+    retry = next(
+        span
+        for span in trace["timeline_spans"]
+        if span["stage"] == "output_contract_retry"
+    )
+    assert retry["attrs"]["result"] == (
+        "repair_failed_contract"
+        if repair_result == "rejected"
+        else "repair_unavailable"
+    )
 
 
 async def test_converse_deep_route_submits_background_task(

@@ -2,7 +2,9 @@
 <html lang="zh-Hans">
   <head>
     <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>Voice Harness UI Fixture</title>
+    <link rel="icon" href="data:," />
     <style>
       :root {
         --primary-text-color: #111827;
@@ -15,6 +17,18 @@
         --success-color: #15803d;
         --warning-color: #b45309;
         --error-color: #b91c1c;
+      }
+      :root[data-theme="dark"] {
+        --primary-text-color: #e7edf0;
+        --secondary-text-color: #a3b1bb;
+        --primary-background-color: #141b20;
+        --card-background-color: #1b252c;
+        --divider-color: #3a4751;
+        --primary-color: #8cbdc5;
+        --text-primary-color: #14232a;
+        --success-color: #8bcab2;
+        --warning-color: #dabb8c;
+        --error-color: #eaa6a0;
       }
       body {
         margin: 0;
@@ -29,6 +43,28 @@
     <script type="module">
       import { evaluateScenarioDraft } from "../custom_components/llm_gateway/frontend/voice-harness-scenario.js";
 
+      if (!customElements.get("ha-icon")) customElements.define("ha-icon", class extends HTMLElement {
+        constructor() {super(); this.attachShadow({mode:"open"});}
+        static get observedAttributes() {return ["icon"];}
+        connectedCallback() {this.draw();}
+        attributeChangedCallback() {this.draw();}
+        draw() {
+          const icon = this.getAttribute("icon") || "";
+          const path = /microphone/.test(icon) ? '<rect x="9" y="3" width="6" height="12" rx="3"/><path d="M6 10v2a6 6 0 0 0 12 0v-2M12 18v3M9 21h6"/>'
+            : /wave|pulse/.test(icon) ? '<path d="M3 12h3l2-6 4 12 3-12 2 6h4"/>'
+            : /cog|tune/.test(icon) ? '<path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="10" cy="18" r="2"/>'
+            : /dashboard/.test(icon) ? '<rect x="3" y="3" width="7" height="10" rx="2"/><rect x="14" y="3" width="7" height="6" rx="2"/><rect x="3" y="17" width="7" height="4" rx="1"/><rect x="14" y="13" width="7" height="8" rx="2"/>'
+            : /refresh|reply/.test(icon) ? '<path d="M5 9a8 8 0 1 1 0 6M5 3v6h6"/>'
+            : /check/.test(icon) ? '<circle cx="12" cy="12" r="9"/><path d="m7 12 3 3 7-7"/>'
+            : /volume/.test(icon) ? '<path d="M3 9h4l5-4v14l-5-4H3zM16 8a6 6 0 0 1 0 8M19 5a10 10 0 0 1 0 14"/>'
+            : /timer|clock/.test(icon) ? '<circle cx="12" cy="13" r="8"/><path d="M12 8v5l3 2M9 2h6"/>'
+            : /compare/.test(icon) ? '<path d="M3 8h17l-4-4M21 16H4l4 4"/>'
+            : /flask/.test(icon) ? '<path d="M9 3h6M10 3v7L4 20h16l-6-10V3M8 14h8"/>'
+            : /creation/.test(icon) ? '<path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5z"/>'
+            : '<rect x="4" y="4" width="16" height="16" rx="5"/><path d="m10 8 5 4-5 4"/>';
+          this.shadowRoot.innerHTML = '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + path + '</svg>';
+        }
+      });
       const fixture = {
         domain: "llm_gateway",
         panel: {
@@ -526,44 +562,55 @@
           entry.feedback.latest_display = null;
         }
       }
-      const fixtureTabs = new Set(["runs", "settings", "satellite", "policies", "scenarios", "memory", "earcons"]);
-      if (initialTab && fixtureTabs.has(initialTab)) {
-        panel._activeTab = initialTab;
-      }
+      const fixtureTabs = new Set(["overview", "runs", "test", "settings"]);
+      if (initialTab && fixtureTabs.has(initialTab)) panel._activeTab = initialTab;
+      document.documentElement.dataset.theme = params.get("theme") || "light";
+      const language = params.get("language") || "zh-Hans";
+      document.documentElement.lang = language;
+      const fixtureConfig = { entries: fixture.entries.map((entry) => ({
+        entry_id: entry.entry_id, title: entry.title, state: "loaded", revision: "fixture-1", base_url: entry.base_url,
+        options: {routing_mode:"auto", fast_model:"voice-fast", mid_model:"voice-mid", deep_model:"voice-deep", fast_max_tokens:1024, mid_max_tokens:2048, deep_max_tokens:4096, fast_chat_timeout:30, mid_chat_timeout:60, deep_chat_timeout:120, temperature:0.3, top_p:1, diagnostic_traces:true, trace_include_raw_messages:false, trace_max_runs:30, trace_retention_hours:24, first_response_audio_enabled:true, first_response_adapter:"local"},
+        model_candidates:["voice-fast", "voice-mid", "voice-deep"], llm_hass_apis:[{id:"assist", name:"Assist"}],
+      })) };
+      let audio = {wake_cue_volume:1, follow_up_cue_volume:1, processing_volume:0.58, tts_volume_day:1, tts_volume_night:0.72, fallback_volume:1, audio_muted:false, night_mode:false};
       panel.hass = {
-        locale: { language: "zh-Hans" },
-        selectedLanguage: "zh-Hans",
-        callApi(method, path, payload) {
-          if (method === "GET" && path === "llm_gateway/harness/status") {
-            return Promise.resolve(fixture);
+        locale: {language}, selectedLanguage: language,
+        async callApi(method, path, payload) {
+          if (method === "GET" && path === "llm_gateway/harness/status") return structuredClone(fixture);
+          if (method === "GET" && path.startsWith("llm_gateway/harness/runtime")) return structuredClone({...fixture.entries[0], trace_storage:fixture.entries[0].traces.storage});
+          if (method === "GET" && path.startsWith("llm_gateway/harness/runs?")) return structuredClone({records:fixture.entries[0].traces.records});
+          if (method === "GET" && path.startsWith("llm_gateway/harness/runs/")) return structuredClone({record:fixture.entries[0].traces.records.find((record) => (record.run_id || record.id) === decodeURIComponent(path.split("/").at(-1).split("?")[0]))});
+          if (method === "GET" && path === "llm_gateway/harness/config") return structuredClone(fixtureConfig);
+          if (method === "POST" && path === "llm_gateway/harness/config") return {entry:structuredClone(fixtureConfig.entries[0])};
+          if (method === "POST" && path === "llm_gateway/harness/evaluate") return evaluateScenarioDraft(payload);
+          if (path.startsWith("services/rest_command/kukui_voice_")) {
+            audio = {...audio, ...(payload?.config || {})};
+            return {service_response:{status:200, content:{ok:true, config:audio, apply:{applied:true}, status:audio.audio_muted?"muted":"played", runtime:{phase:"idle", capture:"wake_word", tts_profile:"day", tts_volume:audio.tts_volume_day}}}};
           }
-          if (method === "POST" && path === "llm_gateway/harness/evaluate") {
-            return Promise.resolve(evaluateScenarioDraft(payload));
-          }
-          return Promise.reject(new Error(`unexpected API call: ${method} ${path}`));
+          if (path === "llm_gateway/harness/config/test-connection") return {ok:true, models:["voice-fast"]};
+          if (path === "llm_gateway/harness/config/models") return {models:["voice-fast", "voice-mid", "voice-deep"]};
+          if (path === "llm_gateway/harness/config/latency") return {results:payload.models.map((model) => ({model,ok:true,ttft_ms:125,total_ms:400,tokens:12,tps:30}))};
+          if (path === "llm_gateway/harness/probe-wyoming") return {results:[{name:"Fixture ASR",connected:true,latency_ms:4,evidence:"tcp_connection"}]};
+          throw new Error(`Unexpected fixture API: ${method} ${path}`);
+        },
+        async callService() {},
+        connection: {
+          async subscribeMessage(callback, message) {
+            let stopped = false;
+            const response = language.startsWith("zh") ? "我可以帮你了解当前房间的环境。请提供最新的传感器观测。" : "I can help with the room conditions. Please provide the latest sensor observation.";
+            const parts = [...response];
+            callback({type:"route",route:message.route || "fast",model:"fixture-model"});
+            const timer = setInterval(() => {
+              if (stopped) return;
+              const text = parts.shift();
+              if (text) callback({type:"token",text});
+              else {clearInterval(timer); callback({type:"usage",usage:{input_tokens:38,output_tokens:24}}); callback({type:"complete",response,passed:true,violations:[],mode:"model_preview"});}
+            }, 35);
+            return () => {stopped = true; clearInterval(timer);};
+          },
         },
       };
-      setInterval(() => {
-        const root = panel.shadowRoot;
-        if (!root) {
-          return;
-        }
-        root.querySelectorAll("details.traceCard").forEach((details) => {
-          details.open = true;
-        });
-      }, 100);
-      let fixtureScenarioRan = false;
-      setInterval(() => {
-        if (fixtureScenarioRan || params.get("run") !== "scenario") {
-          return;
-        }
-        const root = panel.shadowRoot;
-        const button = root?.querySelector('form[data-form="scenario"] button[type="submit"]');
-        if (button) {
-          fixtureScenarioRan = true;
-          button.click();
-        }
-      }, 100);
+      if (initialTab === "settings") await panel._loadConfig();
     </script>
   </body>
 </html>
