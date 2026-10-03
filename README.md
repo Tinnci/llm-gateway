@@ -32,6 +32,8 @@ tool policy.
 ### Home Assistant control
 
 - Optional Assist LLM API tools
+- Execution-time validation against the committed request's allowed tools; an
+  out-of-scope call blocks the entire proposed batch before dispatch
 - Confirmation for high-risk actions
 - Deterministic low-risk batch control
 - Hidden, disabled, unavailable, and diagnostic entity exclusion

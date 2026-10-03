@@ -2169,8 +2169,9 @@ async def test_weather_forecast_uses_ha_weather_forecast_service_before_search(
     assert trace["weather_context_path"]["path"] == "weather_entity"
 
 
-async def test_explicit_web_weather_can_search_without_repeating_live_context(
-    hass, aioclient_mock, mock_config_entry
+@pytest.mark.parametrize("unexpected_live_context", [False, True])
+async def test_explicit_web_weather_search_keeps_committed_tool_scope(
+    hass, aioclient_mock, mock_config_entry, unexpected_live_context
 ):
     aioclient_mock.get(
         MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
@@ -2213,20 +2214,23 @@ async def test_explicit_web_weather_can_search_without_repeating_live_context(
                     }
                 ],
             },
-            {
-                "role": "assistant",
-                "tool_calls": [
-                    {
-                        "id": "live-1",
-                        "type": "function",
-                        "function": {
-                            "name": LIVE_CONTEXT_TOOL_NAME,
-                            "arguments": "{}",
-                        },
-                    }
-                ],
-            },
-            {"role": "assistant", "content": "今天多云。"},
+            (
+                {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": "live-1",
+                            "type": "function",
+                            "function": {
+                                "name": LIVE_CONTEXT_TOOL_NAME,
+                                "arguments": "{}",
+                            },
+                        }
+                    ],
+                }
+                if unexpected_live_context
+                else {"role": "assistant", "content": "今天多云。"}
+            ),
         ]
     )
 
@@ -2245,7 +2249,9 @@ async def test_explicit_web_weather_can_search_without_repeating_live_context(
             hass, "帮我网上查一下今天的天气。", None, Context(), agent_id=agent_id
         )
 
-    assert result.response.speech["plain"]["speech"] == "今天多云。"
+    assert result.response.speech["plain"]["speech"] == (
+        "这个请求不允许执行该工具。" if unexpected_live_context else "今天多云。"
+    )
     trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
     assert trace["search_debug"]["searched"]
     assert trace["search_gate"]["decision"] == "external_search_requested"
@@ -2263,8 +2269,77 @@ async def test_explicit_web_weather_can_search_without_repeating_live_context(
                 if tool["phase"] == "call" and tool["name"] == LIVE_CONTEXT_TOOL_NAME
             ]
         )
-        == 1
+        == 0
     )
+
+
+@pytest.mark.parametrize("action_first", [False, True])
+async def test_out_of_scope_tool_blocks_entire_mixed_batch_before_dispatch(
+    hass, aioclient_mock, mock_config_entry, action_first
+):
+    aioclient_mock.get(
+        MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
+    )
+    agent_id = await _setup_agent(
+        hass,
+        mock_config_entry,
+        {
+            CONF_LLM_HASS_API: "assist",
+            CONF_SEARCH_ENABLED: True,
+            CONF_TAVILY_API_KEY: "tvly-test",
+            CONF_DIAGNOSTIC_TRACES: True,
+        },
+    )
+    calls = [
+        {
+            "id": "allowed-search",
+            "type": "function",
+            "function": {
+                "name": "search_web",
+                "arguments": '{"query":"上海静安 麦当劳"}',
+            },
+        },
+        {
+            "id": "unadvertised-action",
+            "type": "function",
+            "function": {
+                "name": "intent__HassTurnOn",
+                "arguments": '{"domain":"light","name":"卧室灯"}',
+            },
+        },
+    ]
+    if action_first:
+        calls.reverse()
+    with (
+        patch(
+            "custom_components.llm_gateway.conversation.async_chat_completion_with_fallback",
+            return_value=SimpleNamespace(
+                message={"role": "assistant", "tool_calls": calls},
+                provider={"name": "primary", "fallback_used": False},
+                attempts=[],
+            ),
+        ),
+        patch.object(llm.APIInstance, "async_call_tool") as ha_call,
+        patch(
+            "custom_components.llm_gateway.tools_registry.async_execute_search_tool"
+        ) as search_call,
+    ):
+        result = await conversation.async_converse(
+            hass,
+            "上海静安附近最近的麦当劳在哪里？",
+            None,
+            Context(),
+            agent_id=agent_id,
+        )
+    ha_call.assert_not_called()
+    search_call.assert_not_called()
+    assert result.response.speech["plain"]["speech"] == "这个请求不允许执行该工具。"
+    trace = mock_config_entry.runtime_data.trace_store.snapshot()["records"][0]
+    blocked = [
+        span for span in trace["timeline_spans"] if span["stage"] == "tool_policy_block"
+    ]
+    assert len(blocked) == 1
+    assert not any(span["stage"] == "tool_result" for span in trace["timeline_spans"])
 
 
 async def test_converse_records_high_risk_confirmation_feedback(

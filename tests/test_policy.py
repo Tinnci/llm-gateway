@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
 from homeassistant.helpers import llm
 
 from custom_components.llm_gateway.capabilities import decide_route
@@ -78,13 +79,25 @@ def test_namespaced_high_risk_tool_still_requires_confirmation():
     assert validate_tool_call(call, "确认打开前门").allowed
 
 
-def test_low_risk_home_action_allowed():
+def test_low_risk_home_action_allowed_when_route_authorizes_tool():
     call = llm.ToolInput(
         id="1",
         tool_name="HassTurnOn",
         tool_args={"domain": "light", "name": "卧室灯"},
     )
-    assert validate_tool_call(call, "打开卧室灯").allowed
+    route = replace(decide_route("打开卧室灯"), allowed_tools=("HassTurnOn",))
+    assert validate_tool_call(call, "打开卧室灯", route).allowed
+
+
+def test_deterministic_control_does_not_authorize_duplicate_model_control():
+    route = decide_route("打开卧室灯")
+    call = llm.ToolInput(
+        id="duplicate-control",
+        tool_name="HassTurnOn",
+        tool_args={"domain": "light", "name": "卧室灯"},
+    )
+    assert route.allowed_tools == ("local_service_call",)
+    assert not validate_tool_call(call, "打开卧室灯", route).allowed
 
 
 def test_missing_location_blocks_search_with_permission_prompt():
@@ -178,3 +191,42 @@ def test_search_keywords_preserve_committed_local_tool_scope():
     route = decide_route("打开卧室灯")
     assert not should_allow_search("网上搜索最新价格", route)
     assert not should_force_search_in_voice_path("网上搜索最新价格", route)
+
+
+@pytest.mark.parametrize("name", ["HassTurnOn", "intent__HassTurnOn"])
+def test_read_only_route_cannot_execute_a_model_proposed_action(name):
+    route = decide_route("卧室温度现在多少？")
+    call = llm.ToolInput(
+        id="unadvertised-action",
+        tool_name=name,
+        tool_args={"domain": "light", "name": "卧室灯"},
+    )
+    assert route.allowed_tools == ("GetLiveContext",)
+    decision = validate_tool_call(call, "卧室温度现在多少？", route)
+    assert not decision.allowed
+    assert decision.reason == "tool_not_allowed"
+
+
+def test_confirmation_cannot_expand_the_committed_tool_scope():
+    route = decide_route("卧室温度现在多少？")
+    call = llm.ToolInput(
+        id="out-of-scope-lock",
+        tool_name="intent__HassTurnOn",
+        tool_args={"domain": "lock", "name": "前门门锁"},
+    )
+    assert not validate_tool_call(call, "确认打开前门", route).allowed
+
+
+@pytest.mark.parametrize("name", ["GetLiveContext", "homeassistant__GetLiveContext"])
+def test_read_only_route_keeps_its_authorized_read_tool(name):
+    route = decide_route("卧室温度现在多少？")
+    call = llm.ToolInput(id="authorized-read", tool_name=name, tool_args={})
+    assert validate_tool_call(call, "卧室温度现在多少？", route).allowed
+
+
+def test_other_namespaces_cannot_borrow_an_authorized_suffix():
+    route = decide_route("卧室温度现在多少？")
+    call = llm.ToolInput(
+        id="other-namespace", tool_name="thirdparty__GetLiveContext", tool_args={}
+    )
+    assert not validate_tool_call(call, "卧室温度现在多少？", route).allowed

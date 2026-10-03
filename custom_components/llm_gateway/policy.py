@@ -94,6 +94,20 @@ def validate_tool_call(  # noqa: PLR0911
             ),
         )
 
+    # Model-visible schemas are guidance, not execution authority. Validate
+    # every proposed call against the committed route before any dispatch.
+    if canonical_ha_tool_name(tool_call.tool_name) not in route.allowed_tools:
+        return PolicyDecision(
+            allowed=False,
+            reason="tool_not_allowed",
+            spoken_prompt="这个请求不允许执行该工具。",
+            metadata=_policy_metadata(
+                route,
+                blocked_reason="tool_not_allowed",
+                policy_name="committed_tool_scope",
+            ),
+        )
+
     if not _is_home_action(tool_call.tool_name):
         return PolicyDecision(allowed=True, metadata=_policy_metadata(route))
 
