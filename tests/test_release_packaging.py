@@ -9,6 +9,7 @@ import zipfile
 from pathlib import Path
 
 import yaml
+from packaging.requirements import Requirement
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -20,7 +21,13 @@ def test_schema_converter_is_an_explicit_runtime_dependency() -> None:
     )
     project = tomllib.loads((ROOT / "pyproject.toml").read_text())
     assert "voluptuous-openapi==0.3.0" in manifest["requirements"]
-    assert "voluptuous-openapi==0.3.0" in project["project"]["dependencies"]
+    requirement = next(
+        Requirement(value)
+        for value in project["project"]["dependencies"]
+        if Requirement(value).name == "voluptuous-openapi"
+    )
+    assert "0.3.0" in requirement.specifier
+    assert "0.4.1" in requirement.specifier
 
 
 def test_release_versions_are_synchronized() -> None:

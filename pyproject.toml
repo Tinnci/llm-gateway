@@ -6,19 +6,25 @@ readme = "README.md"
 requires-python = ">=3.14.2,<3.15"
 license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
 dependencies = [
-    "mistune>=3,<4",
-    "voluptuous-openapi==0.3.0",
+    "mistune>=3.3.4,<4",
+    "voluptuous-openapi>=0.3.0,<0.5",
 ]
 
 [tool.uv]
 package = false
+# HA's test dependencies pin versions with published security fixes.
+override-dependencies = [
+    "cryptography>=50.0.0,<51",
+    "pillow>=12.3.0,<13",
+    "pyjwt>=2.15.0,<3",
+]
 
 [dependency-groups]
 dev = [
     "hassil==3.7.0",
     "home-assistant-intents==2026.6.1",
-    "homeassistant==2026.6.3",
-    "pytest-homeassistant-custom-component==0.13.339",
+    "homeassistant==2026.7.4",
+    "pytest-homeassistant-custom-component==0.13.348",
     "ruff==0.16.7",
 ]
 
