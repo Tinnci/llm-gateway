@@ -113,3 +113,29 @@ jobs:
         with:
           tag: ${{ matrix.channel }}
           config-dir: test_configuration
+
+  runtime-imports:
+    name: Import real platforms on supported HA images
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        ha-version: ["2026.6.3", "2026.9.4"]
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Install declared requirements and import platforms
+        env:
+          HA_VERSION: ${{ matrix.ha-version }}
+        run: |
+          docker run --rm --entrypoint python \
+            -v "$GITHUB_WORKSPACE:/workspace:ro" -w /workspace \
+            "homeassistant/home-assistant:$HA_VERSION" -c '
+          import importlib
+          import json
+          import subprocess
+          requirements = json.load(open("custom_components/llm_gateway/manifest.json"))["requirements"]
+          subprocess.run(["uv", "pip", "install", "--system", *requirements], check=True)
+          for module in ("conversation", "config_flow", "panel"):
+              importlib.import_module(f"custom_components.llm_gateway.{module}")
+          '

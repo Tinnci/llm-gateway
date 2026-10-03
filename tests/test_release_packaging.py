@@ -13,6 +13,16 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_schema_converter_is_an_explicit_runtime_dependency() -> None:
+    """HA 2026.9 no longer supplies Gateway's schema converter transitively."""
+    manifest = json.loads(
+        (ROOT / "custom_components/llm_gateway/manifest.json").read_text()
+    )
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    assert "voluptuous-openapi==0.3.0" in manifest["requirements"]
+    assert "voluptuous-openapi==0.3.0" in project["project"]["dependencies"]
+
+
 def test_release_versions_are_synchronized() -> None:
     manifest = json.loads(
         (ROOT / "custom_components/llm_gateway/manifest.json").read_text()

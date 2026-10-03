@@ -22,6 +22,11 @@ HACS release; use the automatic workflow below to publish an archive.
 2. Run **Release** from `main`, choosing `minor` for 0.4.0.
 3. The reusable Validate workflow runs backend, earcon-tool and Bun tests,
    Ruff, tsgo, frontend builds, Hassfest, HACS and stable/beta HA setup checks.
+   Supported HA 2026.6.3 and 2026.9.4 images also install only the manifest's
+   requirements and import the real conversation, config-flow and panel modules.
+   A YAML-only setup check cannot detect imports reached only by configured
+   entries. Gateway declares its own schema converter instead of relying on
+   HA's former transitive dependency.
 4. The release job checks version sync, bumps all three files, checks the new
    version and lockfile, and rebuilds frontend modules using Bun.
 5. It builds `llm_gateway.zip`, then pushes the release commit and tag atomically
