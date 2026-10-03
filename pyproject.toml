@@ -21,11 +21,13 @@ override-dependencies = [
 
 [dependency-groups]
 dev = [
-    "hassil==3.7.0",
-    "home-assistant-intents==2026.6.1",
-    "homeassistant==2026.7.4",
-    "pytest-homeassistant-custom-component==0.13.348",
-    "ruff==0.16.7",
+    # Match the optional conversation component requirements of stable HA.
+    "gazetteer-matcher==1.1.0",
+    "hassil==3.12.1",
+    "home-assistant-intents==2026.8.28",
+    "homeassistant==2026.9.4",
+    "pytest-homeassistant-custom-component==0.13.367",
+    "ruff==0.16.10",
 ]
 
 [tool.pytest.ini_options]

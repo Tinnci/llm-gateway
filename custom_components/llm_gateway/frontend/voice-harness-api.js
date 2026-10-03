@@ -67,23 +67,16 @@ function _addIssue(context, label, dataset, config$1, other) {
   else
     dataset.issues = [issue];
 }
-var _standardCache = /* @__PURE__ */ new WeakMap;
-function _getStandardProps(context) {
-  let cached = _standardCache.get(context);
-  if (!cached) {
-    cached = {
-      version: 1,
-      vendor: "valibot",
-      validate(value$1) {
-        return context["~run"]({ value: value$1 }, /* @__PURE__ */ getGlobalConfig());
-      }
-    };
-    _standardCache.set(context, cached);
-  }
-  return cached;
-}
 function _isValidObjectKey(object$1, key) {
   return Object.prototype.hasOwnProperty.call(object$1, key) && key !== "__proto__" && key !== "prototype" && key !== "constructor";
+}
+function _standardSchema(schema) {
+  schema["~standard"] = {
+    version: 1,
+    vendor: "valibot",
+    validate: (value$1) => schema["~run"]({ value: value$1 }, /* @__PURE__ */ getGlobalConfig())
+  };
+  return schema;
 }
 function getFallback(schema, dataset, config$1) {
   return typeof schema.fallback === "function" ? schema.fallback(dataset, config$1) : schema.fallback;
@@ -92,7 +85,7 @@ function getDefault(schema, dataset, config$1) {
   return typeof schema.default === "function" ? schema.default(dataset, config$1) : schema.default;
 }
 function array(item, message$1) {
-  return {
+  return _standardSchema({
     kind: "schema",
     type: "array",
     reference: array,
@@ -100,9 +93,6 @@ function array(item, message$1) {
     async: false,
     item,
     message: message$1,
-    get "~standard"() {
-      return /* @__PURE__ */ _getStandardProps(this);
-    },
     "~run"(dataset, config$1) {
       const input = dataset.value;
       if (Array.isArray(input)) {
@@ -141,10 +131,10 @@ function array(item, message$1) {
         _addIssue(this, "type", dataset, config$1);
       return dataset;
     }
-  };
+  });
 }
 function looseObject(entries$1, message$1) {
-  return {
+  return _standardSchema({
     kind: "schema",
     type: "loose_object",
     reference: looseObject,
@@ -152,9 +142,6 @@ function looseObject(entries$1, message$1) {
     async: false,
     entries: entries$1,
     message: message$1,
-    get "~standard"() {
-      return /* @__PURE__ */ _getStandardProps(this);
-    },
     "~run"(dataset, config$1) {
       const input = dataset.value;
       if (input && typeof input === "object") {
@@ -210,26 +197,23 @@ function looseObject(entries$1, message$1) {
         }
         if (!dataset.issues || !config$1.abortEarly) {
           for (const key in input)
-            if (/* @__PURE__ */ _isValidObjectKey(input, key) && !(key in this.entries))
+            if (/* @__PURE__ */ _isValidObjectKey(input, key) && !Object.prototype.hasOwnProperty.call(this.entries, key))
               dataset.value[key] = input[key];
         }
       } else
         _addIssue(this, "type", dataset, config$1);
       return dataset;
     }
-  };
+  });
 }
 function number(message$1) {
-  return {
+  return _standardSchema({
     kind: "schema",
     type: "number",
     reference: number,
     expects: "number",
     async: false,
     message: message$1,
-    get "~standard"() {
-      return /* @__PURE__ */ _getStandardProps(this);
-    },
     "~run"(dataset, config$1) {
       if (typeof dataset.value === "number" && !isNaN(dataset.value))
         dataset.typed = true;
@@ -237,19 +221,16 @@ function number(message$1) {
         _addIssue(this, "type", dataset, config$1);
       return dataset;
     }
-  };
+  });
 }
 function string(message$1) {
-  return {
+  return _standardSchema({
     kind: "schema",
     type: "string",
     reference: string,
     expects: "string",
     async: false,
     message: message$1,
-    get "~standard"() {
-      return /* @__PURE__ */ _getStandardProps(this);
-    },
     "~run"(dataset, config$1) {
       if (typeof dataset.value === "string")
         dataset.typed = true;
@@ -257,7 +238,7 @@ function string(message$1) {
         _addIssue(this, "type", dataset, config$1);
       return dataset;
     }
-  };
+  });
 }
 function safeParse(schema, input, config$1) {
   const dataset = schema["~run"]({ value: input }, /* @__PURE__ */ getGlobalConfig(config$1));
@@ -331,6 +312,6 @@ function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 export {
-  requestHarnessJson,
-  parseHarnessStatus
+  parseHarnessStatus,
+  requestHarnessJson
 };

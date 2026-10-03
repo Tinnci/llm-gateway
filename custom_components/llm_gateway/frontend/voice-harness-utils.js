@@ -67,12 +67,12 @@ function formatTime(value, locale) {
   }).format(date);
 }
 export {
-  translate,
-  safeId,
-  routeKind,
-  localize,
-  groundingTone,
-  formatTime,
+  escapeHtml,
   firstResponseAdapter,
-  escapeHtml
+  formatTime,
+  groundingTone,
+  localize,
+  routeKind,
+  safeId,
+  translate
 };

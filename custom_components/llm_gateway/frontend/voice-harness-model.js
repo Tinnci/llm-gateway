@@ -162,13 +162,13 @@ function optionalString(value) {
   return typeof value === "string" ? value : "";
 }
 export {
-  satelliteValue,
-  satelliteEntityTone,
-  runTone,
-  runSummary,
-  runOutcome,
-  harnessOverview,
-  diagnosticLayerCounts,
+  asrEndpointFromSources,
   diagnosticCheckDetail,
-  asrEndpointFromSources
+  diagnosticLayerCounts,
+  harnessOverview,
+  runOutcome,
+  runSummary,
+  runTone,
+  satelliteEntityTone,
+  satelliteValue
 };

@@ -66,6 +66,18 @@ def test_high_risk_tool_allows_confirmed_request():
     assert decision.allowed
 
 
+def test_namespaced_high_risk_tool_still_requires_confirmation():
+    call = llm.ToolInput(
+        id="namespaced-lock",
+        tool_name="intent__HassTurnOn",
+        tool_args={"domain": "lock", "name": "前门门锁"},
+    )
+    decision = validate_tool_call(call, "打开前门")
+    assert not decision.allowed
+    assert decision.reason == "confirmation_required"
+    assert validate_tool_call(call, "确认打开前门").allowed
+
+
 def test_low_risk_home_action_allowed():
     call = llm.ToolInput(
         id="1",

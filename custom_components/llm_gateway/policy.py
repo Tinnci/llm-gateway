@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from .capabilities import RouteDecision, decide_route
+from .ha_tool_names import canonical_ha_tool_name
 
 if TYPE_CHECKING:
     from homeassistant.helpers import llm
@@ -148,7 +149,7 @@ def _policy_metadata(
 
 
 def _is_home_action(tool_name: str) -> bool:
-    return tool_name.startswith("Hass")
+    return canonical_ha_tool_name(tool_name).startswith("Hass")
 
 
 def _requires_confirmation(tool_call: llm.ToolInput) -> bool:

@@ -142,10 +142,10 @@ function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 export {
-  sentenceCount,
-  searchProviders,
-  scenarioPreflight,
-  questionCount,
+  evaluateScenarioDraft,
   parseScenarioExpected,
-  evaluateScenarioDraft
+  questionCount,
+  scenarioPreflight,
+  searchProviders,
+  sentenceCount
 };

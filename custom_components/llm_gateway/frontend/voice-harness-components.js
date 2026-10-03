@@ -1,500 +1,3 @@
-// node_modules/valibot/dist/index.mjs
-var store$4;
-var DEFAULT_CONFIG = {
-  lang: undefined,
-  message: undefined,
-  abortEarly: undefined,
-  abortPipeEarly: undefined
-};
-function getGlobalConfig(config$1) {
-  if (!config$1 && !store$4)
-    return DEFAULT_CONFIG;
-  return {
-    lang: config$1?.lang ?? store$4?.lang,
-    message: config$1?.message,
-    abortEarly: config$1?.abortEarly ?? store$4?.abortEarly,
-    abortPipeEarly: config$1?.abortPipeEarly ?? store$4?.abortPipeEarly
-  };
-}
-var store$3;
-function getGlobalMessage(lang) {
-  return store$3?.get(lang);
-}
-var store$2;
-function getSchemaMessage(lang) {
-  return store$2?.get(lang);
-}
-var store$1;
-function getSpecificMessage(reference, lang) {
-  return store$1?.get(reference)?.get(lang);
-}
-function _stringify(input) {
-  const type = typeof input;
-  if (type === "string")
-    return `"${input}"`;
-  if (type === "number" || type === "bigint" || type === "boolean")
-    return `${input}`;
-  if (type === "object" || type === "function")
-    return (input && Object.getPrototypeOf(input)?.constructor?.name) ?? "null";
-  return type;
-}
-function _addIssue(context, label, dataset, config$1, other) {
-  const input = other && "input" in other ? other.input : dataset.value;
-  const expected = other?.expected ?? context.expects ?? null;
-  const received = other?.received ?? /* @__PURE__ */ _stringify(input);
-  const issue = {
-    kind: context.kind,
-    type: context.type,
-    input,
-    expected,
-    received,
-    message: `Invalid ${label}: ${expected ? `Expected ${expected} but r` : "R"}eceived ${received}`,
-    requirement: context.requirement,
-    path: other?.path,
-    issues: other?.issues,
-    lang: config$1.lang,
-    abortEarly: config$1.abortEarly,
-    abortPipeEarly: config$1.abortPipeEarly
-  };
-  const isSchema = context.kind === "schema";
-  const message$1 = other?.message ?? context.message ?? /* @__PURE__ */ getSpecificMessage(context.reference, issue.lang) ?? (isSchema ? /* @__PURE__ */ getSchemaMessage(issue.lang) : null) ?? config$1.message ?? /* @__PURE__ */ getGlobalMessage(issue.lang);
-  if (message$1 !== undefined)
-    issue.message = typeof message$1 === "function" ? message$1(issue) : message$1;
-  if (isSchema)
-    dataset.typed = false;
-  if (dataset.issues)
-    dataset.issues.push(issue);
-  else
-    dataset.issues = [issue];
-}
-var _standardCache = /* @__PURE__ */ new WeakMap;
-function _getStandardProps(context) {
-  let cached = _standardCache.get(context);
-  if (!cached) {
-    cached = {
-      version: 1,
-      vendor: "valibot",
-      validate(value$1) {
-        return context["~run"]({ value: value$1 }, /* @__PURE__ */ getGlobalConfig());
-      }
-    };
-    _standardCache.set(context, cached);
-  }
-  return cached;
-}
-function _isValidObjectKey(object$1, key) {
-  return Object.prototype.hasOwnProperty.call(object$1, key) && key !== "__proto__" && key !== "prototype" && key !== "constructor";
-}
-function getFallback(schema, dataset, config$1) {
-  return typeof schema.fallback === "function" ? schema.fallback(dataset, config$1) : schema.fallback;
-}
-function getDefault(schema, dataset, config$1) {
-  return typeof schema.default === "function" ? schema.default(dataset, config$1) : schema.default;
-}
-function array(item, message$1) {
-  return {
-    kind: "schema",
-    type: "array",
-    reference: array,
-    expects: "Array",
-    async: false,
-    item,
-    message: message$1,
-    get "~standard"() {
-      return /* @__PURE__ */ _getStandardProps(this);
-    },
-    "~run"(dataset, config$1) {
-      const input = dataset.value;
-      if (Array.isArray(input)) {
-        dataset.typed = true;
-        dataset.value = [];
-        for (let key = 0;key < input.length; key++) {
-          const value$1 = input[key];
-          const itemDataset = this.item["~run"]({ value: value$1 }, config$1);
-          if (itemDataset.issues) {
-            const pathItem = {
-              type: "array",
-              origin: "value",
-              input,
-              key,
-              value: value$1
-            };
-            for (const issue of itemDataset.issues) {
-              if (issue.path)
-                issue.path.unshift(pathItem);
-              else
-                issue.path = [pathItem];
-              dataset.issues?.push(issue);
-            }
-            if (!dataset.issues)
-              dataset.issues = itemDataset.issues;
-            if (config$1.abortEarly) {
-              dataset.typed = false;
-              break;
-            }
-          }
-          if (!itemDataset.typed)
-            dataset.typed = false;
-          dataset.value.push(itemDataset.value);
-        }
-      } else
-        _addIssue(this, "type", dataset, config$1);
-      return dataset;
-    }
-  };
-}
-function looseObject(entries$1, message$1) {
-  return {
-    kind: "schema",
-    type: "loose_object",
-    reference: looseObject,
-    expects: "Object",
-    async: false,
-    entries: entries$1,
-    message: message$1,
-    get "~standard"() {
-      return /* @__PURE__ */ _getStandardProps(this);
-    },
-    "~run"(dataset, config$1) {
-      const input = dataset.value;
-      if (input && typeof input === "object") {
-        dataset.typed = true;
-        dataset.value = {};
-        for (const key in this.entries) {
-          const valueSchema = this.entries[key];
-          if (key in input || (valueSchema.type === "exact_optional" || valueSchema.type === "optional" || valueSchema.type === "nullish") && valueSchema.default !== undefined) {
-            const value$1 = key in input ? input[key] : /* @__PURE__ */ getDefault(valueSchema);
-            const valueDataset = valueSchema["~run"]({ value: value$1 }, config$1);
-            if (valueDataset.issues) {
-              const pathItem = {
-                type: "object",
-                origin: "value",
-                input,
-                key,
-                value: value$1
-              };
-              for (const issue of valueDataset.issues) {
-                if (issue.path)
-                  issue.path.unshift(pathItem);
-                else
-                  issue.path = [pathItem];
-                dataset.issues?.push(issue);
-              }
-              if (!dataset.issues)
-                dataset.issues = valueDataset.issues;
-              if (config$1.abortEarly) {
-                dataset.typed = false;
-                break;
-              }
-            }
-            if (!valueDataset.typed)
-              dataset.typed = false;
-            dataset.value[key] = valueDataset.value;
-          } else if (valueSchema.fallback !== undefined)
-            dataset.value[key] = /* @__PURE__ */ getFallback(valueSchema);
-          else if (valueSchema.type !== "exact_optional" && valueSchema.type !== "optional" && valueSchema.type !== "nullish") {
-            _addIssue(this, "key", dataset, config$1, {
-              input: undefined,
-              expected: `"${key}"`,
-              path: [{
-                type: "object",
-                origin: "key",
-                input,
-                key,
-                value: input[key]
-              }]
-            });
-            if (config$1.abortEarly)
-              break;
-          }
-        }
-        if (!dataset.issues || !config$1.abortEarly) {
-          for (const key in input)
-            if (/* @__PURE__ */ _isValidObjectKey(input, key) && !(key in this.entries))
-              dataset.value[key] = input[key];
-        }
-      } else
-        _addIssue(this, "type", dataset, config$1);
-      return dataset;
-    }
-  };
-}
-function number(message$1) {
-  return {
-    kind: "schema",
-    type: "number",
-    reference: number,
-    expects: "number",
-    async: false,
-    message: message$1,
-    get "~standard"() {
-      return /* @__PURE__ */ _getStandardProps(this);
-    },
-    "~run"(dataset, config$1) {
-      if (typeof dataset.value === "number" && !isNaN(dataset.value))
-        dataset.typed = true;
-      else
-        _addIssue(this, "type", dataset, config$1);
-      return dataset;
-    }
-  };
-}
-function string(message$1) {
-  return {
-    kind: "schema",
-    type: "string",
-    reference: string,
-    expects: "string",
-    async: false,
-    message: message$1,
-    get "~standard"() {
-      return /* @__PURE__ */ _getStandardProps(this);
-    },
-    "~run"(dataset, config$1) {
-      if (typeof dataset.value === "string")
-        dataset.typed = true;
-      else
-        _addIssue(this, "type", dataset, config$1);
-      return dataset;
-    }
-  };
-}
-function safeParse(schema, input, config$1) {
-  const dataset = schema["~run"]({ value: input }, /* @__PURE__ */ getGlobalConfig(config$1));
-  return {
-    typed: dataset.typed,
-    success: !dataset.issues,
-    output: dataset.value,
-    issues: dataset.issues
-  };
-}
-
-// custom_components/llm_gateway/frontend/voice-harness-api.ts
-var rangeSchema = looseObject({ min: number(), max: number() });
-var harnessStatusSchema = looseObject({
-  entries: array(looseObject({
-    entry_id: string(),
-    state: string(),
-    title: string()
-  })),
-  editable: looseObject({
-    max_tokens: rangeSchema,
-    routing_modes: array(string()),
-    timeouts: rangeSchema,
-    trace_max_runs: rangeSchema,
-    trace_retention_hours: rangeSchema
-  })
-});
-function parseHarnessStatus(input) {
-  const result = safeParse(harnessStatusSchema, input);
-  if (result.success) {
-    return result.output;
-  }
-  const fields = result.issues.map((issue) => issue.path?.map((item) => String(item.key)).join(".")).filter(Boolean);
-  const detail = fields.length ? `: ${[...new Set(fields)].join(", ")}` : "";
-  throw new Error(`Invalid Voice Harness status response${detail}`);
-}
-async function requestHarnessJson(hass, method, path, payload) {
-  if (hass?.callApi) {
-    try {
-      return await hass.callApi(method, path, payload);
-    } catch (error) {
-      if (!isRecord(error) || !isRecord(error.body))
-        throw error;
-      const body = error.body;
-      throw Object.assign(new Error(typeof body.message === "string" ? body.message : String(error.error || "Home Assistant request failed")), {
-        code: typeof body.code === "string" ? body.code : ""
-      });
-    }
-  }
-  const response = await fetch(`/api/${path}`, {
-    method,
-    credentials: "same-origin",
-    headers: payload === undefined ? undefined : { "Content-Type": "application/json" },
-    body: payload === undefined ? undefined : JSON.stringify(payload)
-  });
-  if (response.ok) {
-    return await response.json();
-  }
-  let message = `${response.status} ${response.statusText}`;
-  let code = "";
-  try {
-    const body = await response.json();
-    if (isRecord(body)) {
-      message = typeof body.message === "string" ? body.message : message;
-      code = typeof body.code === "string" ? body.code : "";
-    }
-  } catch {}
-  throw Object.assign(new Error(message), { code });
-}
-function isRecord(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-// custom_components/llm_gateway/frontend/voice-harness-model.ts
-function runOutcome(record) {
-  const route = isRecord2(record.route) ? record.route : {};
-  const loop = isRecord2(record.harness_loop) ? record.harness_loop : isRecord2(route.harness_loop) ? route.harness_loop : {};
-  const verdict = isRecord2(loop.outcome_verdict) ? loop.outcome_verdict : isRecord2(route.outcome_verdict) ? route.outcome_verdict : {};
-  const status = String(record.terminal_outcome || loop.terminal_outcome || route.terminal_outcome || record.status || "");
-  const reason = String(record.failure_stage || loop.stop_reason || verdict.reason || "");
-  if (["cancelled", "superseded", "interrupted"].includes(status))
-    return "cancelled";
-  if (["running", "pending"].includes(status))
-    return "running";
-  if (["error", "failed", "stale", "partial"].includes(status))
-    return "failed";
-  if (/(ambiguous|missing_requirement|clarif|confirmation)/.test(reason) || ["clarify", "clarification", "confirm", "confirmation"].includes(status) || ["clarify", "clarification"].includes(String(record.outcome || "")))
-    return "clarification";
-  if (status === "blocked" || record.outcome === "not_answered" || verdict.answerable === false || loop.answerable === false)
-    return "failed";
-  if (record.outcome === "answered" || verdict.answerable === true || loop.answerable === true || ["complete", "completed", "executed", "ok", "success"].includes(status))
-    return "answered";
-  return "unknown";
-}
-function runTone(record) {
-  const outcome = runOutcome(record);
-  return outcome === "failed" ? "bad" : outcome === "answered" ? "ok" : "warning";
-}
-function runSummary(records, liveRuns) {
-  const latencies = records.map((record) => Number(record.latency_ms || 0)).filter((value) => Number.isFinite(value) && value > 0);
-  const avgLatency = latencies.length ? Math.round(latencies.reduce((sum, value) => sum + value, 0) / latencies.length) : 0;
-  const latestRoute = records[0]?.route;
-  const latestRouteKind = latestRoute && typeof latestRoute === "object" ? latestRoute.kind : latestRoute;
-  return {
-    avgLatency,
-    errors: records.filter((record) => runOutcome(record) === "failed").length,
-    latestRoute: latestRouteKind || "",
-    recorded: records.length,
-    running: liveRuns.filter((run) => run.status === "running").length
-  };
-}
-function harnessOverview(entries, diagnosticChecks) {
-  const records = entries.flatMap((entry) => entry.traces?.records || []);
-  const liveRuns = entries.flatMap((entry) => entry.voice_runs || []);
-  const summary = runSummary(records, liveRuns);
-  const providerIssues = entries.reduce((count, entry) => {
-    const configIssue = entry.model_providers?.config_error ? 1 : 0;
-    const healthIssues = (entry.provider_health || []).filter((provider) => Number(provider.failures || 0) > 0).length;
-    return count + configIssue + healthIssues;
-  }, 0);
-  const diagnosticIssues = diagnosticChecks.filter((check) => check.status === "error" || check.status === "warning").length;
-  return {
-    averageLatency: summary.avgLatency,
-    diagnosticIssues,
-    entryCount: entries.length,
-    providerIssues,
-    recentErrors: summary.errors,
-    running: summary.running
-  };
-}
-function diagnosticLayerCounts(checks) {
-  const layers = new Map;
-  for (const check of checks) {
-    const layer = String(check.layer || "unknown");
-    const current = layers.get(layer) || {
-      layer,
-      total: 0,
-      bad: 0,
-      warnings: 0,
-      blocked: 0
-    };
-    current.total += 1;
-    if (check.status === "error") {
-      current.bad += 1;
-    } else if (check.status === "warning") {
-      current.warnings += 1;
-    } else if (check.status === "blocked") {
-      current.blocked += 1;
-    }
-    layers.set(layer, current);
-  }
-  return [...layers.values()].map((layer) => ({
-    ...layer,
-    tone: layer.bad ? "bad" : layer.warnings ? "warning" : layer.blocked ? "muted" : "ok"
-  }));
-}
-function diagnosticCheckDetail(check, repairLabel) {
-  const evidence = Array.isArray(check.evidence) ? check.evidence : [];
-  const depends = Array.isArray(check.depends_on) ? check.depends_on : [];
-  return [
-    check.layer ? `layer=${check.layer}` : "",
-    depends.length ? `depends=${depends.join(",")}` : "",
-    ...evidence.slice(0, 2).map((item) => typeof item === "string" ? item : JSON.stringify(item)),
-    check.repair_hint ? `${repairLabel}: ${check.repair_hint}` : ""
-  ].filter(Boolean).join(" · ");
-}
-function satelliteEntityTone(key, state) {
-  if (!state?.available) {
-    return "bad";
-  }
-  const value = String(state.state || "").toLowerCase();
-  if (key === "voice_paused" || key === "pause_requested") {
-    return ["on", "true", "paused"].includes(value) ? "warning" : "ok";
-  }
-  if (key === "voice_pipeline" || key === "display_awake") {
-    return ["on", "true", "ready", "ok"].includes(value) ? "ok" : "warning";
-  }
-  return "ok";
-}
-function satelliteValue(state, missingLabel) {
-  if (!state?.available) {
-    return missingLabel;
-  }
-  return `${state.state}${state.unit ? ` ${state.unit}` : ""}`;
-}
-function asrEndpointFromSources(...sources) {
-  for (const source of sources) {
-    if (!isRecord2(source)) {
-      continue;
-    }
-    const state = String(source.state || "");
-    if (!state) {
-      continue;
-    }
-    return {
-      state,
-      speechStarted: optionalBoolean(source.speech_started),
-      endpointDetected: optionalBoolean(source.endpoint_detected),
-      interruptReady: optionalBoolean(source.interrupt_ready),
-      terminal: optionalBoolean(source.terminal),
-      reason: optionalString(source.reason),
-      failurePhase: optionalString(source.failure_phase),
-      firstSpeechLatencyMs: optionalNumber(source.first_speech_latency_ms),
-      endpointLatencyMs: optionalNumber(source.endpoint_latency_ms),
-      source: String(source.source || "native")
-    };
-  }
-  return {
-    state: "",
-    speechStarted: null,
-    endpointDetected: null,
-    interruptReady: null,
-    terminal: null,
-    reason: "",
-    failurePhase: "",
-    firstSpeechLatencyMs: null,
-    endpointLatencyMs: null,
-    source: ""
-  };
-}
-function isRecord2(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function optionalBoolean(value) {
-  if (typeof value === "boolean") {
-    return value;
-  }
-  return null;
-}
-function optionalNumber(value) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-function optionalString(value) {
-  return typeof value === "string" ? value : "";
-}
-
 // node_modules/@lit/reactive-element/css-tag.js
 var t = globalThis;
 var e = t.ShadowRoot && (t.ShadyCSS === undefined || t.ShadyCSS.nativeShadow) && "adoptedStyleSheets" in Document.prototype && "replace" in CSSStyleSheet.prototype;
@@ -502,50 +5,50 @@ var s = Symbol();
 var o = new WeakMap;
 
 class n {
-  constructor(t2, e2, o2) {
-    if (this._$cssResult$ = true, o2 !== s)
+  constructor(t, e, o) {
+    if (this._$cssResult$ = true, o !== s)
       throw Error("CSSResult is not constructable. Use `unsafeCSS` or `css` instead.");
-    this.cssText = t2, this.t = e2;
+    this.cssText = t, this.t = e;
   }
   get styleSheet() {
-    let t2 = this.o;
-    const s2 = this.t;
-    if (e && t2 === undefined) {
-      const e2 = s2 !== undefined && s2.length === 1;
-      e2 && (t2 = o.get(s2)), t2 === undefined && ((this.o = t2 = new CSSStyleSheet).replaceSync(this.cssText), e2 && o.set(s2, t2));
+    let t = this.o;
+    const s = this.t;
+    if (e && t === undefined) {
+      const e = s !== undefined && s.length === 1;
+      e && (t = o.get(s)), t === undefined && ((this.o = t = new CSSStyleSheet).replaceSync(this.cssText), e && o.set(s, t));
     }
-    return t2;
+    return t;
   }
   toString() {
     return this.cssText;
   }
 }
-var r = (t2) => new n(typeof t2 == "string" ? t2 : t2 + "", undefined, s);
-var i = (t2, ...e2) => {
-  const o2 = t2.length === 1 ? t2[0] : e2.reduce((e3, s2, o3) => e3 + ((t3) => {
-    if (t3._$cssResult$ === true)
-      return t3.cssText;
-    if (typeof t3 == "number")
-      return t3;
-    throw Error("Value passed to 'css' function must be a 'css' function result: " + t3 + ". Use 'unsafeCSS' to pass non-literal values, but take care to ensure page security.");
-  })(s2) + t2[o3 + 1], t2[0]);
-  return new n(o2, t2, s);
+var r = (t) => new n(typeof t == "string" ? t : t + "", undefined, s);
+var i = (t, ...e) => {
+  const o = t.length === 1 ? t[0] : e.reduce((e, s, o) => e + ((t) => {
+    if (t._$cssResult$ === true)
+      return t.cssText;
+    if (typeof t == "number")
+      return t;
+    throw Error("Value passed to 'css' function must be a 'css' function result: " + t + ". Use 'unsafeCSS' to pass non-literal values, but take care to ensure page security.");
+  })(s) + t[o + 1], t[0]);
+  return new n(o, t, s);
 };
-var S = (s2, o2) => {
+var S = (s, o) => {
   if (e)
-    s2.adoptedStyleSheets = o2.map((t2) => t2 instanceof CSSStyleSheet ? t2 : t2.styleSheet);
+    s.adoptedStyleSheets = o.map((t) => t instanceof CSSStyleSheet ? t : t.styleSheet);
   else
-    for (const e2 of o2) {
-      const o3 = document.createElement("style"), n2 = t.litNonce;
-      n2 !== undefined && o3.setAttribute("nonce", n2), o3.textContent = e2.cssText, s2.appendChild(o3);
+    for (const e of o) {
+      const o = document.createElement("style"), n = t.litNonce;
+      n !== undefined && o.setAttribute("nonce", n), o.textContent = e.cssText, s.appendChild(o);
     }
 };
-var c = e ? (t2) => t2 : (t2) => t2 instanceof CSSStyleSheet ? ((t3) => {
-  let e2 = "";
-  for (const s2 of t3.cssRules)
-    e2 += s2.cssText;
-  return r(e2);
-})(t2) : t2;
+var c = e ? (t) => t : (t) => t instanceof CSSStyleSheet ? ((t) => {
+  let e = "";
+  for (const s of t.cssRules)
+    e += s.cssText;
+  return r(e);
+})(t) : t;
 
 // node_modules/@lit/reactive-element/reactive-element.js
 var { is: i2, defineProperty: e2, getOwnPropertyDescriptor: h, getOwnPropertyNames: r2, getOwnPropertySymbols: o2, getPrototypeOf: n2 } = Object;
@@ -553,178 +56,178 @@ var a = globalThis;
 var c2 = a.trustedTypes;
 var l = c2 ? c2.emptyScript : "";
 var p = a.reactiveElementPolyfillSupport;
-var d = (t2, s2) => t2;
-var u = { toAttribute(t2, s2) {
-  switch (s2) {
+var d = (t, s) => t;
+var u = { toAttribute(t, s) {
+  switch (s) {
     case Boolean:
-      t2 = t2 ? l : null;
+      t = t ? l : null;
       break;
     case Object:
     case Array:
-      t2 = t2 == null ? t2 : JSON.stringify(t2);
+      t = t == null ? t : JSON.stringify(t);
   }
-  return t2;
-}, fromAttribute(t2, s2) {
-  let i3 = t2;
-  switch (s2) {
+  return t;
+}, fromAttribute(t, s) {
+  let i = t;
+  switch (s) {
     case Boolean:
-      i3 = t2 !== null;
+      i = t !== null;
       break;
     case Number:
-      i3 = t2 === null ? null : Number(t2);
+      i = t === null ? null : Number(t);
       break;
     case Object:
     case Array:
       try {
-        i3 = JSON.parse(t2);
-      } catch (t3) {
-        i3 = null;
+        i = JSON.parse(t);
+      } catch (t) {
+        i = null;
       }
   }
-  return i3;
+  return i;
 } };
-var f = (t2, s2) => !i2(t2, s2);
+var f = (t, s) => !i2(t, s);
 var b = { attribute: true, type: String, converter: u, reflect: false, useDefault: false, hasChanged: f };
 Symbol.metadata ??= Symbol("metadata"), a.litPropertyMetadata ??= new WeakMap;
 
 class y extends HTMLElement {
-  static addInitializer(t2) {
-    this._$Ei(), (this.l ??= []).push(t2);
+  static addInitializer(t) {
+    this._$Ei(), (this.l ??= []).push(t);
   }
   static get observedAttributes() {
     return this.finalize(), this._$Eh && [...this._$Eh.keys()];
   }
-  static createProperty(t2, s2 = b) {
-    if (s2.state && (s2.attribute = false), this._$Ei(), this.prototype.hasOwnProperty(t2) && ((s2 = Object.create(s2)).wrapped = true), this.elementProperties.set(t2, s2), !s2.noAccessor) {
-      const i3 = Symbol(), h2 = this.getPropertyDescriptor(t2, i3, s2);
-      h2 !== undefined && e2(this.prototype, t2, h2);
+  static createProperty(t, s = b) {
+    if (s.state && (s.attribute = false), this._$Ei(), this.prototype.hasOwnProperty(t) && ((s = Object.create(s)).wrapped = true), this.elementProperties.set(t, s), !s.noAccessor) {
+      const i = Symbol(), h = this.getPropertyDescriptor(t, i, s);
+      h !== undefined && e2(this.prototype, t, h);
     }
   }
-  static getPropertyDescriptor(t2, s2, i3) {
-    const { get: e3, set: r3 } = h(this.prototype, t2) ?? { get() {
-      return this[s2];
-    }, set(t3) {
-      this[s2] = t3;
+  static getPropertyDescriptor(t, s, i) {
+    const { get: e, set: r } = h(this.prototype, t) ?? { get() {
+      return this[s];
+    }, set(t) {
+      this[s] = t;
     } };
-    return { get: e3, set(s3) {
-      const h2 = e3?.call(this);
-      r3?.call(this, s3), this.requestUpdate(t2, h2, i3);
+    return { get: e, set(s) {
+      const h = e?.call(this);
+      r?.call(this, s), this.requestUpdate(t, h, i);
     }, configurable: true, enumerable: true };
   }
-  static getPropertyOptions(t2) {
-    return this.elementProperties.get(t2) ?? b;
+  static getPropertyOptions(t) {
+    return this.elementProperties.get(t) ?? b;
   }
   static _$Ei() {
     if (this.hasOwnProperty(d("elementProperties")))
       return;
-    const t2 = n2(this);
-    t2.finalize(), t2.l !== undefined && (this.l = [...t2.l]), this.elementProperties = new Map(t2.elementProperties);
+    const t = n2(this);
+    t.finalize(), t.l !== undefined && (this.l = [...t.l]), this.elementProperties = new Map(t.elementProperties);
   }
   static finalize() {
     if (this.hasOwnProperty(d("finalized")))
       return;
     if (this.finalized = true, this._$Ei(), this.hasOwnProperty(d("properties"))) {
-      const t3 = this.properties, s2 = [...r2(t3), ...o2(t3)];
-      for (const i3 of s2)
-        this.createProperty(i3, t3[i3]);
+      const t = this.properties, s = [...r2(t), ...o2(t)];
+      for (const i of s)
+        this.createProperty(i, t[i]);
     }
-    const t2 = this[Symbol.metadata];
-    if (t2 !== null) {
-      const s2 = litPropertyMetadata.get(t2);
-      if (s2 !== undefined)
-        for (const [t3, i3] of s2)
-          this.elementProperties.set(t3, i3);
+    const t = this[Symbol.metadata];
+    if (t !== null) {
+      const s = litPropertyMetadata.get(t);
+      if (s !== undefined)
+        for (const [t, i] of s)
+          this.elementProperties.set(t, i);
     }
     this._$Eh = new Map;
-    for (const [t3, s2] of this.elementProperties) {
-      const i3 = this._$Eu(t3, s2);
-      i3 !== undefined && this._$Eh.set(i3, t3);
+    for (const [t, s] of this.elementProperties) {
+      const i = this._$Eu(t, s);
+      i !== undefined && this._$Eh.set(i, t);
     }
     this.elementStyles = this.finalizeStyles(this.styles);
   }
-  static finalizeStyles(s2) {
-    const i3 = [];
-    if (Array.isArray(s2)) {
-      const e3 = new Set(s2.flat(1 / 0).reverse());
-      for (const s3 of e3)
-        i3.unshift(c(s3));
+  static finalizeStyles(s) {
+    const i = [];
+    if (Array.isArray(s)) {
+      const e = new Set(s.flat(1 / 0).reverse());
+      for (const s of e)
+        i.unshift(c(s));
     } else
-      s2 !== undefined && i3.push(c(s2));
-    return i3;
+      s !== undefined && i.push(c(s));
+    return i;
   }
-  static _$Eu(t2, s2) {
-    const i3 = s2.attribute;
-    return i3 === false ? undefined : typeof i3 == "string" ? i3 : typeof t2 == "string" ? t2.toLowerCase() : undefined;
+  static _$Eu(t, s) {
+    const i = s.attribute;
+    return i === false ? undefined : typeof i == "string" ? i : typeof t == "string" ? t.toLowerCase() : undefined;
   }
   constructor() {
     super(), this._$Ep = undefined, this.isUpdatePending = false, this.hasUpdated = false, this._$Em = null, this._$Ev();
   }
   _$Ev() {
-    this._$ES = new Promise((t2) => this.enableUpdating = t2), this._$AL = new Map, this._$E_(), this.requestUpdate(), this.constructor.l?.forEach((t2) => t2(this));
+    this._$ES = new Promise((t) => this.enableUpdating = t), this._$AL = new Map, this._$E_(), this.requestUpdate(), this.constructor.l?.forEach((t) => t(this));
   }
-  addController(t2) {
-    (this._$EO ??= new Set).add(t2), this.renderRoot !== undefined && this.isConnected && t2.hostConnected?.();
+  addController(t) {
+    (this._$EO ??= new Set).add(t), this.renderRoot !== undefined && this.isConnected && t.hostConnected?.();
   }
-  removeController(t2) {
-    this._$EO?.delete(t2);
+  removeController(t) {
+    this._$EO?.delete(t);
   }
   _$E_() {
-    const t2 = new Map, s2 = this.constructor.elementProperties;
-    for (const i3 of s2.keys())
-      this.hasOwnProperty(i3) && (t2.set(i3, this[i3]), delete this[i3]);
-    t2.size > 0 && (this._$Ep = t2);
+    const t = new Map, s = this.constructor.elementProperties;
+    for (const i of s.keys())
+      this.hasOwnProperty(i) && (t.set(i, this[i]), delete this[i]);
+    t.size > 0 && (this._$Ep = t);
   }
   createRenderRoot() {
-    const t2 = this.shadowRoot ?? this.attachShadow(this.constructor.shadowRootOptions);
-    return S(t2, this.constructor.elementStyles), t2;
+    const t = this.shadowRoot ?? this.attachShadow(this.constructor.shadowRootOptions);
+    return S(t, this.constructor.elementStyles), t;
   }
   connectedCallback() {
-    this.renderRoot ??= this.createRenderRoot(), this.enableUpdating(true), this._$EO?.forEach((t2) => t2.hostConnected?.());
+    this.renderRoot ??= this.createRenderRoot(), this.enableUpdating(true), this._$EO?.forEach((t) => t.hostConnected?.());
   }
-  enableUpdating(t2) {}
+  enableUpdating(t) {}
   disconnectedCallback() {
-    this._$EO?.forEach((t2) => t2.hostDisconnected?.());
+    this._$EO?.forEach((t) => t.hostDisconnected?.());
   }
-  attributeChangedCallback(t2, s2, i3) {
-    this._$AK(t2, i3);
+  attributeChangedCallback(t, s, i) {
+    this._$AK(t, i);
   }
-  _$ET(t2, s2) {
-    const i3 = this.constructor.elementProperties.get(t2), e3 = this.constructor._$Eu(t2, i3);
-    if (e3 !== undefined && i3.reflect === true) {
-      const h2 = (i3.converter?.toAttribute !== undefined ? i3.converter : u).toAttribute(s2, i3.type);
-      this._$Em = t2, h2 == null ? this.removeAttribute(e3) : this.setAttribute(e3, h2), this._$Em = null;
+  _$ET(t, s) {
+    const i = this.constructor.elementProperties.get(t), e = this.constructor._$Eu(t, i);
+    if (e !== undefined && i.reflect === true) {
+      const h = (i.converter?.toAttribute !== undefined ? i.converter : u).toAttribute(s, i.type);
+      this._$Em = t, h == null ? this.removeAttribute(e) : this.setAttribute(e, h), this._$Em = null;
     }
   }
-  _$AK(t2, s2) {
-    const i3 = this.constructor, e3 = i3._$Eh.get(t2);
-    if (e3 !== undefined && this._$Em !== e3) {
-      const t3 = i3.getPropertyOptions(e3), h2 = typeof t3.converter == "function" ? { fromAttribute: t3.converter } : t3.converter?.fromAttribute !== undefined ? t3.converter : u;
-      this._$Em = e3;
-      const r3 = h2.fromAttribute(s2, t3.type);
-      this[e3] = r3 ?? this._$Ej?.get(e3) ?? r3, this._$Em = null;
+  _$AK(t, s) {
+    const i = this.constructor, e = i._$Eh.get(t);
+    if (e !== undefined && this._$Em !== e) {
+      const t = i.getPropertyOptions(e), h = typeof t.converter == "function" ? { fromAttribute: t.converter } : t.converter?.fromAttribute !== undefined ? t.converter : u;
+      this._$Em = e;
+      const r = h.fromAttribute(s, t.type);
+      this[e] = r ?? this._$Ej?.get(e) ?? r, this._$Em = null;
     }
   }
-  requestUpdate(t2, s2, i3, e3 = false, h2) {
-    if (t2 !== undefined) {
-      const r3 = this.constructor;
-      if (e3 === false && (h2 = this[t2]), i3 ??= r3.getPropertyOptions(t2), !((i3.hasChanged ?? f)(h2, s2) || i3.useDefault && i3.reflect && h2 === this._$Ej?.get(t2) && !this.hasAttribute(r3._$Eu(t2, i3))))
+  requestUpdate(t, s, i, e = false, h) {
+    if (t !== undefined) {
+      const r = this.constructor;
+      if (e === false && (h = this[t]), i ??= r.getPropertyOptions(t), !((i.hasChanged ?? f)(h, s) || i.useDefault && i.reflect && h === this._$Ej?.get(t) && !this.hasAttribute(r._$Eu(t, i))))
         return;
-      this.C(t2, s2, i3);
+      this.C(t, s, i);
     }
     this.isUpdatePending === false && (this._$ES = this._$EP());
   }
-  C(t2, s2, { useDefault: i3, reflect: e3, wrapped: h2 }, r3) {
-    i3 && !(this._$Ej ??= new Map).has(t2) && (this._$Ej.set(t2, r3 ?? s2 ?? this[t2]), h2 !== true || r3 !== undefined) || (this._$AL.has(t2) || (this.hasUpdated || i3 || (s2 = undefined), this._$AL.set(t2, s2)), e3 === true && this._$Em !== t2 && (this._$Eq ??= new Set).add(t2));
+  C(t, s, { useDefault: i, reflect: e, wrapped: h }, r) {
+    i && !(this._$Ej ??= new Map).has(t) && (this._$Ej.set(t, r ?? s ?? this[t]), h !== true || r !== undefined) || (this._$AL.has(t) || (this.hasUpdated || i || (s = undefined), this._$AL.set(t, s)), e === true && this._$Em !== t && (this._$Eq ??= new Set).add(t));
   }
   async _$EP() {
     this.isUpdatePending = true;
     try {
       await this._$ES;
-    } catch (t3) {
-      Promise.reject(t3);
+    } catch (t) {
+      Promise.reject(t);
     }
-    const t2 = this.scheduleUpdate();
-    return t2 != null && await t2, !this.isUpdatePending;
+    const t = this.scheduleUpdate();
+    return t != null && await t, !this.isUpdatePending;
   }
   scheduleUpdate() {
     return this.performUpdate();
@@ -734,29 +237,29 @@ class y extends HTMLElement {
       return;
     if (!this.hasUpdated) {
       if (this.renderRoot ??= this.createRenderRoot(), this._$Ep) {
-        for (const [t4, s3] of this._$Ep)
-          this[t4] = s3;
+        for (const [t, s] of this._$Ep)
+          this[t] = s;
         this._$Ep = undefined;
       }
-      const t3 = this.constructor.elementProperties;
-      if (t3.size > 0)
-        for (const [s3, i3] of t3) {
-          const { wrapped: t4 } = i3, e3 = this[s3];
-          t4 !== true || this._$AL.has(s3) || e3 === undefined || this.C(s3, undefined, i3, e3);
+      const t = this.constructor.elementProperties;
+      if (t.size > 0)
+        for (const [s, i] of t) {
+          const { wrapped: t } = i, e = this[s];
+          t !== true || this._$AL.has(s) || e === undefined || this.C(s, undefined, i, e);
         }
     }
-    let t2 = false;
-    const s2 = this._$AL;
+    let t = false;
+    const s = this._$AL;
     try {
-      t2 = this.shouldUpdate(s2), t2 ? (this.willUpdate(s2), this._$EO?.forEach((t3) => t3.hostUpdate?.()), this.update(s2)) : this._$EM();
-    } catch (s3) {
-      throw t2 = false, this._$EM(), s3;
+      t = this.shouldUpdate(s), t ? (this.willUpdate(s), this._$EO?.forEach((t) => t.hostUpdate?.()), this.update(s)) : this._$EM();
+    } catch (s) {
+      throw t = false, this._$EM(), s;
     }
-    t2 && this._$AE(s2);
+    t && this._$AE(s);
   }
-  willUpdate(t2) {}
-  _$AE(t2) {
-    this._$EO?.forEach((t3) => t3.hostUpdated?.()), this.hasUpdated || (this.hasUpdated = true, this.firstUpdated(t2)), this.updated(t2);
+  willUpdate(t) {}
+  _$AE(t) {
+    this._$EO?.forEach((t) => t.hostUpdated?.()), this.hasUpdated || (this.hasUpdated = true, this.firstUpdated(t)), this.updated(t);
   }
   _$EM() {
     this._$AL = new Map, this.isUpdatePending = false;
@@ -767,31 +270,31 @@ class y extends HTMLElement {
   getUpdateComplete() {
     return this._$ES;
   }
-  shouldUpdate(t2) {
+  shouldUpdate(t) {
     return true;
   }
-  update(t2) {
-    this._$Eq &&= this._$Eq.forEach((t3) => this._$ET(t3, this[t3])), this._$EM();
+  update(t) {
+    this._$Eq &&= this._$Eq.forEach((t) => this._$ET(t, this[t])), this._$EM();
   }
-  updated(t2) {}
-  firstUpdated(t2) {}
+  updated(t) {}
+  firstUpdated(t) {}
 }
 y.elementStyles = [], y.shadowRootOptions = { mode: "open" }, y[d("elementProperties")] = new Map, y[d("finalized")] = new Map, p?.({ ReactiveElement: y }), (a.reactiveElementVersions ??= []).push("2.1.2");
 
 // node_modules/lit-html/lit-html.js
 var t2 = globalThis;
-var i3 = (t3) => t3;
+var i3 = (t) => t;
 var s2 = t2.trustedTypes;
-var e3 = s2 ? s2.createPolicy("lit-html", { createHTML: (t3) => t3 }) : undefined;
+var e3 = s2 ? s2.createPolicy("lit-html", { createHTML: (t) => t }) : undefined;
 var h2 = "$lit$";
 var o3 = `lit$${Math.random().toFixed(9).slice(2)}$`;
 var n3 = "?" + o3;
 var r3 = `<${n3}>`;
 var l2 = document;
 var c3 = () => l2.createComment("");
-var a2 = (t3) => t3 === null || typeof t3 != "object" && typeof t3 != "function";
+var a2 = (t) => t === null || typeof t != "object" && typeof t != "function";
 var u2 = Array.isArray;
-var d2 = (t3) => u2(t3) || typeof t3?.[Symbol.iterator] == "function";
+var d2 = (t) => u2(t) || typeof t?.[Symbol.iterator] == "function";
 var f2 = `[ 	
 \f\r]`;
 var v = /<(?:(!--|\/[^a-zA-Z])|(\/?[a-zA-Z][^>\s]*)|(\/?$))/g;
@@ -802,7 +305,7 @@ var p2 = RegExp(`>|${f2}(?:([^\\s"'>=/]+)(${f2}*=${f2}*(?:[^
 var g = /'/g;
 var $ = /"/g;
 var y2 = /^(?:script|style|textarea|title)$/i;
-var x = (t3) => (i4, ...s3) => ({ _$litType$: t3, strings: i4, values: s3 });
+var x = (t) => (i, ...s) => ({ _$litType$: t, strings: i, values: s });
 var b2 = x(1);
 var w = x(2);
 var T = x(3);
@@ -810,80 +313,80 @@ var E = Symbol.for("lit-noChange");
 var A = Symbol.for("lit-nothing");
 var C = new WeakMap;
 var P = l2.createTreeWalker(l2, 129);
-function V(t3, i4) {
-  if (!u2(t3) || !t3.hasOwnProperty("raw"))
+function V(t, i) {
+  if (!u2(t) || !t.hasOwnProperty("raw"))
     throw Error("invalid template strings array");
-  return e3 !== undefined ? e3.createHTML(i4) : i4;
+  return e3 !== undefined ? e3.createHTML(i) : i;
 }
-var N = (t3, i4) => {
-  const s3 = t3.length - 1, e4 = [];
-  let n4, l3 = i4 === 2 ? "<svg>" : i4 === 3 ? "<math>" : "", c4 = v;
-  for (let i5 = 0;i5 < s3; i5++) {
-    const s4 = t3[i5];
-    let a3, u3, d3 = -1, f3 = 0;
-    for (;f3 < s4.length && (c4.lastIndex = f3, u3 = c4.exec(s4), u3 !== null); )
-      f3 = c4.lastIndex, c4 === v ? u3[1] === "!--" ? c4 = _ : u3[1] !== undefined ? c4 = m : u3[2] !== undefined ? (y2.test(u3[2]) && (n4 = RegExp("</" + u3[2], "g")), c4 = p2) : u3[3] !== undefined && (c4 = p2) : c4 === p2 ? u3[0] === ">" ? (c4 = n4 ?? v, d3 = -1) : u3[1] === undefined ? d3 = -2 : (d3 = c4.lastIndex - u3[2].length, a3 = u3[1], c4 = u3[3] === undefined ? p2 : u3[3] === '"' ? $ : g) : c4 === $ || c4 === g ? c4 = p2 : c4 === _ || c4 === m ? c4 = v : (c4 = p2, n4 = undefined);
-    const x2 = c4 === p2 && t3[i5 + 1].startsWith("/>") ? " " : "";
-    l3 += c4 === v ? s4 + r3 : d3 >= 0 ? (e4.push(a3), s4.slice(0, d3) + h2 + s4.slice(d3) + o3 + x2) : s4 + o3 + (d3 === -2 ? i5 : x2);
+var N = (t, i) => {
+  const s = t.length - 1, e = [];
+  let n, l = i === 2 ? "<svg>" : i === 3 ? "<math>" : "", c = v;
+  for (let i = 0;i < s; i++) {
+    const s = t[i];
+    let a, u, d = -1, f = 0;
+    for (;f < s.length && (c.lastIndex = f, u = c.exec(s), u !== null); )
+      f = c.lastIndex, c === v ? u[1] === "!--" ? c = _ : u[1] !== undefined ? c = m : u[2] !== undefined ? (y2.test(u[2]) && (n = RegExp("</" + u[2], "g")), c = p2) : u[3] !== undefined && (c = p2) : c === p2 ? u[0] === ">" ? (c = n ?? v, d = -1) : u[1] === undefined ? d = -2 : (d = c.lastIndex - u[2].length, a = u[1], c = u[3] === undefined ? p2 : u[3] === '"' ? $ : g) : c === $ || c === g ? c = p2 : c === _ || c === m ? c = v : (c = p2, n = undefined);
+    const x = c === p2 && t[i + 1].startsWith("/>") ? " " : "";
+    l += c === v ? s + r3 : d >= 0 ? (e.push(a), s.slice(0, d) + h2 + s.slice(d) + o3 + x) : s + o3 + (d === -2 ? i : x);
   }
-  return [V(t3, l3 + (t3[s3] || "<?>") + (i4 === 2 ? "</svg>" : i4 === 3 ? "</math>" : "")), e4];
+  return [V(t, l + (t[s] || "<?>") + (i === 2 ? "</svg>" : i === 3 ? "</math>" : "")), e];
 };
 
 class S2 {
-  constructor({ strings: t3, _$litType$: i4 }, e4) {
-    let r4;
+  constructor({ strings: t, _$litType$: i }, e) {
+    let r;
     this.parts = [];
-    let l3 = 0, a3 = 0;
-    const u3 = t3.length - 1, d3 = this.parts, [f3, v2] = N(t3, i4);
-    if (this.el = S2.createElement(f3, e4), P.currentNode = this.el.content, i4 === 2 || i4 === 3) {
-      const t4 = this.el.content.firstChild;
-      t4.replaceWith(...t4.childNodes);
+    let l = 0, a = 0;
+    const u = t.length - 1, d = this.parts, [f, v] = N(t, i);
+    if (this.el = S2.createElement(f, e), P.currentNode = this.el.content, i === 2 || i === 3) {
+      const t = this.el.content.firstChild;
+      t.replaceWith(...t.childNodes);
     }
-    for (;(r4 = P.nextNode()) !== null && d3.length < u3; ) {
-      if (r4.nodeType === 1) {
-        if (r4.hasAttributes())
-          for (const t4 of r4.getAttributeNames())
-            if (t4.endsWith(h2)) {
-              const i5 = v2[a3++], s3 = r4.getAttribute(t4).split(o3), e5 = /([.?@])?(.*)/.exec(i5);
-              d3.push({ type: 1, index: l3, name: e5[2], strings: s3, ctor: e5[1] === "." ? I : e5[1] === "?" ? L : e5[1] === "@" ? z : H }), r4.removeAttribute(t4);
+    for (;(r = P.nextNode()) !== null && d.length < u; ) {
+      if (r.nodeType === 1) {
+        if (r.hasAttributes())
+          for (const t of r.getAttributeNames())
+            if (t.endsWith(h2)) {
+              const i = v[a++], s = r.getAttribute(t).split(o3), e = /([.?@])?(.*)/.exec(i);
+              d.push({ type: 1, index: l, name: e[2], strings: s, ctor: e[1] === "." ? I : e[1] === "?" ? L : e[1] === "@" ? z : H }), r.removeAttribute(t);
             } else
-              t4.startsWith(o3) && (d3.push({ type: 6, index: l3 }), r4.removeAttribute(t4));
-        if (y2.test(r4.tagName)) {
-          const t4 = r4.textContent.split(o3), i5 = t4.length - 1;
-          if (i5 > 0) {
-            r4.textContent = s2 ? s2.emptyScript : "";
-            for (let s3 = 0;s3 < i5; s3++)
-              r4.append(t4[s3], c3()), P.nextNode(), d3.push({ type: 2, index: ++l3 });
-            r4.append(t4[i5], c3());
+              t.startsWith(o3) && (d.push({ type: 6, index: l }), r.removeAttribute(t));
+        if (y2.test(r.tagName)) {
+          const t = r.textContent.split(o3), i = t.length - 1;
+          if (i > 0) {
+            r.textContent = s2 ? s2.emptyScript : "";
+            for (let s = 0;s < i; s++)
+              r.append(t[s], c3()), P.nextNode(), d.push({ type: 2, index: ++l });
+            r.append(t[i], c3());
           }
         }
-      } else if (r4.nodeType === 8)
-        if (r4.data === n3)
-          d3.push({ type: 2, index: l3 });
+      } else if (r.nodeType === 8)
+        if (r.data === n3)
+          d.push({ type: 2, index: l });
         else {
-          let t4 = -1;
-          for (;(t4 = r4.data.indexOf(o3, t4 + 1)) !== -1; )
-            d3.push({ type: 7, index: l3 }), t4 += o3.length - 1;
+          let t = -1;
+          for (;(t = r.data.indexOf(o3, t + 1)) !== -1; )
+            d.push({ type: 7, index: l }), t += o3.length - 1;
         }
-      l3++;
+      l++;
     }
   }
-  static createElement(t3, i4) {
-    const s3 = l2.createElement("template");
-    return s3.innerHTML = t3, s3;
+  static createElement(t, i) {
+    const s = l2.createElement("template");
+    return s.innerHTML = t, s;
   }
 }
-function M(t3, i4, s3 = t3, e4) {
-  if (i4 === E)
-    return i4;
-  let h3 = e4 !== undefined ? s3._$Co?.[e4] : s3._$Cl;
-  const o4 = a2(i4) ? undefined : i4._$litDirective$;
-  return h3?.constructor !== o4 && (h3?._$AO?.(false), o4 === undefined ? h3 = undefined : (h3 = new o4(t3), h3._$AT(t3, s3, e4)), e4 !== undefined ? (s3._$Co ??= [])[e4] = h3 : s3._$Cl = h3), h3 !== undefined && (i4 = M(t3, h3._$AS(t3, i4.values), h3, e4)), i4;
+function M(t, i, s = t, e) {
+  if (i === E)
+    return i;
+  let h = e !== undefined ? s._$Co?.[e] : s._$Cl;
+  const o = a2(i) ? undefined : i._$litDirective$;
+  return h?.constructor !== o && (h?._$AO?.(false), o === undefined ? h = undefined : (h = new o(t), h._$AT(t, s, e)), e !== undefined ? (s._$Co ??= [])[e] = h : s._$Cl = h), h !== undefined && (i = M(t, h._$AS(t, i.values), h, e)), i;
 }
 
 class R {
-  constructor(t3, i4) {
-    this._$AV = [], this._$AN = undefined, this._$AD = t3, this._$AM = i4;
+  constructor(t, i) {
+    this._$AV = [], this._$AN = undefined, this._$AD = t, this._$AM = i;
   }
   get parentNode() {
     return this._$AM.parentNode;
@@ -891,23 +394,23 @@ class R {
   get _$AU() {
     return this._$AM._$AU;
   }
-  u(t3) {
-    const { el: { content: i4 }, parts: s3 } = this._$AD, e4 = (t3?.creationScope ?? l2).importNode(i4, true);
-    P.currentNode = e4;
-    let h3 = P.nextNode(), o4 = 0, n4 = 0, r4 = s3[0];
-    for (;r4 !== undefined; ) {
-      if (o4 === r4.index) {
-        let i5;
-        r4.type === 2 ? i5 = new k(h3, h3.nextSibling, this, t3) : r4.type === 1 ? i5 = new r4.ctor(h3, r4.name, r4.strings, this, t3) : r4.type === 6 && (i5 = new Z(h3, this, t3)), this._$AV.push(i5), r4 = s3[++n4];
+  u(t) {
+    const { el: { content: i }, parts: s } = this._$AD, e = (t?.creationScope ?? l2).importNode(i, true);
+    P.currentNode = e;
+    let h = P.nextNode(), o = 0, n = 0, r = s[0];
+    for (;r !== undefined; ) {
+      if (o === r.index) {
+        let i;
+        r.type === 2 ? i = new k(h, h.nextSibling, this, t) : r.type === 1 ? i = new r.ctor(h, r.name, r.strings, this, t) : r.type === 6 && (i = new Z(h, this, t)), this._$AV.push(i), r = s[++n];
       }
-      o4 !== r4?.index && (h3 = P.nextNode(), o4++);
+      o !== r?.index && (h = P.nextNode(), o++);
     }
-    return P.currentNode = l2, e4;
+    return P.currentNode = l2, e;
   }
-  p(t3) {
-    let i4 = 0;
-    for (const s3 of this._$AV)
-      s3 !== undefined && (s3.strings !== undefined ? (s3._$AI(t3, s3, i4), i4 += s3.strings.length - 2) : s3._$AI(t3[i4])), i4++;
+  p(t) {
+    let i = 0;
+    for (const s of this._$AV)
+      s !== undefined && (s.strings !== undefined ? (s._$AI(t, s, i), i += s.strings.length - 2) : s._$AI(t[i])), i++;
   }
 }
 
@@ -915,13 +418,13 @@ class k {
   get _$AU() {
     return this._$AM?._$AU ?? this._$Cv;
   }
-  constructor(t3, i4, s3, e4) {
-    this.type = 2, this._$AH = A, this._$AN = undefined, this._$AA = t3, this._$AB = i4, this._$AM = s3, this.options = e4, this._$Cv = e4?.isConnected ?? true;
+  constructor(t, i, s, e) {
+    this.type = 2, this._$AH = A, this._$AN = undefined, this._$AA = t, this._$AB = i, this._$AM = s, this.options = e, this._$Cv = e?.isConnected ?? true;
   }
   get parentNode() {
-    let t3 = this._$AA.parentNode;
-    const i4 = this._$AM;
-    return i4 !== undefined && t3?.nodeType === 11 && (t3 = i4.parentNode), t3;
+    let t = this._$AA.parentNode;
+    const i = this._$AM;
+    return i !== undefined && t?.nodeType === 11 && (t = i.parentNode), t;
   }
   get startNode() {
     return this._$AA;
@@ -929,47 +432,47 @@ class k {
   get endNode() {
     return this._$AB;
   }
-  _$AI(t3, i4 = this) {
-    t3 = M(this, t3, i4), a2(t3) ? t3 === A || t3 == null || t3 === "" ? (this._$AH !== A && this._$AR(), this._$AH = A) : t3 !== this._$AH && t3 !== E && this._(t3) : t3._$litType$ !== undefined ? this.$(t3) : t3.nodeType !== undefined ? this.T(t3) : d2(t3) ? this.k(t3) : this._(t3);
+  _$AI(t, i = this) {
+    t = M(this, t, i), a2(t) ? t === A || t == null || t === "" ? (this._$AH !== A && this._$AR(), this._$AH = A) : t !== this._$AH && t !== E && this._(t) : t._$litType$ !== undefined ? this.$(t) : t.nodeType !== undefined ? this.T(t) : d2(t) ? this.k(t) : this._(t);
   }
-  O(t3) {
-    return this._$AA.parentNode.insertBefore(t3, this._$AB);
+  O(t) {
+    return this._$AA.parentNode.insertBefore(t, this._$AB);
   }
-  T(t3) {
-    this._$AH !== t3 && (this._$AR(), this._$AH = this.O(t3));
+  T(t) {
+    this._$AH !== t && (this._$AR(), this._$AH = this.O(t));
   }
-  _(t3) {
-    this._$AH !== A && a2(this._$AH) ? this._$AA.nextSibling.data = t3 : this.T(l2.createTextNode(t3)), this._$AH = t3;
+  _(t) {
+    this._$AH !== A && a2(this._$AH) ? this._$AA.nextSibling.data = t : this.T(l2.createTextNode(t)), this._$AH = t;
   }
-  $(t3) {
-    const { values: i4, _$litType$: s3 } = t3, e4 = typeof s3 == "number" ? this._$AC(t3) : (s3.el === undefined && (s3.el = S2.createElement(V(s3.h, s3.h[0]), this.options)), s3);
-    if (this._$AH?._$AD === e4)
-      this._$AH.p(i4);
+  $(t) {
+    const { values: i, _$litType$: s } = t, e = typeof s == "number" ? this._$AC(t) : (s.el === undefined && (s.el = S2.createElement(V(s.h, s.h[0]), this.options)), s);
+    if (this._$AH?._$AD === e)
+      this._$AH.p(i);
     else {
-      const t4 = new R(e4, this), s4 = t4.u(this.options);
-      t4.p(i4), this.T(s4), this._$AH = t4;
+      const t = new R(e, this), s = t.u(this.options);
+      t.p(i), this.T(s), this._$AH = t;
     }
   }
-  _$AC(t3) {
-    let i4 = C.get(t3.strings);
-    return i4 === undefined && C.set(t3.strings, i4 = new S2(t3)), i4;
+  _$AC(t) {
+    let i = C.get(t.strings);
+    return i === undefined && C.set(t.strings, i = new S2(t)), i;
   }
-  k(t3) {
+  k(t) {
     u2(this._$AH) || (this._$AH = [], this._$AR());
-    const i4 = this._$AH;
-    let s3, e4 = 0;
-    for (const h3 of t3)
-      e4 === i4.length ? i4.push(s3 = new k(this.O(c3()), this.O(c3()), this, this.options)) : s3 = i4[e4], s3._$AI(h3), e4++;
-    e4 < i4.length && (this._$AR(s3 && s3._$AB.nextSibling, e4), i4.length = e4);
+    const i = this._$AH;
+    let s, e = 0;
+    for (const h of t)
+      e === i.length ? i.push(s = new k(this.O(c3()), this.O(c3()), this, this.options)) : s = i[e], s._$AI(h), e++;
+    e < i.length && (this._$AR(s && s._$AB.nextSibling, e), i.length = e);
   }
-  _$AR(t3 = this._$AA.nextSibling, s3) {
-    for (this._$AP?.(false, true, s3);t3 !== this._$AB; ) {
-      const s4 = i3(t3).nextSibling;
-      i3(t3).remove(), t3 = s4;
+  _$AR(t = this._$AA.nextSibling, s) {
+    for (this._$AP?.(false, true, s);t !== this._$AB; ) {
+      const s = i3(t).nextSibling;
+      i3(t).remove(), t = s;
     }
   }
-  setConnected(t3) {
-    this._$AM === undefined && (this._$Cv = t3, this._$AP?.(t3));
+  setConnected(t) {
+    this._$AM === undefined && (this._$Cv = t, this._$AP?.(t));
   }
 }
 
@@ -980,24 +483,24 @@ class H {
   get _$AU() {
     return this._$AM._$AU;
   }
-  constructor(t3, i4, s3, e4, h3) {
-    this.type = 1, this._$AH = A, this._$AN = undefined, this.element = t3, this.name = i4, this._$AM = e4, this.options = h3, s3.length > 2 || s3[0] !== "" || s3[1] !== "" ? (this._$AH = Array(s3.length - 1).fill(new String), this.strings = s3) : this._$AH = A;
+  constructor(t, i, s, e, h) {
+    this.type = 1, this._$AH = A, this._$AN = undefined, this.element = t, this.name = i, this._$AM = e, this.options = h, s.length > 2 || s[0] !== "" || s[1] !== "" ? (this._$AH = Array(s.length - 1).fill(new String), this.strings = s) : this._$AH = A;
   }
-  _$AI(t3, i4 = this, s3, e4) {
-    const h3 = this.strings;
-    let o4 = false;
-    if (h3 === undefined)
-      t3 = M(this, t3, i4, 0), o4 = !a2(t3) || t3 !== this._$AH && t3 !== E, o4 && (this._$AH = t3);
+  _$AI(t, i = this, s, e) {
+    const h = this.strings;
+    let o = false;
+    if (h === undefined)
+      t = M(this, t, i, 0), o = !a2(t) || t !== this._$AH && t !== E, o && (this._$AH = t);
     else {
-      const e5 = t3;
-      let n4, r4;
-      for (t3 = h3[0], n4 = 0;n4 < h3.length - 1; n4++)
-        r4 = M(this, e5[s3 + n4], i4, n4), r4 === E && (r4 = this._$AH[n4]), o4 ||= !a2(r4) || r4 !== this._$AH[n4], r4 === A ? t3 = A : t3 !== A && (t3 += (r4 ?? "") + h3[n4 + 1]), this._$AH[n4] = r4;
+      const e = t;
+      let n, r;
+      for (t = h[0], n = 0;n < h.length - 1; n++)
+        r = M(this, e[s + n], i, n), r === E && (r = this._$AH[n]), o ||= !a2(r) || r !== this._$AH[n], r === A ? t = A : t !== A && (t += (r ?? "") + h[n + 1]), this._$AH[n] = r;
     }
-    o4 && !e4 && this.j(t3);
+    o && !e && this.j(t);
   }
-  j(t3) {
-    t3 === A ? this.element.removeAttribute(this.name) : this.element.setAttribute(this.name, t3 ?? "");
+  j(t) {
+    t === A ? this.element.removeAttribute(this.name) : this.element.setAttribute(this.name, t ?? "");
   }
 }
 
@@ -1005,8 +508,8 @@ class I extends H {
   constructor() {
     super(...arguments), this.type = 3;
   }
-  j(t3) {
-    this.element[this.name] = t3 === A ? undefined : t3;
+  j(t) {
+    this.element[this.name] = t === A ? undefined : t;
   }
 }
 
@@ -1014,48 +517,48 @@ class L extends H {
   constructor() {
     super(...arguments), this.type = 4;
   }
-  j(t3) {
-    this.element.toggleAttribute(this.name, !!t3 && t3 !== A);
+  j(t) {
+    this.element.toggleAttribute(this.name, !!t && t !== A);
   }
 }
 
 class z extends H {
-  constructor(t3, i4, s3, e4, h3) {
-    super(t3, i4, s3, e4, h3), this.type = 5;
+  constructor(t, i, s, e, h) {
+    super(t, i, s, e, h), this.type = 5;
   }
-  _$AI(t3, i4 = this) {
-    if ((t3 = M(this, t3, i4, 0) ?? A) === E)
+  _$AI(t, i = this) {
+    if ((t = M(this, t, i, 0) ?? A) === E)
       return;
-    const s3 = this._$AH, e4 = t3 === A && s3 !== A || t3.capture !== s3.capture || t3.once !== s3.once || t3.passive !== s3.passive, h3 = t3 !== A && (s3 === A || e4);
-    e4 && this.element.removeEventListener(this.name, this, s3), h3 && this.element.addEventListener(this.name, this, t3), this._$AH = t3;
+    const s = this._$AH, e = t === A && s !== A || t.capture !== s.capture || t.once !== s.once || t.passive !== s.passive, h = t !== A && (s === A || e);
+    e && this.element.removeEventListener(this.name, this, s), h && this.element.addEventListener(this.name, this, t), this._$AH = t;
   }
-  handleEvent(t3) {
-    typeof this._$AH == "function" ? this._$AH.call(this.options?.host ?? this.element, t3) : this._$AH.handleEvent(t3);
+  handleEvent(t) {
+    typeof this._$AH == "function" ? this._$AH.call(this.options?.host ?? this.element, t) : this._$AH.handleEvent(t);
   }
 }
 
 class Z {
-  constructor(t3, i4, s3) {
-    this.element = t3, this.type = 6, this._$AN = undefined, this._$AM = i4, this.options = s3;
+  constructor(t, i, s) {
+    this.element = t, this.type = 6, this._$AN = undefined, this._$AM = i, this.options = s;
   }
   get _$AU() {
     return this._$AM._$AU;
   }
-  _$AI(t3) {
-    M(this, t3);
+  _$AI(t) {
+    M(this, t);
   }
 }
 var j = { M: h2, P: o3, A: n3, C: 1, L: N, R, D: d2, V: M, I: k, H, N: L, U: z, B: I, F: Z };
 var B = t2.litHtmlPolyfillSupport;
 B?.(S2, k), (t2.litHtmlVersions ??= []).push("3.3.3");
-var D = (t3, i4, s3) => {
-  const e4 = s3?.renderBefore ?? i4;
-  let h3 = e4._$litPart$;
-  if (h3 === undefined) {
-    const t4 = s3?.renderBefore ?? null;
-    e4._$litPart$ = h3 = new k(i4.insertBefore(c3(), t4), t4, undefined, s3 ?? {});
+var D = (t, i, s) => {
+  const e = s?.renderBefore ?? i;
+  let h = e._$litPart$;
+  if (h === undefined) {
+    const t = s?.renderBefore ?? null;
+    e._$litPart$ = h = new k(i.insertBefore(c3(), t), t, undefined, s ?? {});
   }
-  return h3._$AI(t3), h3;
+  return h._$AI(t), h;
 };
 // node_modules/lit-element/lit-element.js
 var s3 = globalThis;
@@ -1065,12 +568,12 @@ class i4 extends y {
     super(...arguments), this.renderOptions = { host: this }, this._$Do = undefined;
   }
   createRenderRoot() {
-    const t3 = super.createRenderRoot();
-    return this.renderOptions.renderBefore ??= t3.firstChild, t3;
+    const t = super.createRenderRoot();
+    return this.renderOptions.renderBefore ??= t.firstChild, t;
   }
-  update(t3) {
-    const r4 = this.render();
-    this.hasUpdated || (this.renderOptions.isConnected = this.isConnected), super.update(t3), this._$Do = D(r4, this.renderRoot, this.renderOptions);
+  update(t) {
+    const r = this.render();
+    this.hasUpdated || (this.renderOptions.isConnected = this.isConnected), super.update(t), this._$Do = D(r, this.renderRoot, this.renderOptions);
   }
   connectedCallback() {
     super.connectedCallback(), this._$Do?.setConnected(true);
@@ -1759,7 +1262,7 @@ class VoiceHarnessNavigation extends i4 {
       return;
     }
     event.preventDefault();
-    const current = this.items.findIndex((item2) => item2.id === this.active);
+    const current = this.items.findIndex((item) => item.id === this.active);
     let next = current < 0 ? 0 : current;
     if (event.key === "Home")
       next = 0;
@@ -1842,6 +1345,170 @@ if (!customElements.get("voice-harness-navigation")) {
   customElements.define("voice-harness-navigation", VoiceHarnessNavigation);
 }
 
+// custom_components/llm_gateway/frontend/voice-harness-model.ts
+function runOutcome(record) {
+  const route = isRecord(record.route) ? record.route : {};
+  const loop = isRecord(record.harness_loop) ? record.harness_loop : isRecord(route.harness_loop) ? route.harness_loop : {};
+  const verdict = isRecord(loop.outcome_verdict) ? loop.outcome_verdict : isRecord(route.outcome_verdict) ? route.outcome_verdict : {};
+  const status = String(record.terminal_outcome || loop.terminal_outcome || route.terminal_outcome || record.status || "");
+  const reason = String(record.failure_stage || loop.stop_reason || verdict.reason || "");
+  if (["cancelled", "superseded", "interrupted"].includes(status))
+    return "cancelled";
+  if (["running", "pending"].includes(status))
+    return "running";
+  if (["error", "failed", "stale", "partial"].includes(status))
+    return "failed";
+  if (/(ambiguous|missing_requirement|clarif|confirmation)/.test(reason) || ["clarify", "clarification", "confirm", "confirmation"].includes(status) || ["clarify", "clarification"].includes(String(record.outcome || "")))
+    return "clarification";
+  if (status === "blocked" || record.outcome === "not_answered" || verdict.answerable === false || loop.answerable === false)
+    return "failed";
+  if (record.outcome === "answered" || verdict.answerable === true || loop.answerable === true || ["complete", "completed", "executed", "ok", "success"].includes(status))
+    return "answered";
+  return "unknown";
+}
+function runTone(record) {
+  const outcome = runOutcome(record);
+  return outcome === "failed" ? "bad" : outcome === "answered" ? "ok" : "warning";
+}
+function runSummary(records, liveRuns) {
+  const latencies = records.map((record) => Number(record.latency_ms || 0)).filter((value) => Number.isFinite(value) && value > 0);
+  const avgLatency = latencies.length ? Math.round(latencies.reduce((sum, value) => sum + value, 0) / latencies.length) : 0;
+  const latestRoute = records[0]?.route;
+  const latestRouteKind = latestRoute && typeof latestRoute === "object" ? latestRoute.kind : latestRoute;
+  return {
+    avgLatency,
+    errors: records.filter((record) => runOutcome(record) === "failed").length,
+    latestRoute: latestRouteKind || "",
+    recorded: records.length,
+    running: liveRuns.filter((run) => run.status === "running").length
+  };
+}
+function harnessOverview(entries, diagnosticChecks) {
+  const records = entries.flatMap((entry) => entry.traces?.records || []);
+  const liveRuns = entries.flatMap((entry) => entry.voice_runs || []);
+  const summary = runSummary(records, liveRuns);
+  const providerIssues = entries.reduce((count, entry) => {
+    const configIssue = entry.model_providers?.config_error ? 1 : 0;
+    const healthIssues = (entry.provider_health || []).filter((provider) => Number(provider.failures || 0) > 0).length;
+    return count + configIssue + healthIssues;
+  }, 0);
+  const diagnosticIssues = diagnosticChecks.filter((check) => check.status === "error" || check.status === "warning").length;
+  return {
+    averageLatency: summary.avgLatency,
+    diagnosticIssues,
+    entryCount: entries.length,
+    providerIssues,
+    recentErrors: summary.errors,
+    running: summary.running
+  };
+}
+function diagnosticLayerCounts(checks) {
+  const layers = new Map;
+  for (const check of checks) {
+    const layer = String(check.layer || "unknown");
+    const current = layers.get(layer) || {
+      layer,
+      total: 0,
+      bad: 0,
+      warnings: 0,
+      blocked: 0
+    };
+    current.total += 1;
+    if (check.status === "error") {
+      current.bad += 1;
+    } else if (check.status === "warning") {
+      current.warnings += 1;
+    } else if (check.status === "blocked") {
+      current.blocked += 1;
+    }
+    layers.set(layer, current);
+  }
+  return [...layers.values()].map((layer) => ({
+    ...layer,
+    tone: layer.bad ? "bad" : layer.warnings ? "warning" : layer.blocked ? "muted" : "ok"
+  }));
+}
+function diagnosticCheckDetail(check, repairLabel) {
+  const evidence = Array.isArray(check.evidence) ? check.evidence : [];
+  const depends = Array.isArray(check.depends_on) ? check.depends_on : [];
+  return [
+    check.layer ? `layer=${check.layer}` : "",
+    depends.length ? `depends=${depends.join(",")}` : "",
+    ...evidence.slice(0, 2).map((item) => typeof item === "string" ? item : JSON.stringify(item)),
+    check.repair_hint ? `${repairLabel}: ${check.repair_hint}` : ""
+  ].filter(Boolean).join(" · ");
+}
+function satelliteEntityTone(key, state) {
+  if (!state?.available) {
+    return "bad";
+  }
+  const value = String(state.state || "").toLowerCase();
+  if (key === "voice_paused" || key === "pause_requested") {
+    return ["on", "true", "paused"].includes(value) ? "warning" : "ok";
+  }
+  if (key === "voice_pipeline" || key === "display_awake") {
+    return ["on", "true", "ready", "ok"].includes(value) ? "ok" : "warning";
+  }
+  return "ok";
+}
+function satelliteValue(state, missingLabel) {
+  if (!state?.available) {
+    return missingLabel;
+  }
+  return `${state.state}${state.unit ? ` ${state.unit}` : ""}`;
+}
+function asrEndpointFromSources(...sources) {
+  for (const source of sources) {
+    if (!isRecord(source)) {
+      continue;
+    }
+    const state = String(source.state || "");
+    if (!state) {
+      continue;
+    }
+    return {
+      state,
+      speechStarted: optionalBoolean(source.speech_started),
+      endpointDetected: optionalBoolean(source.endpoint_detected),
+      interruptReady: optionalBoolean(source.interrupt_ready),
+      terminal: optionalBoolean(source.terminal),
+      reason: optionalString(source.reason),
+      failurePhase: optionalString(source.failure_phase),
+      firstSpeechLatencyMs: optionalNumber(source.first_speech_latency_ms),
+      endpointLatencyMs: optionalNumber(source.endpoint_latency_ms),
+      source: String(source.source || "native")
+    };
+  }
+  return {
+    state: "",
+    speechStarted: null,
+    endpointDetected: null,
+    interruptReady: null,
+    terminal: null,
+    reason: "",
+    failurePhase: "",
+    firstSpeechLatencyMs: null,
+    endpointLatencyMs: null,
+    source: ""
+  };
+}
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function optionalBoolean(value) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  return null;
+}
+function optionalNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+function optionalString(value) {
+  return typeof value === "string" ? value : "";
+}
+
 // custom_components/llm_gateway/frontend/voice-harness-live-model.ts
 var object = (value) => value && typeof value === "object" && !Array.isArray(value) ? value : {};
 var records = (value) => Array.isArray(value) ? value.map(object) : [];
@@ -1852,9 +1519,9 @@ function isLiveRun(record) {
   return object(record.lineage).mode !== "dry_run" && record.terminal_outcome !== "dry_run" && record.outcome !== "dry_run" && object(record.route).kind !== "replay";
 }
 function latestConversation(input) {
-  return [...input].filter(isLiveRun).sort((a3, b3) => {
+  return [...input].filter(isLiveRun).sort((a, b) => {
     const time = (run) => Date.parse(String(run.created_at || run.started_at || "")) || 0;
-    return time(b3) - time(a3);
+    return time(b) - time(a);
   })[0] || null;
 }
 function conversationFacts(run) {
@@ -1885,7 +1552,7 @@ function observedMetrics(input) {
   const live = input.filter(isLiveRun);
   const settled = live.filter((run) => ["answered", "failed", "clarification", "cancelled"].includes(runOutcome(run)));
   const timed = settled.map((run) => measurement(run.latency_ms)).filter((value) => value !== null && value >= 0);
-  const sorted = [...timed].sort((a3, b3) => a3 - b3);
+  const sorted = [...timed].sort((a, b) => a - b);
   const middle = Math.floor(sorted.length / 2);
   const ratio = (count) => settled.length ? 100 * count / settled.length : null;
   return {
@@ -1930,7 +1597,7 @@ function pipelineStages(run) {
   const source = events.length ? events : records(run.timeline_spans).length ? records(run.timeline_spans) : records(run.timeline);
   return stageIds.map((id) => {
     const matching = source.filter((event) => eventStage(event) === id);
-    const starts = matching.map(eventStart).filter((n4) => n4 !== null);
+    const starts = matching.map(eventStart).filter((n) => n !== null);
     const spans = matching.flatMap((event) => {
       const start = eventStart(event);
       const duration = measurement(event.duration_ms ?? object(event.payload).duration_ms);
@@ -2137,77 +1804,77 @@ class VoiceHarnessOverview extends i4 {
     return this.language.startsWith("zh") ? zh : en;
   }
   render() {
-    const t3 = this.text.bind(this);
+    const t = this.text.bind(this);
     const runs = this.entries.flatMap((entry) => records(object(entry.traces).records));
     const active = this.entries.flatMap((entry) => records(entry.voice_runs).filter((run) => run.status === "running"));
     const latest = latestConversation([...active, ...runs]);
     const facts = latest ? conversationFacts(latest) : null;
     const live = livePipeline(object(this.satellite.states), object(object(this.entries[0]?.feedback).latest_display));
-    const stateLabel = live.phase === "paused" ? t3("Do not disturb", "免打扰中") : live.active ? t3("Conversation in progress", "正在对话") : live.phase === "standby" ? t3("Standing by", "语音待机") : live.phase === "offline" ? t3("Voice connection interrupted", "语音连接中断") : t3("Capture state unknown", "收音状态未知");
+    const stateLabel = live.phase === "paused" ? t("Do not disturb", "免打扰中") : live.active ? t("Conversation in progress", "正在对话") : live.phase === "standby" ? t("Standing by", "语音待机") : live.phase === "offline" ? t("Voice connection interrupted", "语音连接中断") : t("Capture state unknown", "收音状态未知");
     const evidence = facts?.evidence || "unknown";
     const evidenceLabel = {
-      observed: t3("State read from observations", "已有观测依据"),
-      policy_saved: t3("Comfort target saved", "舒适目标已保存"),
-      policy_requested: t3("Comfort target submitted", "舒适目标已提交"),
-      policy_suppressed: t3("Target saved · away policy takes priority", "目标已保存 · 离家策略优先"),
-      sent: t3("Request sent · confirmation missing", "请求已发送 · 设备确认暂缺"),
-      accepted: t3("Request accepted · device unconfirmed", "请求已受理 · 设备确认暂缺"),
-      confirmed: t3("Device reported the requested state", "设备已回报请求的状态"),
-      not_confirmed: t3("Device did not confirm the request", "设备尚未确认这次请求"),
-      unconfirmed: t3("Device response unconfirmed", "尚无设备响应的确认"),
-      reply: t3("Reply generated", "已生成回复"),
-      failed: t3("This request did not complete", "这次请求未完成"),
-      partial: t3("Only part of the request was sent", "请求仅部分发出"),
-      clarification: t3("One detail to clarify", "还需要补充一点信息"),
-      cancelled: t3("Conversation stopped", "本次对话已停止"),
-      running: t3("Processing your request", "正在处理这句话"),
-      unknown: t3("Awaiting evidence", "等待结果依据")
+      observed: t("State read from observations", "已有观测依据"),
+      policy_saved: t("Comfort target saved", "舒适目标已保存"),
+      policy_requested: t("Comfort target submitted", "舒适目标已提交"),
+      policy_suppressed: t("Target saved · away policy takes priority", "目标已保存 · 离家策略优先"),
+      sent: t("Request sent · confirmation missing", "请求已发送 · 设备确认暂缺"),
+      accepted: t("Request accepted · device unconfirmed", "请求已受理 · 设备确认暂缺"),
+      confirmed: t("Device reported the requested state", "设备已回报请求的状态"),
+      not_confirmed: t("Device did not confirm the request", "设备尚未确认这次请求"),
+      unconfirmed: t("Device response unconfirmed", "尚无设备响应的确认"),
+      reply: t("Reply generated", "已生成回复"),
+      failed: t("This request did not complete", "这次请求未完成"),
+      partial: t("Only part of the request was sent", "请求仅部分发出"),
+      clarification: t("One detail to clarify", "还需要补充一点信息"),
+      cancelled: t("Conversation stopped", "本次对话已停止"),
+      running: t("Processing your request", "正在处理这句话"),
+      unknown: t("Awaiting evidence", "等待结果依据")
     }[evidence];
-    const guidance = !latest ? t3("Your next conversation will appear here.", "下一次对话会记录在这里。") : evidence === "clarification" ? t3("Answer the question above to continue.", "回答上面的澄清问题即可继续。") : evidence === "policy_saved" ? t3("The room will follow its comfort policy. Current temperature still comes from its sensors.", "接下来由房间按舒适策略调节，当前室温仍以传感器观测为准。") : evidence === "policy_requested" ? t3("The request was sent. The updated room target has not been observed yet.", "请求已提交，暂未读到更新后的房间目标。") : evidence === "policy_suppressed" ? t3("Your target is saved. The room currently follows its away policy.", "你的目标已保留，房间目前按离家策略运行。") : ["failed", "partial"].includes(evidence) ? t3("The reply explains what is missing. Details are available in the record.", "可从回复了解未完成的原因，在记录中查看详情。") : ["sent", "accepted", "unconfirmed", "not_confirmed"].includes(evidence) ? t3("The device response remains unconfirmed. The record has the available evidence.", "设备响应仍待确认，可在记录中查看已有反馈。") : evidence === "running" ? t3("Waiting for the reply.", "正在等待回复。") : evidence === "unknown" ? t3("There is not enough evidence to judge this request yet.", "目前还没有足够依据判断这次请求的结果。") : t3("Nothing else is needed for this conversation.", "这次对话无需补充。");
+    const guidance = !latest ? t("Your next conversation will appear here.", "下一次对话会记录在这里。") : evidence === "clarification" ? t("Answer the question above to continue.", "回答上面的澄清问题即可继续。") : evidence === "policy_saved" ? t("The room will follow its comfort policy. Current temperature still comes from its sensors.", "接下来由房间按舒适策略调节，当前室温仍以传感器观测为准。") : evidence === "policy_requested" ? t("The request was sent. The updated room target has not been observed yet.", "请求已提交，暂未读到更新后的房间目标。") : evidence === "policy_suppressed" ? t("Your target is saved. The room currently follows its away policy.", "你的目标已保留，房间目前按离家策略运行。") : ["failed", "partial"].includes(evidence) ? t("The reply explains what is missing. Details are available in the record.", "可从回复了解未完成的原因，在记录中查看详情。") : ["sent", "accepted", "unconfirmed", "not_confirmed"].includes(evidence) ? t("The device response remains unconfirmed. The record has the available evidence.", "设备响应仍待确认，可在记录中查看已有反馈。") : evidence === "running" ? t("Waiting for the reply.", "正在等待回复。") : evidence === "unknown" ? t("There is not enough evidence to judge this request yet.", "目前还没有足够依据判断这次请求的结果。") : t("Nothing else is needed for this conversation.", "这次对话无需补充。");
     const timestamp = String(latest?.created_at || latest?.started_at || "");
     const userText = String(latest?.user_text || object(latest?.input).text || "");
     return b2`
       <div class="section-head intro">
-        <div><span class="eyebrow">${t3("VOICE & SPACE", "语音与空间")}</span>
-          <h2>${t3("Your last conversation", "最近的对话")}</h2>
-          <p class="muted">${t3("What was understood, what happened, and what needs you.", "听懂了什么，实际发生了什么，是否需要你。")}</p>
+        <div><span class="eyebrow">${t("VOICE & SPACE", "语音与空间")}</span>
+          <h2>${t("Your last conversation", "最近的对话")}</h2>
+          <p class="muted">${t("What was understood, what happened, and what needs you.", "听懂了什么，实际发生了什么，是否需要你。")}</p>
         </div>
         <span class="chip" role="status"><span class="dot" data-active=${String(live.active)}></span>${stateLabel}</span>
       </div>
       <div class="conversation-grid">
-        <section class="surface conversation" aria-label=${t3("Understood intent", "理解的意图")}>
-          <div class="section-head"><span class="eyebrow">${t3("YOU SAID", "刚才那句话")}</span>
+        <section class="surface conversation" aria-label=${t("Understood intent", "理解的意图")}>
+          <div class="section-head"><span class="eyebrow">${t("YOU SAID", "刚才那句话")}</span>
             ${Number.isFinite(Date.parse(timestamp)) ? b2`<time datetime=${timestamp}>${new Date(timestamp).toLocaleString(this.language, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time>` : A}
           </div>
-          <h3 class="utterance">${userText || t3("No conversation recorded yet.", "还没有对话记录。")}</h3>
-          ${facts?.intent && facts.intent !== userText ? b2`<p class="resolved"><span>${t3("Understood as", "理解为")}</span>${facts.intent}</p>` : A}
-          <div class="reply"><span class="eyebrow">${t3("THE REPLY", "系统的回应")}</span>
-            <p>${facts?.reply || (latest ? t3("The reply has not been recorded yet.", "暂未记录到回复。") : t3("Speak as you normally would.", "像平常一样开口就好。"))}</p>
+          <h3 class="utterance">${userText || t("No conversation recorded yet.", "还没有对话记录。")}</h3>
+          ${facts?.intent && facts.intent !== userText ? b2`<p class="resolved"><span>${t("Understood as", "理解为")}</span>${facts.intent}</p>` : A}
+          <div class="reply"><span class="eyebrow">${t("THE REPLY", "系统的回应")}</span>
+            <p>${facts?.reply || (latest ? t("The reply has not been recorded yet.", "暂未记录到回复。") : t("Speak as you normally would.", "像平常一样开口就好。"))}</p>
           </div>
-          <button class="quiet" @click=${() => this.navigate("runs")}>${t3("Conversation records", "查看对话记录")} <ha-icon icon="mdi:arrow-top-right"></ha-icon></button>
+          <button class="quiet" @click=${() => this.navigate("runs")}>${t("Conversation records", "查看对话记录")} <ha-icon icon="mdi:arrow-top-right"></ha-icon></button>
         </section>
-        <section class="surface reality" aria-label=${t3("Result and next step", "结果与下一步")}>
-          <span class="eyebrow">${t3("WHAT HAPPENED", "实际结果")}</span>
+        <section class="surface reality" aria-label=${t("Result and next step", "结果与下一步")}>
+          <span class="eyebrow">${t("WHAT HAPPENED", "实际结果")}</span>
           <div class="evidence" data-tone=${evidence === "failed" ? "bad" : ["observed", "confirmed", "policy_saved"].includes(evidence) ? "ok" : "muted"}>
             <ha-icon icon=${evidence === "confirmed" ? "mdi:check-circle-outline" : evidence === "observed" ? "mdi:thermometer" : evidence === "failed" ? "mdi:alert-circle-outline" : "mdi:message-processing-outline"}></ha-icon>
-            <h3>${latest ? evidenceLabel : t3("No result yet", "暂无结果")}</h3>
+            <h3>${latest ? evidenceLabel : t("No result yet", "暂无结果")}</h3>
           </div>
-          ${facts?.sources.length ? b2`<p class="source">${t3("Source at the time of the reply: ", "回复时的来源：")}${facts.sources.join(" · ")}</p>` : A}
-          ${evidence === "reply" ? b2`<p class="source">${t3("This record contains a text reply. Speaker playback is recorded separately.", "这里记录了文字回复，扬声器播放需要独立的播放记录。")}</p>` : A}
-          <div class="next-step"><span class="eyebrow">${t3("DOES THIS NEED YOU?", "需要你做什么")}</span><p>${guidance}</p></div>
-          ${live.phase === "paused" || live.phase === "offline" ? b2`<button class="quiet" @click=${() => this.navigate("settings")}>${t3("Voice settings", "语音设置")} <ha-icon icon="mdi:arrow-top-right"></ha-icon></button>` : A}
+          ${facts?.sources.length ? b2`<p class="source">${t("Source at the time of the reply: ", "回复时的来源：")}${facts.sources.join(" · ")}</p>` : A}
+          ${evidence === "reply" ? b2`<p class="source">${t("This record contains a text reply. Speaker playback is recorded separately.", "这里记录了文字回复，扬声器播放需要独立的播放记录。")}</p>` : A}
+          <div class="next-step"><span class="eyebrow">${t("DOES THIS NEED YOU?", "需要你做什么")}</span><p>${guidance}</p></div>
+          ${live.phase === "paused" || live.phase === "offline" ? b2`<button class="quiet" @click=${() => this.navigate("settings")}>${t("Voice settings", "语音设置")} <ha-icon icon="mdi:arrow-top-right"></ha-icon></button>` : A}
         </section>
       </div>
       <details class="surface diagnostics">
-        <summary>${t3("System details", "系统详情")}<span>${t3("Measurements, connections and diagnostics", "测量、连接与诊断")}</span></summary>
+        <summary>${t("System details", "系统详情")}<span>${t("Measurements, connections and diagnostics", "测量、连接与诊断")}</span></summary>
         ${this.diagnostics(runs)}
         <slot name="diagnostics"></slot>
-        <details class="memory"><summary>${t3("Conversation memory", "对话记忆")}</summary><slot name="memory"></slot></details>
+        <details class="memory"><summary>${t("Conversation memory", "对话记忆")}</summary><slot name="memory"></slot></details>
       </details>
     `;
   }
   diagnostics(runs) {
-    const t3 = this.text.bind(this);
+    const t = this.text.bind(this);
     const metrics = observedMetrics(runs);
     const snapshot = object(this.satellite.diagnostic_snapshot);
     const wake = records(snapshot.event_stream).filter((event) => /wake/.test(String(event.type))).at(-1);
@@ -2216,12 +1883,12 @@ class VoiceHarnessOverview extends i4 {
     const loaded = this.entries.some((entry) => entry.state === "loaded");
     return b2`
       <div class="metrics">
-        <voice-harness-stat .label=${t3("Median response", "响应中位数")} .value=${format(metrics.medianMs, "ms")} .values=${metrics.latencies} .hint=${t3("Retained live conversations", "已保留的实际对话")} icon="mdi:timer-outline"></voice-harness-stat>
-        <voice-harness-stat .label=${t3("Replies completed", "回答完成率")} .value=${format(metrics.successRate, "%")} .values=${metrics.outcomes} .hint=${t3("Reply outcome only", "仅描述回答结果")} icon="mdi:check-circle-outline"></voice-harness-stat>
-        <voice-harness-stat .label=${t3("Error rate", "错误率")} .value=${format(metrics.errorRate, "%")} .values=${metrics.errors} .hint=${String(metrics.count) + t3(" completed conversations", " 次已结束对话")} icon="mdi:pulse"></voice-harness-stat>
-        <voice-harness-stat .label=${t3("Last wake", "最近唤醒")} .value=${typeof wakeTime === "string" && Number.isFinite(Date.parse(wakeTime)) ? new Date(wakeTime).toLocaleTimeString(this.language, { hour: "2-digit", minute: "2-digit" }) : "—"} .hint=${t3("Satellite timestamp", "卫星时间戳")} icon="mdi:microphone-outline"></voice-harness-stat>
+        <voice-harness-stat .label=${t("Median response", "响应中位数")} .value=${format(metrics.medianMs, "ms")} .values=${metrics.latencies} .hint=${t("Retained live conversations", "已保留的实际对话")} icon="mdi:timer-outline"></voice-harness-stat>
+        <voice-harness-stat .label=${t("Replies completed", "回答完成率")} .value=${format(metrics.successRate, "%")} .values=${metrics.outcomes} .hint=${t("Reply outcome only", "仅描述回答结果")} icon="mdi:check-circle-outline"></voice-harness-stat>
+        <voice-harness-stat .label=${t("Error rate", "错误率")} .value=${format(metrics.errorRate, "%")} .values=${metrics.errors} .hint=${String(metrics.count) + t(" completed conversations", " 次已结束对话")} icon="mdi:pulse"></voice-harness-stat>
+        <voice-harness-stat .label=${t("Last wake", "最近唤醒")} .value=${typeof wakeTime === "string" && Number.isFinite(Date.parse(wakeTime)) ? new Date(wakeTime).toLocaleTimeString(this.language, { hour: "2-digit", minute: "2-digit" }) : "—"} .hint=${t("Satellite timestamp", "卫星时间戳")} icon="mdi:microphone-outline"></voice-harness-stat>
       </div>
-      <p class="system-state">${loaded ? t3("Gateway loaded", "网关已加载") : t3("Gateway state unknown", "网关状态未知")} · ${t3("Connection checks and missing measurements follow below.", "连接检查与缺失测量见下方。")}</p>
+      <p class="system-state">${loaded ? t("Gateway loaded", "网关已加载") : t("Gateway state unknown", "网关状态未知")} · ${t("Connection checks and missing measurements follow below.", "连接检查与缺失测量见下方。")}</p>
     `;
   }
   navigate(destination) {
@@ -2406,11 +2073,11 @@ class Diff {
       return left === right || !!options.ignoreCase && left.toLowerCase() === right.toLowerCase();
     }
   }
-  removeEmpty(array2) {
+  removeEmpty(array) {
     const ret = [];
-    for (let i5 = 0;i5 < array2.length; i5++) {
-      if (array2[i5]) {
-        ret.push(array2[i5]);
+    for (let i = 0;i < array.length; i++) {
+      if (array[i]) {
+        ret.push(array[i]);
       }
     }
     return ret;
@@ -2447,9 +2114,9 @@ class Diff {
       if (!component.removed) {
         if (!component.added && this.useLongestToken) {
           let value = newTokens.slice(newPos, newPos + component.count);
-          value = value.map(function(value2, i5) {
-            const oldValue = oldTokens[oldPos + i5];
-            return oldValue.length > value2.length ? oldValue : value2;
+          value = value.map(function(value, i) {
+            const oldValue = oldTokens[oldPos + i];
+            return oldValue.length > value.length ? oldValue : value;
           });
           component.value = this.join(value);
         } else {
@@ -2470,125 +2137,125 @@ class Diff {
 
 // node_modules/diff/libesm/util/string.js
 function longestCommonPrefix(str1, str2) {
-  let i5;
-  for (i5 = 0;i5 < str1.length && i5 < str2.length; i5++) {
-    if (str1[i5] != str2[i5]) {
-      return str1.slice(0, i5);
+  let i;
+  for (i = 0;i < str1.length && i < str2.length; i++) {
+    if (str1[i] != str2[i]) {
+      return str1.slice(0, i);
     }
   }
-  return str1.slice(0, i5);
+  return str1.slice(0, i);
 }
 function longestCommonSuffix(str1, str2) {
-  let i5;
+  let i;
   if (!str1 || !str2 || str1[str1.length - 1] != str2[str2.length - 1]) {
     return "";
   }
-  for (i5 = 0;i5 < str1.length && i5 < str2.length; i5++) {
-    if (str1[str1.length - (i5 + 1)] != str2[str2.length - (i5 + 1)]) {
-      return str1.slice(-i5);
+  for (i = 0;i < str1.length && i < str2.length; i++) {
+    if (str1[str1.length - (i + 1)] != str2[str2.length - (i + 1)]) {
+      return str1.slice(-i);
     }
   }
-  return str1.slice(-i5);
+  return str1.slice(-i);
 }
-function replacePrefix(string2, oldPrefix, newPrefix) {
-  if (string2.slice(0, oldPrefix.length) != oldPrefix) {
-    throw Error(`string ${JSON.stringify(string2)} doesn't start with prefix ${JSON.stringify(oldPrefix)}; this is a bug`);
+function replacePrefix(string, oldPrefix, newPrefix) {
+  if (string.slice(0, oldPrefix.length) != oldPrefix) {
+    throw Error(`string ${JSON.stringify(string)} doesn't start with prefix ${JSON.stringify(oldPrefix)}; this is a bug`);
   }
-  return newPrefix + string2.slice(oldPrefix.length);
+  return newPrefix + string.slice(oldPrefix.length);
 }
-function replaceSuffix(string2, oldSuffix, newSuffix) {
+function replaceSuffix(string, oldSuffix, newSuffix) {
   if (!oldSuffix) {
-    return string2 + newSuffix;
+    return string + newSuffix;
   }
-  if (string2.slice(-oldSuffix.length) != oldSuffix) {
-    throw Error(`string ${JSON.stringify(string2)} doesn't end with suffix ${JSON.stringify(oldSuffix)}; this is a bug`);
+  if (string.slice(-oldSuffix.length) != oldSuffix) {
+    throw Error(`string ${JSON.stringify(string)} doesn't end with suffix ${JSON.stringify(oldSuffix)}; this is a bug`);
   }
-  return string2.slice(0, -oldSuffix.length) + newSuffix;
+  return string.slice(0, -oldSuffix.length) + newSuffix;
 }
-function removePrefix(string2, oldPrefix) {
-  return replacePrefix(string2, oldPrefix, "");
+function removePrefix(string, oldPrefix) {
+  return replacePrefix(string, oldPrefix, "");
 }
-function removeSuffix(string2, oldSuffix) {
-  return replaceSuffix(string2, oldSuffix, "");
+function removeSuffix(string, oldSuffix) {
+  return replaceSuffix(string, oldSuffix, "");
 }
 function maximumOverlap(string1, string2) {
   return string2.slice(0, overlapCount(string1, string2));
 }
-function overlapCount(a3, b3) {
+function overlapCount(a, b) {
   let startA = 0;
-  if (a3.length > b3.length) {
-    startA = a3.length - b3.length;
+  if (a.length > b.length) {
+    startA = a.length - b.length;
   }
-  let endB = b3.length;
-  if (a3.length < b3.length) {
-    endB = a3.length;
+  let endB = b.length;
+  if (a.length < b.length) {
+    endB = a.length;
   }
   const map = Array(endB);
-  let k2 = 0;
+  let k = 0;
   map[0] = 0;
-  for (let j2 = 1;j2 < endB; j2++) {
-    if (b3[j2] == b3[k2]) {
-      map[j2] = map[k2];
+  for (let j = 1;j < endB; j++) {
+    if (b[j] == b[k]) {
+      map[j] = map[k];
     } else {
-      map[j2] = k2;
+      map[j] = k;
     }
-    while (k2 > 0 && b3[j2] != b3[k2]) {
-      k2 = map[k2];
+    while (k > 0 && b[j] != b[k]) {
+      k = map[k];
     }
-    if (b3[j2] == b3[k2]) {
-      k2++;
-    }
-  }
-  k2 = 0;
-  for (let i5 = startA;i5 < a3.length; i5++) {
-    while (k2 > 0 && a3[i5] != b3[k2]) {
-      k2 = map[k2];
-    }
-    if (a3[i5] == b3[k2]) {
-      k2++;
+    if (b[j] == b[k]) {
+      k++;
     }
   }
-  return k2;
+  k = 0;
+  for (let i = startA;i < a.length; i++) {
+    while (k > 0 && a[i] != b[k]) {
+      k = map[k];
+    }
+    if (a[i] == b[k]) {
+      k++;
+    }
+  }
+  return k;
 }
-function segment(string2, segmenter) {
+function segment(string, segmenter) {
   const parts = [];
-  for (const segmentObj of Array.from(segmenter.segment(string2))) {
-    const segment2 = segmentObj.segment;
-    if (parts.length && /\s/.test(parts[parts.length - 1]) && /\s/.test(segment2)) {
-      parts[parts.length - 1] += segment2;
+  for (const segmentObj of Array.from(segmenter.segment(string))) {
+    const segment = segmentObj.segment;
+    if (parts.length && /\s/.test(parts[parts.length - 1]) && /\s/.test(segment)) {
+      parts[parts.length - 1] += segment;
     } else {
-      parts.push(segment2);
+      parts.push(segment);
     }
   }
   return parts;
 }
-function trailingWs(string2, segmenter) {
+function trailingWs(string, segmenter) {
   if (segmenter) {
-    return leadingAndTrailingWs(string2, segmenter)[1];
+    return leadingAndTrailingWs(string, segmenter)[1];
   }
-  let i5;
-  for (i5 = string2.length - 1;i5 >= 0; i5--) {
-    if (!string2[i5].match(/\s/)) {
+  let i;
+  for (i = string.length - 1;i >= 0; i--) {
+    if (!string[i].match(/\s/)) {
       break;
     }
   }
-  return string2.substring(i5 + 1);
+  return string.substring(i + 1);
 }
-function leadingWs(string2, segmenter) {
+function leadingWs(string, segmenter) {
   if (segmenter) {
-    return leadingAndTrailingWs(string2, segmenter)[0];
+    return leadingAndTrailingWs(string, segmenter)[0];
   }
-  const match = string2.match(/^\s*/);
+  const match = string.match(/^\s*/);
   return match ? match[0] : "";
 }
-function leadingAndTrailingWs(string2, segmenter) {
+function leadingAndTrailingWs(string, segmenter) {
   if (!segmenter) {
-    return [leadingWs(string2), trailingWs(string2)];
+    return [leadingWs(string), trailingWs(string)];
   }
   if (segmenter.resolvedOptions().granularity != "word") {
     throw new Error('The segmenter passed must have a granularity of "word"');
   }
-  const segments = segment(string2, segmenter);
+  const segments = segment(string, segmenter);
   const firstSeg = segments[0];
   const lastSeg = segments[segments.length - 1];
   const head = /\s/.test(firstSeg) ? firstSeg : "";
@@ -2642,8 +2309,8 @@ class WordDiff extends Diff {
     return tokens;
   }
   join(tokens) {
-    return tokens.map((token, i5) => {
-      if (i5 == 0) {
+    return tokens.map((token, i) => {
+      if (i == 0) {
         return token;
       } else {
         return token.replace(/^\s+/, "");
@@ -2777,9 +2444,9 @@ function tokenize(value, options) {
   if (!linesAndNewlines[linesAndNewlines.length - 1]) {
     linesAndNewlines.pop();
   }
-  for (let i5 = 0;i5 < linesAndNewlines.length; i5++) {
-    const line = linesAndNewlines[i5];
-    if (i5 % 2 && !options.newlineIsToken) {
+  for (let i = 0;i < linesAndNewlines.length; i++) {
+    const line = linesAndNewlines[i];
+    if (i % 2 && !options.newlineIsToken) {
       retLines[retLines.length - 1] += line;
     } else {
       retLines.push(line);
@@ -2794,14 +2461,14 @@ function object2(value) {
 function runId(record) {
   return String(record.run_id || record.id || "");
 }
-function resolveReplayPair(records2, selected) {
-  const forks = records2.filter((record) => object2(record.lineage).mode === "dry_run");
+function resolveReplayPair(records, selected) {
+  const forks = records.filter((record) => object2(record.lineage).mode === "dry_run");
   const fork = selected?.forkId ? forks.find((record) => runId(record) === selected.forkId) : forks[0];
   if (!fork)
     return null;
   const lineage = object2(fork.lineage);
   const sourceId = String(selected?.sourceId || lineage.replay_of || "");
-  const source = records2.find((record) => runId(record) === sourceId);
+  const source = records.find((record) => runId(record) === sourceId);
   if (!source)
     return null;
   return { source, fork, sourceId, forkId: runId(fork) };
@@ -2883,12 +2550,12 @@ class VoiceHarnessReplayInspector extends i4 {
       return A;
     const sections = replayDiffSections(this.pair.source, this.pair.fork);
     const changed = sections.filter((section) => section.changed).length;
-    const t3 = (en, zh) => this.language.startsWith("zh") ? zh : en;
+    const t = (en, zh) => this.language.startsWith("zh") ? zh : en;
     return b2`
       <section>
         <header>
-          <div><span class="eyebrow">REPLAY DIFF</span><strong>${t3("Response comparison", "回答差异对比")}</strong></div>
-          <span class=${changed ? "chip warning" : "chip ok"}>${changed} ${t3("changed sections", "处变化")}</span>
+          <div><span class="eyebrow">REPLAY DIFF</span><strong>${t("Response comparison", "回答差异对比")}</strong></div>
+          <span class=${changed ? "chip warning" : "chip ok"}>${changed} ${t("changed sections", "处变化")}</span>
         </header>
         <div class="lineage">
           <span>${this.pair.sourceId}</span><b aria-hidden="true">→</b><span>${this.pair.forkId}</span>
@@ -2899,7 +2566,7 @@ class VoiceHarnessReplayInspector extends i4 {
               <summary>
                 <strong>${this.labels[item.id] || item.id}</strong>
                 <span class=${item.changed ? "chip warning" : "chip muted"}>
-                  ${item.changed ? t3("Changed", "有变化") : t3("Unchanged", "无变化")}
+                  ${item.changed ? t("Changed", "有变化") : t("Unchanged", "无变化")}
                 </span>
               </summary>
               <pre>${item.parts.map((part) => b2`<span class=${part.added ? "added" : part.removed ? "removed" : "same"}>${part.value}</span>`)}</pre>
@@ -2982,7 +2649,7 @@ class VoiceHarnessRunList extends i4 {
     if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key))
       return;
     event.preventDefault();
-    const current = this.items.findIndex((item2) => item2.id === this.selected);
+    const current = this.items.findIndex((item) => item.id === this.selected);
     let next = current < 0 ? 0 : current;
     if (event.key === "Home")
       next = 0;
@@ -3020,144 +2687,144 @@ if (!customElements.get("voice-harness-run-list")) {
 }
 // node_modules/lit-html/directive.js
 var t3 = { ATTRIBUTE: 1, CHILD: 2, PROPERTY: 3, BOOLEAN_ATTRIBUTE: 4, EVENT: 5, ELEMENT: 6 };
-var e4 = (t4) => (...e5) => ({ _$litDirective$: t4, values: e5 });
+var e4 = (t) => (...e) => ({ _$litDirective$: t, values: e });
 
 class i5 {
-  constructor(t4) {}
+  constructor(t) {}
   get _$AU() {
     return this._$AM._$AU;
   }
-  _$AT(t4, e5, i6) {
-    this._$Ct = t4, this._$AM = e5, this._$Ci = i6;
+  _$AT(t, e, i) {
+    this._$Ct = t, this._$AM = e, this._$Ci = i;
   }
-  _$AS(t4, e5) {
-    return this.update(t4, e5);
+  _$AS(t, e) {
+    return this.update(t, e);
   }
-  update(t4, e5) {
-    return this.render(...e5);
+  update(t, e) {
+    return this.render(...e);
   }
 }
 
 // node_modules/lit-html/directives/unsafe-html.js
 class e5 extends i5 {
-  constructor(i6) {
-    if (super(i6), this.it = A, i6.type !== t3.CHILD)
+  constructor(i) {
+    if (super(i), this.it = A, i.type !== t3.CHILD)
       throw Error(this.constructor.directiveName + "() can only be used in child bindings");
   }
-  render(r4) {
-    if (r4 === A || r4 == null)
-      return this._t = undefined, this.it = r4;
-    if (r4 === E)
-      return r4;
-    if (typeof r4 != "string")
+  render(r) {
+    if (r === A || r == null)
+      return this._t = undefined, this.it = r;
+    if (r === E)
+      return r;
+    if (typeof r != "string")
       throw Error(this.constructor.directiveName + "() called with a non-string value");
-    if (r4 === this.it)
+    if (r === this.it)
       return this._t;
-    this.it = r4;
-    const s4 = [r4];
-    return s4.raw = s4, this._t = { _$litType$: this.constructor.resultType, strings: s4, values: [] };
+    this.it = r;
+    const s = [r];
+    return s.raw = s, this._t = { _$litType$: this.constructor.resultType, strings: s, values: [] };
   }
 }
 e5.directiveName = "unsafeHTML", e5.resultType = 1;
 var o5 = e4(e5);
 // node_modules/lit-html/directive-helpers.js
 var { I: t4 } = j;
-var i6 = (o6) => o6;
+var i6 = (o) => o;
 var s4 = () => document.createComment("");
-var v2 = (o6, n4, e6) => {
-  const l3 = o6._$AA.parentNode, d3 = n4 === undefined ? o6._$AB : n4._$AA;
-  if (e6 === undefined) {
-    const i7 = l3.insertBefore(s4(), d3), n5 = l3.insertBefore(s4(), d3);
-    e6 = new t4(i7, n5, o6, o6.options);
+var v2 = (o, n, e) => {
+  const l = o._$AA.parentNode, d = n === undefined ? o._$AB : n._$AA;
+  if (e === undefined) {
+    const i = l.insertBefore(s4(), d), n = l.insertBefore(s4(), d);
+    e = new t4(i, n, o, o.options);
   } else {
-    const t5 = e6._$AB.nextSibling, n5 = e6._$AM, c4 = n5 !== o6;
-    if (c4) {
-      let t6;
-      e6._$AQ?.(o6), e6._$AM = o6, e6._$AP !== undefined && (t6 = o6._$AU) !== n5._$AU && e6._$AP(t6);
+    const t = e._$AB.nextSibling, n = e._$AM, c = n !== o;
+    if (c) {
+      let t;
+      e._$AQ?.(o), e._$AM = o, e._$AP !== undefined && (t = o._$AU) !== n._$AU && e._$AP(t);
     }
-    if (t5 !== d3 || c4) {
-      let o7 = e6._$AA;
-      for (;o7 !== t5; ) {
-        const t6 = i6(o7).nextSibling;
-        i6(l3).insertBefore(o7, d3), o7 = t6;
+    if (t !== d || c) {
+      let o = e._$AA;
+      for (;o !== t; ) {
+        const t = i6(o).nextSibling;
+        i6(l).insertBefore(o, d), o = t;
       }
     }
   }
-  return e6;
+  return e;
 };
-var u3 = (o6, t5, i7 = o6) => (o6._$AI(t5, i7), o6);
+var u3 = (o, t, i = o) => (o._$AI(t, i), o);
 var m2 = {};
-var p3 = (o6, t5 = m2) => o6._$AH = t5;
-var M2 = (o6) => o6._$AH;
-var h3 = (o6) => {
-  o6._$AR(), o6._$AA.remove();
+var p3 = (o, t = m2) => o._$AH = t;
+var M2 = (o) => o._$AH;
+var h3 = (o) => {
+  o._$AR(), o._$AA.remove();
 };
 
 // node_modules/lit-html/directives/repeat.js
-var u4 = (e6, s5, t5) => {
-  const r4 = new Map;
-  for (let l3 = s5;l3 <= t5; l3++)
-    r4.set(e6[l3], l3);
-  return r4;
+var u4 = (e, s, t) => {
+  const r = new Map;
+  for (let l = s;l <= t; l++)
+    r.set(e[l], l);
+  return r;
 };
 var c4 = e4(class extends i5 {
-  constructor(e6) {
-    if (super(e6), e6.type !== t3.CHILD)
+  constructor(e) {
+    if (super(e), e.type !== t3.CHILD)
       throw Error("repeat() can only be used in text expressions");
   }
-  dt(e6, s5, t5) {
-    let r4;
-    t5 === undefined ? t5 = s5 : s5 !== undefined && (r4 = s5);
-    const l3 = [], o6 = [];
-    let i7 = 0;
-    for (const s6 of e6)
-      l3[i7] = r4 ? r4(s6, i7) : i7, o6[i7] = t5(s6, i7), i7++;
-    return { values: o6, keys: l3 };
+  dt(e, s, t) {
+    let r;
+    t === undefined ? t = s : s !== undefined && (r = s);
+    const l = [], o = [];
+    let i = 0;
+    for (const s of e)
+      l[i] = r ? r(s, i) : i, o[i] = t(s, i), i++;
+    return { values: o, keys: l };
   }
-  render(e6, s5, t5) {
-    return this.dt(e6, s5, t5).values;
+  render(e, s, t) {
+    return this.dt(e, s, t).values;
   }
-  update(s5, [t5, r4, c5]) {
-    const d3 = M2(s5), { values: p4, keys: a3 } = this.dt(t5, r4, c5);
-    if (!Array.isArray(d3))
-      return this.ut = a3, p4;
-    const h4 = this.ut ??= [], v3 = [];
-    let m3, y3, x2 = 0, j2 = d3.length - 1, k2 = 0, w2 = p4.length - 1;
-    for (;x2 <= j2 && k2 <= w2; )
-      if (d3[x2] === null)
-        x2++;
-      else if (d3[j2] === null)
-        j2--;
-      else if (h4[x2] === a3[k2])
-        v3[k2] = u3(d3[x2], p4[k2]), x2++, k2++;
-      else if (h4[j2] === a3[w2])
-        v3[w2] = u3(d3[j2], p4[w2]), j2--, w2--;
-      else if (h4[x2] === a3[w2])
-        v3[w2] = u3(d3[x2], p4[w2]), v2(s5, v3[w2 + 1], d3[x2]), x2++, w2--;
-      else if (h4[j2] === a3[k2])
-        v3[k2] = u3(d3[j2], p4[k2]), v2(s5, d3[x2], d3[j2]), j2--, k2++;
-      else if (m3 === undefined && (m3 = u4(a3, k2, w2), y3 = u4(h4, x2, j2)), m3.has(h4[x2]))
-        if (m3.has(h4[j2])) {
-          const e6 = y3.get(a3[k2]), t6 = e6 !== undefined ? d3[e6] : null;
-          if (t6 === null) {
-            const e7 = v2(s5, d3[x2]);
-            u3(e7, p4[k2]), v3[k2] = e7;
+  update(s, [t, r, c]) {
+    const d = M2(s), { values: p, keys: a } = this.dt(t, r, c);
+    if (!Array.isArray(d))
+      return this.ut = a, p;
+    const h = this.ut ??= [], v = [];
+    let m, y, x = 0, j = d.length - 1, k = 0, w = p.length - 1;
+    for (;x <= j && k <= w; )
+      if (d[x] === null)
+        x++;
+      else if (d[j] === null)
+        j--;
+      else if (h[x] === a[k])
+        v[k] = u3(d[x], p[k]), x++, k++;
+      else if (h[j] === a[w])
+        v[w] = u3(d[j], p[w]), j--, w--;
+      else if (h[x] === a[w])
+        v[w] = u3(d[x], p[w]), v2(s, v[w + 1], d[x]), x++, w--;
+      else if (h[j] === a[k])
+        v[k] = u3(d[j], p[k]), v2(s, d[x], d[j]), j--, k++;
+      else if (m === undefined && (m = u4(a, k, w), y = u4(h, x, j)), m.has(h[x]))
+        if (m.has(h[j])) {
+          const e = y.get(a[k]), t = e !== undefined ? d[e] : null;
+          if (t === null) {
+            const e = v2(s, d[x]);
+            u3(e, p[k]), v[k] = e;
           } else
-            v3[k2] = u3(t6, p4[k2]), v2(s5, d3[x2], t6), d3[e6] = null;
-          k2++;
+            v[k] = u3(t, p[k]), v2(s, d[x], t), d[e] = null;
+          k++;
         } else
-          h3(d3[j2]), j2--;
+          h3(d[j]), j--;
       else
-        h3(d3[x2]), x2++;
-    for (;k2 <= w2; ) {
-      const e6 = v2(s5, v3[w2 + 1]);
-      u3(e6, p4[k2]), v3[k2++] = e6;
+        h3(d[x]), x++;
+    for (;k <= w; ) {
+      const e = v2(s, v[w + 1]);
+      u3(e, p[k]), v[k++] = e;
     }
-    for (;x2 <= j2; ) {
-      const e6 = d3[x2++];
-      e6 !== null && h3(e6);
+    for (;x <= j; ) {
+      const e = d[x++];
+      e !== null && h3(e);
     }
-    return this.ut = a3, p3(s5, v3), E;
+    return this.ut = a, p3(s, v), E;
   }
 });
 // custom_components/llm_gateway/frontend/voice-harness-runs.ts
@@ -3252,32 +2919,32 @@ class VoiceHarnessRuns extends i4 {
     }) : "—";
   }
   render() {
-    const t5 = this.text.bind(this);
+    const t = this.text.bind(this);
     const items = this.items.filter((item) => this.filtered(item));
     const selected = this.selected ? this.current(this.selected) : null;
     return b2`
       <div class="section-head">
         <div>
-          <span class="eyebrow">VOICE HARNESS / ${t5("RUNS", "运行记录")}</span>
+          <span class="eyebrow">VOICE HARNESS / ${t("RUNS", "运行记录")}</span>
           <h2>
-            ${t5("Every conversation has a story.", "每一段对话，都有迹可循。")}
+            ${t("Every conversation has a story.", "每一段对话，都有迹可循。")}
           </h2>
           <p class="muted">
-            ${t5("Follow the timing, the answer and the evidence behind it.", "沿着时间线，看见回应，也看见回应背后的证据。")}
+            ${t("Follow the timing, the answer and the evidence behind it.", "沿着时间线，看见回应，也看见回应背后的证据。")}
           </p>
         </div>
         <span class="chip"
-          >${this.items.length} ${t5("retained runs", "条保留记录")}</span
+          >${this.items.length} ${t("retained runs", "条保留记录")}</span
         >
       </div>
       <section class="surface run-surface">
         <div class="toolbar">
-          <div class="filters" aria-label=${t5("Filter runs", "筛选运行记录")}>
+          <div class="filters" aria-label=${t("Filter runs", "筛选运行记录")}>
             ${[
-      ["all", t5("All", "全部")],
-      ["answered", t5("Answered", "已回答")],
-      ["warning", t5("Attention", "留意")],
-      ["failed", t5("Failed", "失败")],
+      ["all", t("All", "全部")],
+      ["answered", t("Answered", "已回答")],
+      ["warning", t("Attention", "留意")],
+      ["failed", t("Failed", "失败")],
       ["slow", ">3s"]
     ].map(([id, label]) => b2`<button
                   class="filter"
@@ -3291,39 +2958,39 @@ class VoiceHarnessRuns extends i4 {
           </div>
           <label class="search"
             ><span class="sr-only"
-              >${t5("Search runs", "搜索对话、模型或 ID")}</span
+              >${t("Search runs", "搜索对话、模型或 ID")}</span
             ><input
               type="search"
               .value=${this.query}
               @input=${(event) => {
       this.query = event.target.value;
     }}
-              placeholder=${t5("Search conversations, models…", "搜索对话、模型…")}
+              placeholder=${t("Search conversations, models…", "搜索对话、模型…")}
           /></label>
         </div>
         ${this.selection.length ? b2`<div class="compare-bar">
                 <span
-                  >${this.selection.length}/2 ${t5("selected", "条已选")}</span
+                  >${this.selection.length}/2 ${t("selected", "条已选")}</span
                 ><button
                   class="primary"
                   ?disabled=${this.selection.length !== 2}
                   @click=${() => this.openComparison()}
                 >
-                  ${t5("Compare replies", "对比模型回答")}</button
+                  ${t("Compare replies", "对比模型回答")}</button
                 ><button
                   class="quiet"
                   @click=${() => {
       this.selection = [];
     }}
                 >
-                  ${t5("Clear", "清除")}
+                  ${t("Clear", "清除")}
                 </button>
               </div>` : A}
         <div class="list-head" aria-hidden="true">
-          <span>${t5("Conversation", "对话")}</span
-          ><span>${t5("Route / duration", "路由 / 耗时")}</span
-          ><span>${t5("Outcome", "结果")}</span
-          ><span>${t5("Compare", "对比")}</span>
+          <span>${t("Conversation", "对话")}</span
+          ><span>${t("Route / duration", "路由 / 耗时")}</span
+          ><span>${t("Outcome", "结果")}</span
+          ><span>${t("Compare", "对比")}</span>
         </div>
         <div class="run-list">
           ${c4(items, (item) => this.key(item), (item) => b2`
@@ -3337,9 +3004,9 @@ class VoiceHarnessRuns extends i4 {
                     ><strong
                       >${String(item.record.user_text || idOf(item.record))}</strong
                     ><small
-                      >${this.time(item.record.created_at)}${object(item.record.lineage).mode === "dry_run" ? " · " + t5("Dry-run replay", "模拟重放") : ""}</small
+                      >${this.time(item.record.created_at)}${object(item.record.lineage).mode === "dry_run" ? " · " + t("Dry-run replay", "模拟重放") : ""}</small
                     ><span class="excerpt"
-                      >${speechOf(item.record) || t5("No answer retained", "未保留回答")}</span
+                      >${speechOf(item.record) || t("No answer retained", "未保留回答")}</span
                     ></span
                   >
                   <span class="run-facts"
@@ -3355,21 +3022,21 @@ class VoiceHarnessRuns extends i4 {
                 </button>
                 <button
                   class="compare-pick quiet"
-                  aria-label=${t5("Select for comparison: ", "选择对比：") + String(item.record.user_text || idOf(item.record))}
+                  aria-label=${t("Select for comparison: ", "选择对比：") + String(item.record.user_text || idOf(item.record))}
                   aria-pressed=${String(this.selection.some((value) => this.key(value) === this.key(item)))}
                   @click=${() => this.toggleCompare(item)}
                 >
                   <ha-icon icon="mdi:compare-horizontal"></ha-icon
-                  ><span class="mobile-compare">${t5("Compare", "对比")}</span>
+                  ><span class="mobile-compare">${t("Compare", "对比")}</span>
                 </button>
               </article>
             `)}
         </div>
         ${!items.length ? b2`<div class="empty">
                 <ha-icon icon="mdi:message-outline"></ha-icon>
-                <h3>${t5("A quiet moment", "这里暂时很安静")}</h3>
+                <h3>${t("A quiet moment", "这里暂时很安静")}</h3>
                 <p>
-                  ${this.query || this.filter !== "all" ? t5("No runs match these filters.", "没有符合当前筛选的记录。") : t5("Retained voice runs appear here. Enable diagnostic traces in Settings to capture the next conversation.", "保留的语音运行会出现在这里。可在设置中开启诊断记录，观察下一段对话。")}
+                  ${this.query || this.filter !== "all" ? t("No runs match these filters.", "没有符合当前筛选的记录。") : t("Retained voice runs appear here. Enable diagnostic traces in Settings to capture the next conversation.", "保留的语音运行会出现在这里。可在设置中开启诊断记录，观察下一段对话。")}
                 </p>
               </div>` : A}
       </section>
@@ -3390,12 +3057,12 @@ class VoiceHarnessRuns extends i4 {
               >${this.compareOpen ? "REPLAY DIFF" : "TRACE INSPECTOR"}</span
             >
             <h3 id="inspector-title">
-              ${this.compareOpen ? t5("Two perspectives, side by side", "两次回应，一目了然") : t5("Inside the conversation", "走进这段对话")}
+              ${this.compareOpen ? t("Two perspectives, side by side", "两次回应，一目了然") : t("Inside the conversation", "走进这段对话")}
             </h3>
           </div>
           <button
             class="quiet"
-            aria-label=${t5("Close inspector", "关闭检查抽屉")}
+            aria-label=${t("Close inspector", "关闭检查抽屉")}
             @click=${() => this.close()}
           >
             ✕
@@ -3403,14 +3070,14 @@ class VoiceHarnessRuns extends i4 {
         </header>
         <div class="drawer-body">
           ${this.error ? b2`<p class="error" role="alert">${this.error}</p>` : A}
-          ${this.loading ? b2`<p role="status" class="muted">${t5("Loading observed evidence…", "正在读取观测证据…")}</p>` : A}
+          ${this.loading ? b2`<p role="status" class="muted">${t("Loading observed evidence…", "正在读取观测证据…")}</p>` : A}
           ${this.compareOpen ? this.comparison() : selected ? this.detail(selected) : A}
         </div>
       </dialog>
     `;
   }
   detail(record) {
-    const t5 = this.text.bind(this);
+    const t = this.text.bind(this);
     const usage = object(record.usage);
     return b2`
       <div class="detail-summary">
@@ -3423,12 +3090,12 @@ class VoiceHarnessRuns extends i4 {
       </h2>
       <nav
         class="detail-tabs"
-        aria-label=${t5("Run detail sections", "运行详情分组")}
+        aria-label=${t("Run detail sections", "运行详情分组")}
       >
         ${[
-      ["conversation", t5("Conversation", "对话")],
-      ["evidence", t5("Evidence", "证据")],
-      ["audio", t5("Audio", "音频")],
+      ["conversation", t("Conversation", "对话")],
+      ["evidence", t("Evidence", "证据")],
+      ["audio", t("Audio", "音频")],
       ["json", "JSON"]
     ].map(([id, label]) => b2`<button
               aria-pressed=${String(this.detailTab === id)}
@@ -3444,32 +3111,32 @@ class VoiceHarnessRuns extends i4 {
         class="conversation"
       >
         <div class="bubble user">
-          <small>${t5("You", "你")}</small>
+          <small>${t("You", "你")}</small>
           <p>${String(record.user_text || "—")}</p>
         </div>
         <div class="bubble assistant">
-          <small>${t5("Assistant", "助手")}</small>
-          <p>${speechOf(record) || t5("No answer retained", "未保留回答")}</p>
+          <small>${t("Assistant", "助手")}</small>
+          <p>${speechOf(record) || t("No answer retained", "未保留回答")}</p>
         </div>
       </section>
       <section ?hidden=${this.detailTab !== "evidence"} class="evidence">
         <p class="muted">
-          ${t5("Dispatch, acceptance and physical confirmation remain separate facts.", "派发、接收和物理确认，是彼此独立的事实。")}
+          ${t("Dispatch, acceptance and physical confirmation remain separate facts.", "派发、接收和物理确认，是彼此独立的事实。")}
         </p>
         <details class="timing-details">
-          <summary>${t5("Timing and model usage", "时序与模型用量")}</summary>
+          <summary>${t("Timing and model usage", "时序与模型用量")}</summary>
           ${this.waterfall(record)}
           <div class="usage">
           ${[
       [
-        t5("Input tokens", "输入 Token"),
+        t("Input tokens", "输入 Token"),
         usage.input_tokens ?? usage.prompt_tokens
       ],
       [
-        t5("Output tokens", "输出 Token"),
+        t("Output tokens", "输出 Token"),
         usage.output_tokens ?? usage.completion_tokens
       ],
-      [t5("Cached tokens", "缓存 Token"), usage.cached_input_tokens]
+      [t("Cached tokens", "缓存 Token"), usage.cached_input_tokens]
     ].map(([label, value]) => b2`<div>
                 <small>${label}</small
                 ><strong
@@ -3483,27 +3150,27 @@ class VoiceHarnessRuns extends i4 {
           ?disabled=${this.loading || !this.replay || !supportsActionReplay(record)}
           @click=${() => this.replaySelected()}
         >
-          ↻ ${t5("Replay action proposal", "重放动作提案")}
+          ↻ ${t("Replay action proposal", "重放动作提案")}
         </button>
         <p class="muted replay-note">
-          ${supportsActionReplay(record) ? t5("Replay evaluates the recorded local action. Device actions remain proposals.", "重放评估已记录的本地动作，设备动作保留为提案。") : t5("This record has no replayable local action. Use the Test panel to preview a new model response.", "此记录没有可重放的本地动作，可在测试面板演练模型回答。")}
+          ${supportsActionReplay(record) ? t("Replay evaluates the recorded local action. Device actions remain proposals.", "重放评估已记录的本地动作，设备动作保留为提案。") : t("This record has no replayable local action. Use the Test panel to preview a new model response.", "此记录没有可重放的本地动作，可在测试面板演练模型回答。")}
         </p>
         ${this.detailTab === "evidence" ? b2`
                 ${[...records(record.actions), ...records(record.proposed_actions)].map((action) => b2`<article class="surface"><strong>${String(action.entity_id || action.domain || action.service || "Action")}</strong>${this.jsonTree(action, "Actuation evidence")}</article>`)}
-                ${this.jsonTree(record.outcome_verdict || record.harness_loop || object(record.route).outcome_verdict || {}, t5("Outcome", "对话结果"))}
-                ${this.jsonTree(record.tools || [], t5("Tool calls", "工具调用"))}
-                ${this.jsonTree(record.errors || [], t5("Errors", "错误"))}
-                ${this.jsonTree(record.event_stream || record.timeline || [], t5("Observed events", "观测事件"))}
+                ${this.jsonTree(record.outcome_verdict || record.harness_loop || object(record.route).outcome_verdict || {}, t("Outcome", "对话结果"))}
+                ${this.jsonTree(record.tools || [], t("Tool calls", "工具调用"))}
+                ${this.jsonTree(record.errors || [], t("Errors", "错误"))}
+                ${this.jsonTree(record.event_stream || record.timeline || [], t("Observed events", "观测事件"))}
               ` : A}
       </section>
       <section ?hidden=${this.detailTab !== "audio"} class="audio-preview">
-        <h3>${t5("Listen in context", "在语境中试听")}</h3>
+        <h3>${t("Listen in context", "在语境中试听")}</h3>
         <p class="muted">
-          ${t5("This trace does not retain microphone recordings. Load a local WAV or 16-bit PCM sample to audition; it stays in this browser.", "此记录不保存麦克风录音。可载入本地 WAV 或 16 位 PCM 样本试听，文件仅留在浏览器。")}
+          ${t("This trace does not retain microphone recordings. Load a local WAV or 16-bit PCM sample to audition; it stays in this browser.", "此记录不保存麦克风录音。可载入本地 WAV 或 16 位 PCM 样本试听，文件仅留在浏览器。")}
         </p>
         <div class="audio-format">
           <label
-            >${t5("PCM sample rate", "PCM 采样率")}<select
+            >${t("PCM sample rate", "PCM 采样率")}<select
               @change=${(event) => {
       this.audioRate = Number(event.target.value);
       this.clearAudio();
@@ -3512,19 +3179,19 @@ class VoiceHarnessRuns extends i4 {
               ${pcmSampleRates.map((rate) => b2`<option .selected=${rate === this.audioRate} value=${rate}>${rate} Hz</option>`)}
             </select></label
           ><label
-            >${t5("Channels", "声道")}<select
+            >${t("Channels", "声道")}<select
               @change=${(event) => {
       this.audioChannels = Number(event.target.value);
       this.clearAudio();
     }}
             >
-              <option value="1">${t5("Mono", "单声道")}</option>
-              <option value="2">${t5("Stereo", "双声道")}</option>
+              <option value="1">${t("Mono", "单声道")}</option>
+              <option value="2">${t("Stereo", "双声道")}</option>
             </select></label
           >
         </div>
         <label
-          >${t5("Local audio sample", "本地音频样本")}<input
+          >${t("Local audio sample", "本地音频样本")}<input
             type="file"
             accept=".wav,.pcm,audio/wav"
             @change=${(event) => this.loadAudio(event.target.files?.[0])}
@@ -3532,12 +3199,12 @@ class VoiceHarnessRuns extends i4 {
         ${this.audioUrl ? b2`<span class="muted">${this.audioName}</span><audio controls preload="metadata" src=${this.audioUrl}></audio>` : A}
       </section>
       <section ?hidden=${this.detailTab !== "json"}>
-        ${this.detailTab === "json" ? this.jsonTree(record, t5("Complete run", "完整运行记录")) : A}
+        ${this.detailTab === "json" ? this.jsonTree(record, t("Complete run", "完整运行记录")) : A}
       </section>
     `;
   }
   waterfall(record) {
-    const t5 = this.text.bind(this);
+    const t = this.text.bind(this);
     const stages = pipelineStages(record);
     const starts = stages.flatMap((stage) => stage.startMs === null ? [] : [stage.startMs]);
     const origin = Math.min(0, ...starts);
@@ -3545,12 +3212,12 @@ class VoiceHarnessRuns extends i4 {
     const span = end - origin;
     return b2`<section
       class="waterfall"
-      aria-label=${t5("Observed pipeline timing", "观测链路时序")}
+      aria-label=${t("Observed pipeline timing", "观测链路时序")}
     >
       <div class="timing-head">
-        <span>${t5("Pipeline timing", "链路时序")}</span
+        <span>${t("Pipeline timing", "链路时序")}</span
         ><small
-          >${t5("Missing spans stay unmeasured", "缺失阶段保留为未测量")}</small
+          >${t("Missing spans stay unmeasured", "缺失阶段保留为未测量")}</small
         >
       </div>
       ${stages.map((stage) => b2`<details
@@ -3563,12 +3230,12 @@ class VoiceHarnessRuns extends i4 {
               ><span class="track"
                 >${stage.events.length ? b2`<i class=${stage.startMs === null ? "unaligned" : stage.durationMs === null ? "point" : ""} style=${"left:" + (stage.startMs === null ? 0 : Math.max(0, (stage.startMs - origin) / span * 100)) + "%;width:" + (stage.durationMs === null || stage.startMs === null ? 2 : Math.max(1, Math.min(100, stage.durationMs / span * 100))) + "%"}></i>` : b2`<em>—</em>`}</span
               ><small
-                >${stage.durationMs === null ? t5("Unmeasured", "未测量") : Math.round(stage.durationMs) + " ms"}</small
+                >${stage.durationMs === null ? t("Unmeasured", "未测量") : Math.round(stage.durationMs) + " ms"}</small
               >
             </summary>
             <div class="stage-detail">
               <span class="chip">${stage.status}</span
-              >${stage.startMs === null && stage.events.length ? b2`<p class="muted">${t5("No shared time offset was recorded.", "未记录统一时间偏移。")}</p>` : A}${stage.events.length ? stage.events.map((event) => this.jsonTree(event, String(event.type || event.stage || event.event_type || "Event"))) : b2`<p class="muted">${t5("No stage evidence retained", "未保留该阶段证据")}</p>`}
+              >${stage.startMs === null && stage.events.length ? b2`<p class="muted">${t("No shared time offset was recorded.", "未记录统一时间偏移。")}</p>` : A}${stage.events.length ? stage.events.map((event) => this.jsonTree(event, String(event.type || event.stage || event.event_type || "Event"))) : b2`<p class="muted">${t("No stage evidence retained", "未保留该阶段证据")}</p>`}
             </div>
           </details>`)}
     </section>`;
@@ -4217,6 +3884,320 @@ class VoiceHarnessRuns extends i4 {
 if (!customElements.get("voice-harness-runs"))
   customElements.define("voice-harness-runs", VoiceHarnessRuns);
 
+// node_modules/valibot/dist/index.mjs
+var store$4;
+var DEFAULT_CONFIG = {
+  lang: undefined,
+  message: undefined,
+  abortEarly: undefined,
+  abortPipeEarly: undefined
+};
+function getGlobalConfig(config$1) {
+  if (!config$1 && !store$4)
+    return DEFAULT_CONFIG;
+  return {
+    lang: config$1?.lang ?? store$4?.lang,
+    message: config$1?.message,
+    abortEarly: config$1?.abortEarly ?? store$4?.abortEarly,
+    abortPipeEarly: config$1?.abortPipeEarly ?? store$4?.abortPipeEarly
+  };
+}
+var store$3;
+function getGlobalMessage(lang) {
+  return store$3?.get(lang);
+}
+var store$2;
+function getSchemaMessage(lang) {
+  return store$2?.get(lang);
+}
+var store$1;
+function getSpecificMessage(reference, lang) {
+  return store$1?.get(reference)?.get(lang);
+}
+function _stringify(input) {
+  const type = typeof input;
+  if (type === "string")
+    return `"${input}"`;
+  if (type === "number" || type === "bigint" || type === "boolean")
+    return `${input}`;
+  if (type === "object" || type === "function")
+    return (input && Object.getPrototypeOf(input)?.constructor?.name) ?? "null";
+  return type;
+}
+function _addIssue(context, label, dataset, config$1, other) {
+  const input = other && "input" in other ? other.input : dataset.value;
+  const expected = other?.expected ?? context.expects ?? null;
+  const received = other?.received ?? /* @__PURE__ */ _stringify(input);
+  const issue = {
+    kind: context.kind,
+    type: context.type,
+    input,
+    expected,
+    received,
+    message: `Invalid ${label}: ${expected ? `Expected ${expected} but r` : "R"}eceived ${received}`,
+    requirement: context.requirement,
+    path: other?.path,
+    issues: other?.issues,
+    lang: config$1.lang,
+    abortEarly: config$1.abortEarly,
+    abortPipeEarly: config$1.abortPipeEarly
+  };
+  const isSchema = context.kind === "schema";
+  const message$1 = other?.message ?? context.message ?? /* @__PURE__ */ getSpecificMessage(context.reference, issue.lang) ?? (isSchema ? /* @__PURE__ */ getSchemaMessage(issue.lang) : null) ?? config$1.message ?? /* @__PURE__ */ getGlobalMessage(issue.lang);
+  if (message$1 !== undefined)
+    issue.message = typeof message$1 === "function" ? message$1(issue) : message$1;
+  if (isSchema)
+    dataset.typed = false;
+  if (dataset.issues)
+    dataset.issues.push(issue);
+  else
+    dataset.issues = [issue];
+}
+function _isValidObjectKey(object$1, key) {
+  return Object.prototype.hasOwnProperty.call(object$1, key) && key !== "__proto__" && key !== "prototype" && key !== "constructor";
+}
+function _standardSchema(schema) {
+  schema["~standard"] = {
+    version: 1,
+    vendor: "valibot",
+    validate: (value$1) => schema["~run"]({ value: value$1 }, /* @__PURE__ */ getGlobalConfig())
+  };
+  return schema;
+}
+function getFallback(schema, dataset, config$1) {
+  return typeof schema.fallback === "function" ? schema.fallback(dataset, config$1) : schema.fallback;
+}
+function getDefault(schema, dataset, config$1) {
+  return typeof schema.default === "function" ? schema.default(dataset, config$1) : schema.default;
+}
+function array(item, message$1) {
+  return _standardSchema({
+    kind: "schema",
+    type: "array",
+    reference: array,
+    expects: "Array",
+    async: false,
+    item,
+    message: message$1,
+    "~run"(dataset, config$1) {
+      const input = dataset.value;
+      if (Array.isArray(input)) {
+        dataset.typed = true;
+        dataset.value = [];
+        for (let key = 0;key < input.length; key++) {
+          const value$1 = input[key];
+          const itemDataset = this.item["~run"]({ value: value$1 }, config$1);
+          if (itemDataset.issues) {
+            const pathItem = {
+              type: "array",
+              origin: "value",
+              input,
+              key,
+              value: value$1
+            };
+            for (const issue of itemDataset.issues) {
+              if (issue.path)
+                issue.path.unshift(pathItem);
+              else
+                issue.path = [pathItem];
+              dataset.issues?.push(issue);
+            }
+            if (!dataset.issues)
+              dataset.issues = itemDataset.issues;
+            if (config$1.abortEarly) {
+              dataset.typed = false;
+              break;
+            }
+          }
+          if (!itemDataset.typed)
+            dataset.typed = false;
+          dataset.value.push(itemDataset.value);
+        }
+      } else
+        _addIssue(this, "type", dataset, config$1);
+      return dataset;
+    }
+  });
+}
+function looseObject(entries$1, message$1) {
+  return _standardSchema({
+    kind: "schema",
+    type: "loose_object",
+    reference: looseObject,
+    expects: "Object",
+    async: false,
+    entries: entries$1,
+    message: message$1,
+    "~run"(dataset, config$1) {
+      const input = dataset.value;
+      if (input && typeof input === "object") {
+        dataset.typed = true;
+        dataset.value = {};
+        for (const key in this.entries) {
+          const valueSchema = this.entries[key];
+          if (key in input || (valueSchema.type === "exact_optional" || valueSchema.type === "optional" || valueSchema.type === "nullish") && valueSchema.default !== undefined) {
+            const value$1 = key in input ? input[key] : /* @__PURE__ */ getDefault(valueSchema);
+            const valueDataset = valueSchema["~run"]({ value: value$1 }, config$1);
+            if (valueDataset.issues) {
+              const pathItem = {
+                type: "object",
+                origin: "value",
+                input,
+                key,
+                value: value$1
+              };
+              for (const issue of valueDataset.issues) {
+                if (issue.path)
+                  issue.path.unshift(pathItem);
+                else
+                  issue.path = [pathItem];
+                dataset.issues?.push(issue);
+              }
+              if (!dataset.issues)
+                dataset.issues = valueDataset.issues;
+              if (config$1.abortEarly) {
+                dataset.typed = false;
+                break;
+              }
+            }
+            if (!valueDataset.typed)
+              dataset.typed = false;
+            dataset.value[key] = valueDataset.value;
+          } else if (valueSchema.fallback !== undefined)
+            dataset.value[key] = /* @__PURE__ */ getFallback(valueSchema);
+          else if (valueSchema.type !== "exact_optional" && valueSchema.type !== "optional" && valueSchema.type !== "nullish") {
+            _addIssue(this, "key", dataset, config$1, {
+              input: undefined,
+              expected: `"${key}"`,
+              path: [{
+                type: "object",
+                origin: "key",
+                input,
+                key,
+                value: input[key]
+              }]
+            });
+            if (config$1.abortEarly)
+              break;
+          }
+        }
+        if (!dataset.issues || !config$1.abortEarly) {
+          for (const key in input)
+            if (/* @__PURE__ */ _isValidObjectKey(input, key) && !Object.prototype.hasOwnProperty.call(this.entries, key))
+              dataset.value[key] = input[key];
+        }
+      } else
+        _addIssue(this, "type", dataset, config$1);
+      return dataset;
+    }
+  });
+}
+function number(message$1) {
+  return _standardSchema({
+    kind: "schema",
+    type: "number",
+    reference: number,
+    expects: "number",
+    async: false,
+    message: message$1,
+    "~run"(dataset, config$1) {
+      if (typeof dataset.value === "number" && !isNaN(dataset.value))
+        dataset.typed = true;
+      else
+        _addIssue(this, "type", dataset, config$1);
+      return dataset;
+    }
+  });
+}
+function string(message$1) {
+  return _standardSchema({
+    kind: "schema",
+    type: "string",
+    reference: string,
+    expects: "string",
+    async: false,
+    message: message$1,
+    "~run"(dataset, config$1) {
+      if (typeof dataset.value === "string")
+        dataset.typed = true;
+      else
+        _addIssue(this, "type", dataset, config$1);
+      return dataset;
+    }
+  });
+}
+function safeParse(schema, input, config$1) {
+  const dataset = schema["~run"]({ value: input }, /* @__PURE__ */ getGlobalConfig(config$1));
+  return {
+    typed: dataset.typed,
+    success: !dataset.issues,
+    output: dataset.value,
+    issues: dataset.issues
+  };
+}
+
+// custom_components/llm_gateway/frontend/voice-harness-api.ts
+var rangeSchema = looseObject({ min: number(), max: number() });
+var harnessStatusSchema = looseObject({
+  entries: array(looseObject({
+    entry_id: string(),
+    state: string(),
+    title: string()
+  })),
+  editable: looseObject({
+    max_tokens: rangeSchema,
+    routing_modes: array(string()),
+    timeouts: rangeSchema,
+    trace_max_runs: rangeSchema,
+    trace_retention_hours: rangeSchema
+  })
+});
+function parseHarnessStatus(input) {
+  const result = safeParse(harnessStatusSchema, input);
+  if (result.success) {
+    return result.output;
+  }
+  const fields = result.issues.map((issue) => issue.path?.map((item) => String(item.key)).join(".")).filter(Boolean);
+  const detail = fields.length ? `: ${[...new Set(fields)].join(", ")}` : "";
+  throw new Error(`Invalid Voice Harness status response${detail}`);
+}
+async function requestHarnessJson(hass, method, path, payload) {
+  if (hass?.callApi) {
+    try {
+      return await hass.callApi(method, path, payload);
+    } catch (error) {
+      if (!isRecord2(error) || !isRecord2(error.body))
+        throw error;
+      const body = error.body;
+      throw Object.assign(new Error(typeof body.message === "string" ? body.message : String(error.error || "Home Assistant request failed")), {
+        code: typeof body.code === "string" ? body.code : ""
+      });
+    }
+  }
+  const response = await fetch(`/api/${path}`, {
+    method,
+    credentials: "same-origin",
+    headers: payload === undefined ? undefined : { "Content-Type": "application/json" },
+    body: payload === undefined ? undefined : JSON.stringify(payload)
+  });
+  if (response.ok) {
+    return await response.json();
+  }
+  let message = `${response.status} ${response.statusText}`;
+  let code = "";
+  try {
+    const body = await response.json();
+    if (isRecord2(body)) {
+      message = typeof body.message === "string" ? body.message : message;
+      code = typeof body.code === "string" ? body.code : "";
+    }
+  } catch {}
+  throw Object.assign(new Error(message), { code });
+}
+function isRecord2(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 // custom_components/llm_gateway/frontend/voice-harness-playground.ts
 class VoiceHarnessPlayground extends i4 {
   static properties = {
@@ -4285,25 +4266,25 @@ class VoiceHarnessPlayground extends i4 {
     };
   }
   render() {
-    const t5 = this.t.bind(this);
+    const t = this.t.bind(this);
     const working = ["connecting", "streaming", "evaluating"].includes(this.status);
     const visible = this.expanded ? this.scenarios : this.scenarios.slice(0, 6);
     return b2`
       <div class="section-head">
         <div>
           <span class="eyebrow"
-            >VOICE HARNESS / ${t5("PLAYGROUND", "测试")}</span
+            >VOICE HARNESS / ${t("PLAYGROUND", "测试")}</span
           >
           <h2>
-            ${t5("Investigate a response.", "排查一次回应。")}
+            ${t("Investigate a response.", "排查一次回应。")}
           </h2>
           <p class="muted">
-            ${t5("Use a recorded problem to check an answer or a tool proposal.", "从实际遇到的问题出发，检查回答或工具提案。")}
+            ${t("Use a recorded problem to check an answer or a tool proposal.", "从实际遇到的问题出发，检查回答或工具提案。")}
           </p>
         </div>
-        <span class="chip">${t5("Preview workspace", "演练工作台")}</span>
+        <span class="chip">${t("Preview workspace", "演练工作台")}</span>
       </div>
-      <section class="scenarios" aria-label=${t5("Scenarios", "场景卡片")}>
+      <section class="scenarios" aria-label=${t("Scenarios", "场景卡片")}>
         ${visible.map((scenario, index) => b2`<button
               class="scenario"
               aria-pressed=${String(this.chosen === scenario.id)}
@@ -4325,29 +4306,29 @@ class VoiceHarnessPlayground extends i4 {
       this.expanded = !this.expanded;
     }}
             >
-              ${this.expanded ? t5("Show less", "收起场景") : t5("All scenarios", "全部场景") + " · " + this.scenarios.length}
+              ${this.expanded ? t("Show less", "收起场景") : t("All scenarios", "全部场景") + " · " + this.scenarios.length}
             </button>` : A}
       <div class="workbench">
         <section class="surface composer">
           <div class="section-head">
             <div>
               <span class="eyebrow">COMPOSE</span>
-              <h3>${t5("Your test conversation", "你的测试对话")}</h3>
+              <h3>${t("Your test conversation", "你的测试对话")}</h3>
             </div>
-            <span class="chip">${t5("Text input", "文本输入")}</span>
+            <span class="chip">${t("Text input", "文本输入")}</span>
           </div>
           <label
-            >${t5("Say something", "说点什么")}<textarea
+            >${t("Say something", "说点什么")}<textarea
               rows="4"
               .value=${this.draft.user}
               ?disabled=${working}
               @input=${(event) => this.edit("user", event)}
-              placeholder=${t5("What is the temperature in the bedroom?", "卧室现在温度怎么样？")}
+              placeholder=${t("What is the temperature in the bedroom?", "卧室现在温度怎么样？")}
             ></textarea>
           </label>
           <div class="route-fields">
             <label
-              >${t5("Gateway", "网关")}<select
+              >${t("Gateway", "网关")}<select
                 .value=${this.entryId || String(this.entries[0]?.entry_id || "")}
                 ?disabled=${working}
                 @change=${(event) => {
@@ -4357,30 +4338,30 @@ class VoiceHarnessPlayground extends i4 {
                 ${this.entries.map((entry) => b2`<option value=${String(entry.entry_id)}>${String(entry.title)}</option>`)}
               </select></label
             ><label
-              >${t5("Model route", "模型路由")}<select
+              >${t("Model route", "模型路由")}<select
                 .value=${this.route}
                 ?disabled=${working}
                 @change=${(event) => {
       this.route = event.target.value;
     }}
               >
-                ${["auto", "fast", "mid", "deep"].map((route) => b2`<option value=${route}>${route === "auto" ? t5("Automatic", "自动") : route[0].toUpperCase() + route.slice(1)}</option>`)}
+                ${["auto", "fast", "mid", "deep"].map((route) => b2`<option value=${route}>${route === "auto" ? t("Automatic", "自动") : route[0].toUpperCase() + route.slice(1)}</option>`)}
               </select></label
             >
           </div>
           <details class="draft-details" open>
             <summary>
-              ${t5("Assertions & reference reply", "断言与参考回答")}
+              ${t("Assertions & reference reply", "断言与参考回答")}
             </summary>
             <label
-              >${t5("Reference reply (assertion check only)", "参考回答（用于断言检查）")}<textarea
+              >${t("Reference reply (assertion check only)", "参考回答（用于断言检查）")}<textarea
                 rows="3"
                 .value=${this.draft.response}
                 ?disabled=${working}
                 @input=${(event) => this.edit("response", event)}
               ></textarea></label
             ><label
-              >${t5("Expected behavior · JSON", "预期行为 · JSON")}<textarea
+              >${t("Expected behavior · JSON", "预期行为 · JSON")}<textarea
                 class="code"
                 rows="5"
                 .value=${this.draft.expected}
@@ -4395,30 +4376,30 @@ class VoiceHarnessPlayground extends i4 {
               ?disabled=${working || !this.draft.user.trim() || !this.entries.length}
               @click=${() => this.run("stream")}
             >
-              ${t5("Run & watch", "运行并观察")} ↗</button
+              ${t("Run & watch", "运行并观察")} ↗</button
             ><button
               ?disabled=${working || !this.draft.user.trim()}
               @click=${() => this.run("evaluate")}
             >
-              ${t5("Check assertions", "检查断言")}
+              ${t("Check assertions", "检查断言")}
             </button>
           </div>
           <p class="muted boundary">
-            ${t5("Model preview makes a real provider request. Tool calls are shown as proposals; device state is never changed. Text scenarios do not measure microphone or network reliability.", "模型演练会真实请求服务商；工具调用显示为提案，设备状态不变。文本场景不代表麦克风或弱网实测。")}
+            ${t("Model preview makes a real provider request. Tool calls are shown as proposals; device state is never changed. Text scenarios do not measure microphone or network reliability.", "模型演练会真实请求服务商；工具调用显示为提案，设备状态不变。文本场景不代表麦克风或弱网实测。")}
           </p>
         </section>
         <section
           class="surface monitor"
-          aria-label=${t5("Live test output", "实时测试输出")}
+          aria-label=${t("Live test output", "实时测试输出")}
         >
           <div class="section-head">
             <div>
               <span class="eyebrow">LIVE OUTPUT</span>
-              <h3>${t5("As it happens", "看见回应发生")}</h3>
+              <h3>${t("As it happens", "看见回应发生")}</h3>
             </div>
             <span
               class=${"chip " + (this.status === "error" ? "bad" : this.status === "complete" ? "ok" : "muted")}
-              >${{ idle: t5("Ready", "就绪"), connecting: t5("Connecting", "连接中"), streaming: t5("Streaming", "生成中"), evaluating: t5("Checking", "检查中"), complete: t5("Complete", "已完成"), cancelled: t5("Stopped", "已停止"), error: t5("Failed", "失败") }[this.status] || this.status}</span
+              >${{ idle: t("Ready", "就绪"), connecting: t("Connecting", "连接中"), streaming: t("Streaming", "生成中"), evaluating: t("Checking", "检查中"), complete: t("Complete", "已完成"), cancelled: t("Stopped", "已停止"), error: t("Failed", "失败") }[this.status] || this.status}</span
             >
           </div>
           ${this.error ? b2`<p class="error" role="alert">${this.error}</p>` : A}
@@ -4427,14 +4408,14 @@ class VoiceHarnessPlayground extends i4 {
                     <ha-icon icon="mdi:creation-outline"></ha-icon>
                   </div>
                   <h3>
-                    ${t5("Space for a new idea", "给一句新想法，留个位置")}
+                    ${t("Space for a new idea", "给一句新想法，留个位置")}
                   </h3>
                   <p>
-                    ${t5("Choose a scenario or write your own. The response and tool proposals appear here.", "选择场景，或写下你的问题。回答与工具提案会在这里展开。")}
+                    ${t("Choose a scenario or write your own. The response and tool proposals appear here.", "选择场景，或写下你的问题。回答与工具提案会在这里展开。")}
                   </p>
                 </div>` : b2`<div
                   class="stream-text"
-                  aria-label=${t5("Model response", "模型回答")}
+                  aria-label=${t("Model response", "模型回答")}
                 >
                   ${this.text}${working ? b2`<span class="caret" aria-hidden="true"></span>` : A}
                 </div>`}
@@ -4443,24 +4424,24 @@ class VoiceHarnessPlayground extends i4 {
                   <span class="event-marker"></span>
                   <div>
                     <strong
-                      >${event.type === "route" ? String(event.route).toUpperCase() + " · " + String(event.model) : t5("Tool proposal", "工具提案") + " · " + String(event.name || "…")}</strong
-                    >${event.type === "tool" ? b2`<code>${String(event.arguments || "")}</code><small>${t5("Not dispatched", "尚未派发")}</small>` : A}
+                      >${event.type === "route" ? String(event.route).toUpperCase() + " · " + String(event.model) : t("Tool proposal", "工具提案") + " · " + String(event.name || "…")}</strong
+                    >${event.type === "tool" ? b2`<code>${String(event.arguments || "")}</code><small>${t("Not dispatched", "尚未派发")}</small>` : A}
                   </div>
                 </article>`)}
           </div>
           ${Object.keys(this.usage).length ? b2`<div class="tokens">${Object.entries(this.usage).map(([key, value]) => b2`<span>${key}: <strong>${String(value)}</strong></span>`)}</div>` : A}
-          ${this.result ? b2`<div class=${"assertions " + (this.result.passed ? "ok" : "bad")} role="status"><strong>${this.result.passed ? "✓ " + t5("Assertions passed", "断言通过") : "× " + t5("Assertions failed", "断言未通过")}</strong>${Array.isArray(this.result.violations) ? this.result.violations.map((violation) => b2`<p>${String(violation)}</p>`) : A}</div>` : A}
+          ${this.result ? b2`<div class=${"assertions " + (this.result.passed ? "ok" : "bad")} role="status"><strong>${this.result.passed ? "✓ " + t("Assertions passed", "断言通过") : "× " + t("Assertions failed", "断言未通过")}</strong>${Array.isArray(this.result.violations) ? this.result.violations.map((violation) => b2`<p>${String(violation)}</p>`) : A}</div>` : A}
           <div class="monitor-actions">
-            ${working ? b2`<button @click=${() => this.stop()}>${t5("Stop", "停止")}</button>` : this.last ? b2`<button @click=${() => this.replayLast()}>↻ ${t5("Replay test", "重放本轮测试")}</button>` : A}<span
+            ${working ? b2`<button @click=${() => this.stop()}>${t("Stop", "停止")}</button>` : this.last ? b2`<button @click=${() => this.replayLast()}>↻ ${t("Replay test", "重放本轮测试")}</button>` : A}<span
               role="status"
               class="muted"
-              >${this.status === "complete" ? this.last?.mode === "evaluate" ? t5("Reference reply checked", "已检查参考回答") : t5("Provider completion and assertions recorded", "已记录生成结束与断言结果") : ""}</span
+              >${this.status === "complete" ? this.last?.mode === "evaluate" ? t("Reference reply checked", "已检查参考回答") : t("Provider completion and assertions recorded", "已记录生成结束与断言结果") : ""}</span
             >
           </div>
         </section>
       </div>
       <details class="surface policies">
-        <summary>${t5("Prompt & policy reference", "提示词与策略参考")}</summary>
+        <summary>${t("Prompt & policy reference", "提示词与策略参考")}</summary>
         <slot name="policies"></slot>
       </details>
     `;
@@ -4918,15 +4899,15 @@ function visit_(key, node, visitor, path) {
   if (typeof ctrl !== "symbol") {
     if (isCollection(node)) {
       path = Object.freeze(path.concat(node));
-      for (let i7 = 0;i7 < node.items.length; ++i7) {
-        const ci = visit_(i7, node.items[i7], visitor, path);
+      for (let i = 0;i < node.items.length; ++i) {
+        const ci = visit_(i, node.items[i], visitor, path);
         if (typeof ci === "number")
-          i7 = ci - 1;
+          i = ci - 1;
         else if (ci === BREAK)
           return BREAK;
         else if (ci === REMOVE) {
-          node.items.splice(i7, 1);
-          i7 -= 1;
+          node.items.splice(i, 1);
+          i -= 1;
         }
       }
     } else if (isPair(node)) {
@@ -4966,15 +4947,15 @@ async function visitAsync_(key, node, visitor, path) {
   if (typeof ctrl !== "symbol") {
     if (isCollection(node)) {
       path = Object.freeze(path.concat(node));
-      for (let i7 = 0;i7 < node.items.length; ++i7) {
-        const ci = await visitAsync_(i7, node.items[i7], visitor, path);
+      for (let i = 0;i < node.items.length; ++i) {
+        const ci = await visitAsync_(i, node.items[i], visitor, path);
         if (typeof ci === "number")
-          i7 = ci - 1;
+          i = ci - 1;
         else if (ci === BREAK)
           return BREAK;
         else if (ci === REMOVE) {
-          node.items.splice(i7, 1);
-          i7 -= 1;
+          node.items.splice(i, 1);
+          i -= 1;
         }
       }
     } else if (isPair(node)) {
@@ -5210,8 +5191,8 @@ function anchorNames(root) {
   return anchors;
 }
 function findNewAnchor(prefix, exclude) {
-  for (let i7 = 1;; ++i7) {
-    const name = `${prefix}${i7}`;
+  for (let i = 1;; ++i) {
+    const name = `${prefix}${i}`;
     if (!exclude.has(name))
       return name;
   }
@@ -5248,22 +5229,22 @@ function createNodeAnchors(doc, prefix) {
 function applyReviver(reviver, obj, key, val) {
   if (val && typeof val === "object") {
     if (Array.isArray(val)) {
-      for (let i7 = 0, len = val.length;i7 < len; ++i7) {
-        const v0 = val[i7];
-        const v1 = applyReviver(reviver, val, String(i7), v0);
+      for (let i = 0, len = val.length;i < len; ++i) {
+        const v0 = val[i];
+        const v1 = applyReviver(reviver, val, String(i), v0);
         if (v1 === undefined)
-          delete val[i7];
+          delete val[i];
         else if (v1 !== v0)
-          val[i7] = v1;
+          val[i] = v1;
       }
     } else if (val instanceof Map) {
-      for (const k2 of Array.from(val.keys())) {
-        const v0 = val.get(k2);
-        const v1 = applyReviver(reviver, val, k2, v0);
+      for (const k of Array.from(val.keys())) {
+        const v0 = val.get(k);
+        const v1 = applyReviver(reviver, val, k, v0);
         if (v1 === undefined)
-          val.delete(k2);
+          val.delete(k);
         else if (v1 !== v0)
-          val.set(k2, v1);
+          val.set(k, v1);
       }
     } else if (val instanceof Set) {
       for (const v0 of Array.from(val)) {
@@ -5276,12 +5257,12 @@ function applyReviver(reviver, obj, key, val) {
         }
       }
     } else {
-      for (const [k2, v0] of Object.entries(val)) {
-        const v1 = applyReviver(reviver, val, k2, v0);
+      for (const [k, v0] of Object.entries(val)) {
+        const v1 = applyReviver(reviver, val, k, v0);
         if (v1 === undefined)
-          delete val[k2];
+          delete val[k];
         else if (v1 !== v0)
-          val[k2] = v1;
+          val[k] = v1;
       }
     }
   }
@@ -5291,14 +5272,14 @@ function applyReviver(reviver, obj, key, val) {
 // node_modules/yaml/browser/dist/nodes/toJS.js
 function toJS(value, arg, ctx) {
   if (Array.isArray(value))
-    return value.map((v3, i7) => toJS(v3, String(i7), ctx));
+    return value.map((v, i) => toJS(v, String(i), ctx));
   if (value && typeof value.toJSON === "function") {
     if (!ctx || !hasAnchor(value))
       return value.toJSON(arg, ctx);
     const data = { aliasCount: 0, count: 1, res: undefined };
     ctx.anchors.set(value, data);
-    ctx.onCreate = (res2) => {
-      data.res = res2;
+    ctx.onCreate = (res) => {
+      data.res = res;
       delete ctx.onCreate;
     };
     const res = value.toJSON(arg, ctx);
@@ -5335,8 +5316,8 @@ class NodeBase {
     };
     const res = toJS(this, "", ctx);
     if (typeof onAnchor === "function")
-      for (const { count, res: res2 } of ctx.anchors.values())
-        onAnchor(res2, count);
+      for (const { count, res } of ctx.anchors.values())
+        onAnchor(res, count);
     return typeof reviver === "function" ? applyReviver(reviver, { "": res }, "", res) : res;
   }
 }
@@ -5377,7 +5358,7 @@ class Alias extends NodeBase {
         found = node;
     }
     if (found && ctx) {
-      const { anchors, doc: doc2, maxAliasCount } = ctx;
+      const { anchors, doc, maxAliasCount } = ctx;
       let data = anchors.get(found);
       if (!data) {
         toJS(found, null, ctx);
@@ -5390,7 +5371,7 @@ class Alias extends NodeBase {
       if (maxAliasCount >= 0) {
         data.count += 1;
         if (data.aliasCount === 0)
-          data.aliasCount = getAliasCount(doc2, found, anchors);
+          data.aliasCount = getAliasCount(doc, found, anchors);
         if (data.count * data.aliasCount > maxAliasCount) {
           const msg = "Excessive alias count indicates a resource exhaustion attack";
           throw new ReferenceError(msg);
@@ -5431,9 +5412,9 @@ function getAliasCount(doc, node, anchors) {
   } else if (isCollection(node)) {
     let count = 0;
     for (const item of node.items) {
-      const c5 = getAliasCount(doc, item, anchors);
-      if (c5 > count)
-        count = c5;
+      const c = getAliasCount(doc, item, anchors);
+      if (c > count)
+        count = c;
     }
     return count;
   } else if (isPair(node)) {
@@ -5469,13 +5450,13 @@ Scalar.QUOTE_SINGLE = "QUOTE_SINGLE";
 var defaultTagPrefix = "tag:yaml.org,2002:";
 function findTagObject(value, tagName, tags) {
   if (tagName) {
-    const match = tags.filter((t5) => t5.tag === tagName);
-    const tagObj = match.find((t5) => !t5.format) ?? match[0];
+    const match = tags.filter((t) => t.tag === tagName);
+    const tagObj = match.find((t) => !t.format) ?? match[0];
     if (!tagObj)
       throw new Error(`Tag ${tagName} not found`);
     return tagObj;
   }
-  return tags.find((t5) => t5.identify?.(value) && !t5.format);
+  return tags.find((t) => t.identify?.(value) && !t.format);
 }
 function createNode(value, tagName, ctx) {
   if (isDocument(value))
@@ -5510,10 +5491,10 @@ function createNode(value, tagName, ctx) {
       value = value.toJSON();
     }
     if (!value || typeof value !== "object") {
-      const node2 = new Scalar(value);
+      const node = new Scalar(value);
       if (ref)
-        ref.node = node2;
-      return node2;
+        ref.node = node;
+      return node;
     }
     tagObj = value instanceof Map ? schema[MAP] : (Symbol.iterator in Object(value)) ? schema[SEQ] : schema[MAP];
   }
@@ -5533,18 +5514,18 @@ function createNode(value, tagName, ctx) {
 
 // node_modules/yaml/browser/dist/nodes/Collection.js
 function collectionFromPath(schema, path, value) {
-  let v3 = value;
-  for (let i7 = path.length - 1;i7 >= 0; --i7) {
-    const k2 = path[i7];
-    if (typeof k2 === "number" && Number.isInteger(k2) && k2 >= 0) {
-      const a3 = [];
-      a3[k2] = v3;
-      v3 = a3;
+  let v = value;
+  for (let i = path.length - 1;i >= 0; --i) {
+    const k = path[i];
+    if (typeof k === "number" && Number.isInteger(k) && k >= 0) {
+      const a = [];
+      a[k] = v;
+      v = a;
     } else {
-      v3 = new Map([[k2, v3]]);
+      v = new Map([[k, v]]);
     }
   }
-  return createNode(v3, undefined, {
+  return createNode(v, undefined, {
     aliasDuplicateObjects: false,
     keepUndefined: false,
     onAnchor: () => {
@@ -5611,8 +5592,8 @@ class Collection extends NodeBase {
     return this.items.every((node) => {
       if (!isPair(node))
         return false;
-      const n4 = node.value;
-      return n4 == null || allowScalar && isScalar(n4) && n4.value == null && !n4.commentBefore && !n4.comment && !n4.tag;
+      const n = node.value;
+      return n == null || allowScalar && isScalar(n) && n.value == null && !n.commentBefore && !n.comment && !n.tag;
     });
   }
   hasIn(path) {
@@ -5674,47 +5655,47 @@ function foldFlowLines(text, indent, mode = "flow", { indentAtStart, lineWidth =
   let split = undefined;
   let prev = undefined;
   let overflow = false;
-  let i7 = -1;
+  let i = -1;
   let escStart = -1;
   let escEnd = -1;
   if (mode === FOLD_BLOCK) {
-    i7 = consumeMoreIndentedLines(text, i7, indent.length);
-    if (i7 !== -1)
-      end = i7 + endStep;
+    i = consumeMoreIndentedLines(text, i, indent.length);
+    if (i !== -1)
+      end = i + endStep;
   }
-  for (let ch;ch = text[i7 += 1]; ) {
+  for (let ch;ch = text[i += 1]; ) {
     if (mode === FOLD_QUOTED && ch === "\\") {
-      escStart = i7;
-      switch (text[i7 + 1]) {
+      escStart = i;
+      switch (text[i + 1]) {
         case "x":
-          i7 += 3;
+          i += 3;
           break;
         case "u":
-          i7 += 5;
+          i += 5;
           break;
         case "U":
-          i7 += 9;
+          i += 9;
           break;
         default:
-          i7 += 1;
+          i += 1;
       }
-      escEnd = i7;
+      escEnd = i;
     }
     if (ch === `
 `) {
       if (mode === FOLD_BLOCK)
-        i7 = consumeMoreIndentedLines(text, i7, indent.length);
-      end = i7 + indent.length + endStep;
+        i = consumeMoreIndentedLines(text, i, indent.length);
+      end = i + indent.length + endStep;
       split = undefined;
     } else {
       if (ch === " " && prev && prev !== " " && prev !== `
 ` && prev !== "\t") {
-        const next = text[i7 + 1];
+        const next = text[i + 1];
         if (next && next !== " " && next !== `
 ` && next !== "\t")
-          split = i7;
+          split = i;
       }
-      if (i7 >= end) {
+      if (i >= end) {
         if (split) {
           folds.push(split);
           end = split + endStep;
@@ -5722,15 +5703,15 @@ function foldFlowLines(text, indent, mode = "flow", { indentAtStart, lineWidth =
         } else if (mode === FOLD_QUOTED) {
           while (prev === " " || prev === "\t") {
             prev = ch;
-            ch = text[i7 += 1];
+            ch = text[i += 1];
             overflow = true;
           }
-          const j2 = i7 > escEnd + 1 ? i7 - 2 : escStart - 1;
-          if (escapedFolds[j2])
+          const j = i > escEnd + 1 ? i - 2 : escStart - 1;
+          if (escapedFolds[j])
             return text;
-          folds.push(j2);
-          escapedFolds[j2] = true;
-          end = j2 + endStep;
+          folds.push(j);
+          escapedFolds[j] = true;
+          end = j + endStep;
           split = undefined;
         } else {
           overflow = true;
@@ -5746,35 +5727,35 @@ function foldFlowLines(text, indent, mode = "flow", { indentAtStart, lineWidth =
   if (onFold)
     onFold();
   let res = text.slice(0, folds[0]);
-  for (let i8 = 0;i8 < folds.length; ++i8) {
-    const fold = folds[i8];
-    const end2 = folds[i8 + 1] || text.length;
+  for (let i = 0;i < folds.length; ++i) {
+    const fold = folds[i];
+    const end = folds[i + 1] || text.length;
     if (fold === 0)
       res = `
-${indent}${text.slice(0, end2)}`;
+${indent}${text.slice(0, end)}`;
     else {
       if (mode === FOLD_QUOTED && escapedFolds[fold])
         res += `${text[fold]}\\`;
       res += `
-${indent}${text.slice(fold + 1, end2)}`;
+${indent}${text.slice(fold + 1, end)}`;
     }
   }
   return res;
 }
-function consumeMoreIndentedLines(text, i7, indent) {
-  let end = i7;
-  let start = i7 + 1;
+function consumeMoreIndentedLines(text, i, indent) {
+  let end = i;
+  let start = i + 1;
   let ch = text[start];
   while (ch === " " || ch === "\t") {
-    if (i7 < start + indent) {
-      ch = text[++i7];
+    if (i < start + indent) {
+      ch = text[++i];
     } else {
       do {
-        ch = text[++i7];
+        ch = text[++i];
       } while (ch && ch !== `
 `);
-      end = i7;
-      start = i7 + 1;
+      end = i;
+      start = i + 1;
       ch = text[start];
     }
   }
@@ -5795,12 +5776,12 @@ function lineLengthOverLimit(str, lineWidth, indentLength) {
   const strLen = str.length;
   if (strLen <= limit)
     return false;
-  for (let i7 = 0, start = 0;i7 < strLen; ++i7) {
-    if (str[i7] === `
+  for (let i = 0, start = 0;i < strLen; ++i) {
+    if (str[i] === `
 `) {
-      if (i7 - start > limit)
+      if (i - start > limit)
         return true;
-      start = i7 + 1;
+      start = i + 1;
       if (strLen - start <= limit)
         return false;
     }
@@ -5816,19 +5797,19 @@ function doubleQuotedString(value, ctx) {
   const indent = ctx.indent || (containsDocumentMarker(value) ? "  " : "");
   let str = "";
   let start = 0;
-  for (let i7 = 0, ch = json[i7];ch; ch = json[++i7]) {
-    if (ch === " " && json[i7 + 1] === "\\" && json[i7 + 2] === "n") {
-      str += json.slice(start, i7) + "\\ ";
-      i7 += 1;
-      start = i7;
+  for (let i = 0, ch = json[i];ch; ch = json[++i]) {
+    if (ch === " " && json[i + 1] === "\\" && json[i + 2] === "n") {
+      str += json.slice(start, i) + "\\ ";
+      i += 1;
+      start = i;
       ch = "\\";
     }
     if (ch === "\\")
-      switch (json[i7 + 1]) {
+      switch (json[i + 1]) {
         case "u":
           {
-            str += json.slice(start, i7);
-            const code = json.substr(i7 + 2, 4);
+            str += json.slice(start, i);
+            const code = json.substr(i + 2, 4);
             switch (code) {
               case "0000":
                 str += "\\0";
@@ -5858,33 +5839,33 @@ function doubleQuotedString(value, ctx) {
                 if (code.substr(0, 2) === "00")
                   str += "\\x" + code.substr(2);
                 else
-                  str += json.substr(i7, 6);
+                  str += json.substr(i, 6);
             }
-            i7 += 5;
-            start = i7 + 1;
+            i += 5;
+            start = i + 1;
           }
           break;
         case "n":
-          if (implicitKey || json[i7 + 2] === '"' || json.length < minMultiLineLength) {
-            i7 += 1;
+          if (implicitKey || json[i + 2] === '"' || json.length < minMultiLineLength) {
+            i += 1;
           } else {
-            str += json.slice(start, i7) + `
+            str += json.slice(start, i) + `
 
 `;
-            while (json[i7 + 2] === "\\" && json[i7 + 3] === "n" && json[i7 + 4] !== '"') {
+            while (json[i + 2] === "\\" && json[i + 3] === "n" && json[i + 4] !== '"') {
               str += `
 `;
-              i7 += 2;
+              i += 2;
             }
             str += indent;
-            if (json[i7 + 2] === " ")
+            if (json[i + 2] === " ")
               str += "\\";
-            i7 += 1;
-            start = i7 + 1;
+            i += 1;
+            start = i + 1;
           }
           break;
         default:
-          i7 += 1;
+          i += 1;
       }
   }
   str = start ? str + json.slice(start) : json;
@@ -6048,7 +6029,7 @@ function stringifyString(item, ctx, onComment, onChompKeep) {
     if (/[\x00-\x08\x0b-\x1f\x7f-\x9f\u{D800}-\u{DFFF}]/u.test(ss.value))
       type = Scalar.QUOTE_DOUBLE;
   }
-  const _stringify2 = (_type) => {
+  const _stringify = (_type) => {
     switch (_type) {
       case Scalar.BLOCK_FOLDED:
       case Scalar.BLOCK_LITERAL:
@@ -6063,13 +6044,13 @@ function stringifyString(item, ctx, onComment, onChompKeep) {
         return null;
     }
   };
-  let res = _stringify2(type);
+  let res = _stringify(type);
   if (res === null) {
     const { defaultKeyType, defaultStringType } = ctx.options;
-    const t5 = implicitKey && defaultKeyType || defaultStringType;
-    res = _stringify2(t5);
+    const t = implicitKey && defaultKeyType || defaultStringType;
+    res = _stringify(t);
     if (res === null)
-      throw new Error(`Unsupported default string type ${t5}`);
+      throw new Error(`Unsupported default string type ${t}`);
   }
   return res;
 }
@@ -6119,24 +6100,24 @@ function createStringifyContext(doc, options) {
 }
 function getTagObject(tags, item) {
   if (item.tag) {
-    const match = tags.filter((t5) => t5.tag === item.tag);
+    const match = tags.filter((t) => t.tag === item.tag);
     if (match.length > 0)
-      return match.find((t5) => t5.format === item.format) ?? match[0];
+      return match.find((t) => t.format === item.format) ?? match[0];
   }
   let tagObj = undefined;
   let obj;
   if (isScalar(item)) {
     obj = item.value;
-    let match = tags.filter((t5) => t5.identify?.(obj));
+    let match = tags.filter((t) => t.identify?.(obj));
     if (match.length > 1) {
-      const testMatch = match.filter((t5) => t5.test);
+      const testMatch = match.filter((t) => t.test);
       if (testMatch.length > 0)
         match = testMatch;
     }
-    tagObj = match.find((t5) => t5.format === item.format) ?? match.find((t5) => !t5.format);
+    tagObj = match.find((t) => t.format === item.format) ?? match.find((t) => !t.format);
   } else {
     obj = item;
-    tagObj = tags.find((t5) => t5.nodeClass && obj instanceof t5.nodeClass);
+    tagObj = tags.find((t) => t.nodeClass && obj instanceof t.nodeClass);
   }
   if (!tagObj) {
     const name = obj?.constructor?.name ?? (obj === null ? "null" : typeof obj);
@@ -6175,7 +6156,7 @@ function stringify(item, ctx, onComment, onChompKeep) {
     }
   }
   let tagObj = undefined;
-  const node = isNode(item) ? item : ctx.doc.createNode(item, { onTagObj: (o6) => tagObj = o6 });
+  const node = isNode(item) ? item : ctx.doc.createNode(item, { onTagObj: (o) => tagObj = o });
   tagObj ?? (tagObj = getTagObject(ctx.doc.schema.tags, node));
   const props = stringifyProps(node, tagObj, ctx);
   if (props.length > 0)
@@ -6352,15 +6333,15 @@ function mergeValue(ctx, map, value) {
   if (!isMap(source))
     throw new Error("Merge sources must be maps or map aliases");
   const srcMap = source.toJSON(null, ctx, Map);
-  for (const [key, value2] of srcMap) {
+  for (const [key, value] of srcMap) {
     if (map instanceof Map) {
       if (!map.has(key))
-        map.set(key, value2);
+        map.set(key, value);
     } else if (map instanceof Set) {
       map.add(key);
     } else if (!Object.prototype.hasOwnProperty.call(map, key)) {
       Object.defineProperty(map, key, {
-        value: value2,
+        value,
         writable: true,
         enumerable: true,
         configurable: true
@@ -6428,9 +6409,9 @@ function stringifyKey(key, jsKey, ctx) {
 
 // node_modules/yaml/browser/dist/nodes/Pair.js
 function createPair(key, value, ctx) {
-  const k2 = createNode(key, undefined, ctx);
-  const v3 = createNode(value, undefined, ctx);
-  return new Pair(k2, v3);
+  const k = createNode(key, undefined, ctx);
+  const v = createNode(value, undefined, ctx);
+  return new Pair(k, v);
 }
 
 class Pair {
@@ -6447,7 +6428,7 @@ class Pair {
       value = value.clone(schema);
     return new Pair(key, value);
   }
-  toJSON(_2, ctx) {
+  toJSON(_, ctx) {
     const pair = ctx?.mapAsMap ? new Map : {};
     return addPairToJSMap(ctx, pair, this);
   }
@@ -6459,23 +6440,23 @@ class Pair {
 // node_modules/yaml/browser/dist/stringify/stringifyCollection.js
 function stringifyCollection(collection, ctx, options) {
   const flow = ctx.inFlow ?? collection.flow;
-  const stringify2 = flow ? stringifyFlowCollection : stringifyBlockCollection;
-  return stringify2(collection, ctx, options);
+  const stringify = flow ? stringifyFlowCollection : stringifyBlockCollection;
+  return stringify(collection, ctx, options);
 }
 function stringifyBlockCollection({ comment, items }, ctx, { blockItemPrefix, flowChars, itemIndent, onChompKeep, onComment }) {
   const { indent, options: { commentString } } = ctx;
   const itemCtx = Object.assign({}, ctx, { indent: itemIndent, type: null });
   let chompKeep = false;
   const lines = [];
-  for (let i7 = 0;i7 < items.length; ++i7) {
-    const item = items[i7];
-    let comment2 = null;
+  for (let i = 0;i < items.length; ++i) {
+    const item = items[i];
+    let comment = null;
     if (isNode(item)) {
       if (!chompKeep && item.spaceBefore)
         lines.push("");
       addCommentBefore(ctx, lines, item.commentBefore, chompKeep);
       if (item.comment)
-        comment2 = item.comment;
+        comment = item.comment;
     } else if (isPair(item)) {
       const ik = isNode(item.key) ? item.key : null;
       if (ik) {
@@ -6485,20 +6466,20 @@ function stringifyBlockCollection({ comment, items }, ctx, { blockItemPrefix, fl
       }
     }
     chompKeep = false;
-    let str2 = stringify(item, itemCtx, () => comment2 = null, () => chompKeep = true);
-    if (comment2)
-      str2 += lineComment(str2, itemIndent, commentString(comment2));
-    if (chompKeep && comment2)
+    let str = stringify(item, itemCtx, () => comment = null, () => chompKeep = true);
+    if (comment)
+      str += lineComment(str, itemIndent, commentString(comment));
+    if (chompKeep && comment)
       chompKeep = false;
-    lines.push(blockItemPrefix + str2);
+    lines.push(blockItemPrefix + str);
   }
   let str;
   if (lines.length === 0) {
     str = flowChars.start + flowChars.end;
   } else {
     str = lines[0];
-    for (let i7 = 1;i7 < lines.length; ++i7) {
-      const line = lines[i7];
+    for (let i = 1;i < lines.length; ++i) {
+      const line = lines[i];
       str += line ? `
 ${indent}${line}` : `
 `;
@@ -6524,8 +6505,8 @@ function stringifyFlowCollection({ items }, ctx, { flowChars, itemIndent }) {
   let reqNewline = false;
   let linesAtValue = 0;
   const lines = [];
-  for (let i7 = 0;i7 < items.length; ++i7) {
-    const item = items[i7];
+  for (let i = 0;i < items.length; ++i) {
+    const item = items[i];
     let comment = null;
     if (isNode(item)) {
       if (item.spaceBefore)
@@ -6557,7 +6538,7 @@ function stringifyFlowCollection({ items }, ctx, { flowChars, itemIndent }) {
     let str = stringify(item, itemCtx, () => comment = null);
     reqNewline || (reqNewline = lines.length > linesAtValue || str.includes(`
 `));
-    if (i7 < items.length - 1) {
+    if (i < items.length - 1) {
       str += ",";
     } else if (ctx.options.trailingComma) {
       if (ctx.options.lineWidth > 0) {
@@ -6604,12 +6585,12 @@ function addCommentBefore({ indent, options: { commentString } }, lines, comment
 
 // node_modules/yaml/browser/dist/nodes/YAMLMap.js
 function findPair(items, key) {
-  const k2 = isScalar(key) ? key.value : key;
+  const k = isScalar(key) ? key.value : key;
   for (const it of items) {
     if (isPair(it)) {
-      if (it.key === key || it.key === k2)
+      if (it.key === key || it.key === k)
         return it;
-      if (isScalar(it.key) && it.key.value === k2)
+      if (isScalar(it.key) && it.key.value === k)
         return it;
     }
   }
@@ -6665,11 +6646,11 @@ class YAMLMap extends Collection {
       else
         prev.value = _pair.value;
     } else if (sortEntries) {
-      const i7 = this.items.findIndex((item) => sortEntries(_pair, item) < 0);
-      if (i7 === -1)
+      const i = this.items.findIndex((item) => sortEntries(_pair, item) < 0);
+      if (i === -1)
         this.items.push(_pair);
       else
-        this.items.splice(i7, 0, _pair);
+        this.items.splice(i, 0, _pair);
     } else {
       this.items.push(_pair);
     }
@@ -6692,7 +6673,7 @@ class YAMLMap extends Collection {
   set(key, value) {
     this.add(new Pair(key, value), true);
   }
-  toJSON(_2, ctx, Type) {
+  toJSON(_, ctx, Type) {
     const map = Type ? new Type : ctx?.mapAsMap ? new Map : {};
     if (ctx?.onCreate)
       ctx.onCreate(map);
@@ -6725,10 +6706,10 @@ var map = {
   default: true,
   nodeClass: YAMLMap,
   tag: "tag:yaml.org,2002:map",
-  resolve(map2, onError) {
-    if (!isMap(map2))
+  resolve(map, onError) {
+    if (!isMap(map))
       onError("Expected a mapping for this tag");
-    return map2;
+    return map;
   },
   createNode: (schema, obj, ctx) => YAMLMap.from(schema, obj, ctx)
 };
@@ -6773,13 +6754,13 @@ class YAMLSeq extends Collection {
     else
       this.items[idx] = value;
   }
-  toJSON(_2, ctx) {
+  toJSON(_, ctx) {
     const seq = [];
     if (ctx?.onCreate)
       ctx.onCreate(seq);
-    let i7 = 0;
+    let i = 0;
     for (const item of this.items)
-      seq.push(toJS(item, String(i7++), ctx));
+      seq.push(toJS(item, String(i++), ctx));
     return seq;
   }
   toString(ctx, onComment, onChompKeep) {
@@ -6797,10 +6778,10 @@ class YAMLSeq extends Collection {
     const { replacer } = ctx;
     const seq = new this(schema);
     if (obj && Symbol.iterator in Object(obj)) {
-      let i7 = 0;
+      let i = 0;
       for (let it of obj) {
         if (typeof replacer === "function") {
-          const key = obj instanceof Set ? it : String(i7++);
+          const key = obj instanceof Set ? it : String(i++);
           it = replacer.call(obj, key, it);
         }
         seq.items.push(createNode(it, undefined, ctx));
@@ -6822,10 +6803,10 @@ var seq = {
   default: true,
   nodeClass: YAMLSeq,
   tag: "tag:yaml.org,2002:seq",
-  resolve(seq2, onError) {
-    if (!isSeq(seq2))
+  resolve(seq, onError) {
+    if (!isSeq(seq))
       onError("Expected a sequence for this tag");
-    return seq2;
+    return seq;
   },
   createNode: (schema, obj, ctx) => YAMLSeq.from(schema, obj, ctx)
 };
@@ -6877,18 +6858,18 @@ function stringifyNumber({ format, minFractionDigits, tag, value }) {
   const num = typeof value === "number" ? value : Number(value);
   if (!isFinite(num))
     return isNaN(num) ? ".nan" : num < 0 ? "-.inf" : ".inf";
-  let n4 = Object.is(value, -0) ? "-0" : JSON.stringify(value);
-  if (!format && minFractionDigits && (!tag || tag === "tag:yaml.org,2002:float") && /^-?\d/.test(n4) && !n4.includes("e")) {
-    let i7 = n4.indexOf(".");
-    if (i7 < 0) {
-      i7 = n4.length;
-      n4 += ".";
+  let n = Object.is(value, -0) ? "-0" : JSON.stringify(value);
+  if (!format && minFractionDigits && (!tag || tag === "tag:yaml.org,2002:float") && /^-?\d/.test(n) && !n.includes("e")) {
+    let i = n.indexOf(".");
+    if (i < 0) {
+      i = n.length;
+      n += ".";
     }
-    let d3 = minFractionDigits - (n4.length - i7 - 1);
-    while (d3-- > 0)
-      n4 += "0";
+    let d = minFractionDigits - (n.length - i - 1);
+    while (d-- > 0)
+      n += "0";
   }
-  return n4;
+  return n;
 }
 
 // node_modules/yaml/browser/dist/schema/core/float.js
@@ -7045,8 +7026,8 @@ var binary = {
     if (typeof atob === "function") {
       const str = atob(src.replace(/[\n\r]/g, ""));
       const buffer = new Uint8Array(str.length);
-      for (let i7 = 0;i7 < str.length; ++i7)
-        buffer[i7] = str.charCodeAt(i7);
+      for (let i = 0;i < str.length; ++i)
+        buffer[i] = str.charCodeAt(i);
       return buffer;
     } else {
       onError("This environment does not support reading binary tags; either Buffer or atob is required");
@@ -7059,20 +7040,20 @@ var binary = {
     const buf = value;
     let str;
     if (typeof btoa === "function") {
-      let s5 = "";
-      for (let i7 = 0;i7 < buf.length; ++i7)
-        s5 += String.fromCharCode(buf[i7]);
-      str = btoa(s5);
+      let s = "";
+      for (let i = 0;i < buf.length; ++i)
+        s += String.fromCharCode(buf[i]);
+      str = btoa(s);
     } else {
       throw new Error("This environment does not support writing binary tags; either Buffer or btoa is required");
     }
     type ?? (type = Scalar.BLOCK_LITERAL);
     if (type !== Scalar.QUOTE_DOUBLE) {
       const lineWidth = Math.max(ctx.options.lineWidth - ctx.indent.length, ctx.options.minContentWidth);
-      const n4 = Math.ceil(str.length / lineWidth);
-      const lines = new Array(n4);
-      for (let i7 = 0, o6 = 0;i7 < n4; ++i7, o6 += lineWidth) {
-        lines[i7] = str.substr(o6, lineWidth);
+      const n = Math.ceil(str.length / lineWidth);
+      const lines = new Array(n);
+      for (let i = 0, o = 0;i < n; ++i, o += lineWidth) {
+        lines[i] = str.substr(o, lineWidth);
       }
       str = lines.join(type === Scalar.BLOCK_LITERAL ? `
 ` : " ");
@@ -7082,10 +7063,10 @@ var binary = {
 };
 
 // node_modules/yaml/browser/dist/schema/yaml-1.1/pairs.js
-function resolvePairs(seq2, onError) {
-  if (isSeq(seq2)) {
-    for (let i7 = 0;i7 < seq2.items.length; ++i7) {
-      let item = seq2.items[i7];
+function resolvePairs(seq, onError) {
+  if (isSeq(seq)) {
+    for (let i = 0;i < seq.items.length; ++i) {
+      let item = seq.items[i];
       if (isPair(item))
         continue;
       else if (isMap(item)) {
@@ -7102,21 +7083,21 @@ ${cn.comment}` : item.comment;
         }
         item = pair;
       }
-      seq2.items[i7] = isPair(item) ? item : new Pair(item);
+      seq.items[i] = isPair(item) ? item : new Pair(item);
     }
   } else
     onError("Expected a sequence for this tag");
-  return seq2;
+  return seq;
 }
-function createPairs(schema3, iterable, ctx) {
+function createPairs(schema, iterable, ctx) {
   const { replacer } = ctx;
-  const pairs = new YAMLSeq(schema3);
+  const pairs = new YAMLSeq(schema);
   pairs.tag = "tag:yaml.org,2002:pairs";
-  let i7 = 0;
+  let i = 0;
   if (iterable && Symbol.iterator in Object(iterable))
     for (let it of iterable) {
       if (typeof replacer === "function")
-        it = replacer.call(iterable, String(i7++), it);
+        it = replacer.call(iterable, String(i++), it);
       let key, value;
       if (Array.isArray(it)) {
         if (it.length === 2) {
@@ -7158,12 +7139,12 @@ class YAMLOMap extends YAMLSeq {
     this.set = YAMLMap.prototype.set.bind(this);
     this.tag = YAMLOMap.tag;
   }
-  toJSON(_2, ctx) {
+  toJSON(_, ctx) {
     if (!ctx)
-      return super.toJSON(_2);
-    const map2 = new Map;
+      return super.toJSON(_);
+    const map = new Map;
     if (ctx?.onCreate)
-      ctx.onCreate(map2);
+      ctx.onCreate(map);
     for (const pair of this.items) {
       let key, value;
       if (isPair(pair)) {
@@ -7172,16 +7153,16 @@ class YAMLOMap extends YAMLSeq {
       } else {
         key = toJS(pair, "", ctx);
       }
-      if (map2.has(key))
+      if (map.has(key))
         throw new Error("Ordered maps must not include duplicate keys");
-      map2.set(key, value);
+      map.set(key, value);
     }
-    return map2;
+    return map;
   }
-  static from(schema3, iterable, ctx) {
-    const pairs2 = createPairs(schema3, iterable, ctx);
+  static from(schema, iterable, ctx) {
+    const pairs = createPairs(schema, iterable, ctx);
     const omap = new this;
-    omap.items = pairs2.items;
+    omap.items = pairs.items;
     return omap;
   }
 }
@@ -7192,10 +7173,10 @@ var omap = {
   nodeClass: YAMLOMap,
   default: false,
   tag: "tag:yaml.org,2002:omap",
-  resolve(seq2, onError) {
-    const pairs2 = resolvePairs(seq2, onError);
+  resolve(seq, onError) {
+    const pairs = resolvePairs(seq, onError);
     const seenKeys = [];
-    for (const { key } of pairs2.items) {
+    for (const { key } of pairs.items) {
       if (isScalar(key)) {
         if (seenKeys.includes(key.value)) {
           onError(`Ordered maps must not include duplicate keys: ${key.value}`);
@@ -7204,9 +7185,9 @@ var omap = {
         }
       }
     }
-    return Object.assign(new YAMLOMap, pairs2);
+    return Object.assign(new YAMLOMap, pairs);
   },
-  createNode: (schema3, iterable, ctx) => YAMLOMap.from(schema3, iterable, ctx)
+  createNode: (schema, iterable, ctx) => YAMLOMap.from(schema, iterable, ctx)
 };
 
 // node_modules/yaml/browser/dist/schema/yaml-1.1/bool.js
@@ -7263,9 +7244,9 @@ var float2 = {
     const node = new Scalar(parseFloat(str.replace(/_/g, "")));
     const dot = str.indexOf(".");
     if (dot !== -1) {
-      const f3 = str.substring(dot + 1).replace(/_/g, "");
-      if (f3[f3.length - 1] === "0")
-        node.minFractionDigits = f3.length;
+      const f = str.substring(dot + 1).replace(/_/g, "");
+      if (f[f.length - 1] === "0")
+        node.minFractionDigits = f.length;
     }
     return node;
   },
@@ -7291,11 +7272,11 @@ function intResolve2(str, offset, radix, { intAsBigInt }) {
         str = `0x${str}`;
         break;
     }
-    const n5 = BigInt(str);
-    return sign === "-" ? BigInt(-1) * n5 : n5;
+    const n = BigInt(str);
+    return sign === "-" ? BigInt(-1) * n : n;
   }
-  const n4 = parseInt(str, radix);
-  return sign === "-" ? -1 * n4 : n4;
+  const n = parseInt(str, radix);
+  return sign === "-" ? -1 * n : n;
 }
 function intStringify2(node, radix, prefix) {
   const { value } = node;
@@ -7343,8 +7324,8 @@ var intHex2 = {
 
 // node_modules/yaml/browser/dist/schema/yaml-1.1/set.js
 class YAMLSet extends YAMLMap {
-  constructor(schema3) {
-    super(schema3);
+  constructor(schema) {
+    super(schema);
     this.tag = YAMLSet.tag;
   }
   add(key) {
@@ -7373,8 +7354,8 @@ class YAMLSet extends YAMLMap {
       this.items.push(new Pair(key));
     }
   }
-  toJSON(_2, ctx) {
-    return super.toJSON(_2, ctx, Set);
+  toJSON(_, ctx) {
+    return super.toJSON(_, ctx, Set);
   }
   toString(ctx, onComment, onChompKeep) {
     if (!ctx)
@@ -7384,9 +7365,9 @@ class YAMLSet extends YAMLMap {
     else
       throw new Error("Set items must all have null values");
   }
-  static from(schema3, iterable, ctx) {
+  static from(schema, iterable, ctx) {
     const { replacer } = ctx;
-    const set = new this(schema3);
+    const set = new this(schema);
     if (iterable && Symbol.iterator in Object(iterable))
       for (let value of iterable) {
         if (typeof replacer === "function")
@@ -7403,16 +7384,16 @@ var set = {
   nodeClass: YAMLSet,
   default: false,
   tag: "tag:yaml.org,2002:set",
-  createNode: (schema3, iterable, ctx) => YAMLSet.from(schema3, iterable, ctx),
-  resolve(map2, onError) {
-    if (isMap(map2)) {
-      if (map2.hasAllNullValues(true))
-        return Object.assign(new YAMLSet, map2);
+  createNode: (schema, iterable, ctx) => YAMLSet.from(schema, iterable, ctx),
+  resolve(map, onError) {
+    if (isMap(map)) {
+      if (map.hasAllNullValues(true))
+        return Object.assign(new YAMLSet, map);
       else
         onError("Set items must all have null values");
     } else
       onError("Expected a mapping for this tag");
-    return map2;
+    return map;
   }
 };
 
@@ -7420,15 +7401,15 @@ var set = {
 function parseSexagesimal(str, asBigInt) {
   const sign = str[0];
   const parts = sign === "-" || sign === "+" ? str.substring(1) : str;
-  const num = (n4) => asBigInt ? BigInt(n4) : Number(n4);
-  const res = parts.replace(/_/g, "").split(":").reduce((res2, p4) => res2 * num(60) + num(p4), num(0));
+  const num = (n) => asBigInt ? BigInt(n) : Number(n);
+  const res = parts.replace(/_/g, "").split(":").reduce((res, p) => res * num(60) + num(p), num(0));
   return sign === "-" ? num(-1) * res : res;
 }
 function stringifySexagesimal(node) {
   let { value } = node;
-  let num = (n4) => n4;
+  let num = (n) => n;
   if (typeof value === "bigint")
-    num = (n4) => BigInt(n4);
+    num = (n) => BigInt(n);
   else if (isNaN(value) || !isFinite(value))
     return stringifyNumber(node);
   let sign = "";
@@ -7448,7 +7429,7 @@ function stringifySexagesimal(node) {
       parts.unshift(value);
     }
   }
-  return sign + parts.map((n4) => String(n4).padStart(2, "0")).join(":").replace(/000000\d*$/, "");
+  return sign + parts.map((n) => String(n).padStart(2, "0")).join(":").replace(/000000\d*$/, "");
 }
 var intTime = {
   identify: (value) => typeof value === "bigint" || Number.isInteger(value),
@@ -7482,10 +7463,10 @@ var timestamp = {
     let date = Date.UTC(year, month - 1, day, hour || 0, minute || 0, second || 0, millisec);
     const tz = match[8];
     if (tz && tz !== "Z") {
-      let d3 = parseSexagesimal(tz, false);
-      if (Math.abs(d3) < 30)
-        d3 *= 60;
-      date -= 60000 * d3;
+      let d = parseSexagesimal(tz, false);
+      if (Math.abs(d) < 30)
+        d *= 60;
+      date -= 60000 * d;
     }
     return new Date(date);
   },
@@ -7575,28 +7556,28 @@ function getTags(customTags, schemaName, addMergeTag) {
   }
   if (addMergeTag)
     tags = tags.concat(merge);
-  return tags.reduce((tags2, tag) => {
+  return tags.reduce((tags, tag) => {
     const tagObj = typeof tag === "string" ? tagsByName[tag] : tag;
     if (!tagObj) {
       const tagName = JSON.stringify(tag);
       const keys = Object.keys(tagsByName).map((key) => JSON.stringify(key)).join(", ");
       throw new Error(`Unknown custom tag ${tagName}; use one of ${keys}`);
     }
-    if (!tags2.includes(tagObj))
-      tags2.push(tagObj);
-    return tags2;
+    if (!tags.includes(tagObj))
+      tags.push(tagObj);
+    return tags;
   }, []);
 }
 
 // node_modules/yaml/browser/dist/schema/Schema.js
-var sortMapEntriesByKey = (a3, b3) => a3.key < b3.key ? -1 : a3.key > b3.key ? 1 : 0;
+var sortMapEntriesByKey = (a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
 
 class Schema {
-  constructor({ compat, customTags, merge: merge2, resolveKnownTags, schema: schema4, sortMapEntries, toStringDefaults }) {
+  constructor({ compat, customTags, merge, resolveKnownTags, schema, sortMapEntries, toStringDefaults }) {
     this.compat = Array.isArray(compat) ? getTags(compat, "compat") : compat ? getTags(null, compat) : null;
-    this.name = typeof schema4 === "string" && schema4 || "core";
+    this.name = typeof schema === "string" && schema || "core";
     this.knownTags = resolveKnownTags ? coreKnownTags : {};
-    this.tags = getTags(customTags, this.name, merge2);
+    this.tags = getTags(customTags, this.name, merge);
     this.toStringOptions = toStringDefaults ?? null;
     Object.defineProperty(this, MAP, { value: map });
     Object.defineProperty(this, SCALAR, { value: string2 });
@@ -7758,7 +7739,7 @@ class Document2 {
       value = replacer.call({ "": value }, "", value);
       _replacer = replacer;
     } else if (Array.isArray(replacer)) {
-      const keyToStr = (v3) => typeof v3 === "number" || v3 instanceof String || v3 instanceof Number;
+      const keyToStr = (v) => typeof v === "number" || v instanceof String || v instanceof Number;
       const asStr = replacer.filter(keyToStr).map(String);
       if (asStr.length > 0)
         replacer = replacer.concat(asStr);
@@ -7785,9 +7766,9 @@ class Document2 {
     return node;
   }
   createPair(key, value, options = {}) {
-    const k2 = this.createNode(key, null, options);
-    const v3 = this.createNode(value, null, options);
-    return new Pair(k2, v3);
+    const k = this.createNode(key, null, options);
+    const v = this.createNode(value, null, options);
+    return new Pair(k, v);
   }
   delete(key) {
     return assertCollection(this.contents) ? this.contents.delete(key) : false;
@@ -7881,8 +7862,8 @@ class Document2 {
     };
     const res = toJS(this.contents, jsonArg ?? "", ctx);
     if (typeof onAnchor === "function")
-      for (const { count, res: res2 } of ctx.anchors.values())
-        onAnchor(res2, count);
+      for (const { count, res } of ctx.anchors.values())
+        onAnchor(res, count);
     return typeof reviver === "function" ? applyReviver(reviver, { "": res }, "", res) : res;
   }
   toJSON(jsonArg, onAnchor) {
@@ -7892,8 +7873,8 @@ class Document2 {
     if (this.errors.length > 0)
       throw new Error("Document with errors cannot be stringified");
     if ("indent" in options && (!Number.isInteger(options.indent) || Number(options.indent) <= 0)) {
-      const s5 = JSON.stringify(options.indent);
-      throw new Error(`"indent" option must be a positive integer, not ${s5}`);
+      const s = JSON.stringify(options.indent);
+      throw new Error(`"indent" option must be a positive integer, not ${s}`);
     }
     return stringifyDocument(this, options);
   }
@@ -8143,7 +8124,7 @@ function mapIncludes(ctx, items, search) {
   const { uniqueKeys } = ctx.options;
   if (uniqueKeys === false)
     return false;
-  const isEqual = typeof uniqueKeys === "function" ? uniqueKeys : (a3, b3) => a3 === b3 || isScalar(a3) && isScalar(b3) && a3.value === b3.value;
+  const isEqual = typeof uniqueKeys === "function" ? uniqueKeys : (a, b) => a === b || isScalar(a) && isScalar(b) && a.value === b.value;
   return items.some((pair) => isEqual(pair.key, search));
 }
 
@@ -8151,7 +8132,7 @@ function mapIncludes(ctx, items, search) {
 var startColMsg = "All mapping items must start at the same column";
 function resolveBlockMap({ composeNode, composeEmptyNode }, ctx, bm, onError, tag) {
   const NodeClass = tag?.nodeClass ?? YAMLMap;
-  const map2 = new NodeClass(ctx.schema);
+  const map = new NodeClass(ctx.schema);
   if (ctx.atRoot)
     ctx.atRoot = false;
   let offset = bm.offset;
@@ -8177,11 +8158,11 @@ function resolveBlockMap({ composeNode, composeEmptyNode }, ctx, bm, onError, ta
       if (!keyProps.anchor && !keyProps.tag && !sep) {
         commentEnd = keyProps.end;
         if (keyProps.comment) {
-          if (map2.comment)
-            map2.comment += `
+          if (map.comment)
+            map.comment += `
 ` + keyProps.comment;
           else
-            map2.comment = keyProps.comment;
+            map.comment = keyProps.comment;
         }
         continue;
       }
@@ -8197,7 +8178,7 @@ function resolveBlockMap({ composeNode, composeEmptyNode }, ctx, bm, onError, ta
     if (ctx.schema.compat)
       flowIndentCheck(bm.indent, key, onError);
     ctx.atKey = false;
-    if (mapIncludes(ctx, map2.items, keyNode))
+    if (mapIncludes(ctx, map.items, keyNode))
       onError(keyStart, "DUPLICATE_KEY", "Map keys must be unique");
     const valueProps = resolveProps(sep ?? [], {
       indicator: "map-value-ind",
@@ -8222,7 +8203,7 @@ function resolveBlockMap({ composeNode, composeEmptyNode }, ctx, bm, onError, ta
       const pair = new Pair(keyNode, valueNode);
       if (ctx.options.keepSourceTokens)
         pair.srcToken = collItem;
-      map2.items.push(pair);
+      map.items.push(pair);
     } else {
       if (implicitKey)
         onError(keyNode.range, "MISSING_CHAR", "Implicit map keys need to be followed by map values");
@@ -8236,19 +8217,19 @@ function resolveBlockMap({ composeNode, composeEmptyNode }, ctx, bm, onError, ta
       const pair = new Pair(keyNode);
       if (ctx.options.keepSourceTokens)
         pair.srcToken = collItem;
-      map2.items.push(pair);
+      map.items.push(pair);
     }
   }
   if (commentEnd && commentEnd < offset)
     onError(commentEnd, "IMPOSSIBLE", "Map comment with trailing content");
-  map2.range = [bm.offset, offset, commentEnd ?? offset];
-  return map2;
+  map.range = [bm.offset, offset, commentEnd ?? offset];
+  return map;
 }
 
 // node_modules/yaml/browser/dist/compose/resolve-block-seq.js
 function resolveBlockSeq({ composeNode, composeEmptyNode }, ctx, bs, onError, tag) {
   const NodeClass = tag?.nodeClass ?? YAMLSeq;
-  const seq2 = new NodeClass(ctx.schema);
+  const seq = new NodeClass(ctx.schema);
   if (ctx.atRoot)
     ctx.atRoot = false;
   if (ctx.atKey)
@@ -8273,7 +8254,7 @@ function resolveBlockSeq({ composeNode, composeEmptyNode }, ctx, bs, onError, ta
       } else {
         commentEnd = props.end;
         if (props.comment)
-          seq2.comment = props.comment;
+          seq.comment = props.comment;
         continue;
       }
     }
@@ -8281,10 +8262,10 @@ function resolveBlockSeq({ composeNode, composeEmptyNode }, ctx, bs, onError, ta
     if (ctx.schema.compat)
       flowIndentCheck(bs.indent, value, onError);
     offset = node.range[2];
-    seq2.items.push(node);
+    seq.items.push(node);
   }
-  seq2.range = [bs.offset, offset, commentEnd ?? offset];
-  return seq2;
+  seq.range = [bs.offset, offset, commentEnd ?? offset];
+  return seq;
 }
 
 // node_modules/yaml/browser/dist/compose/resolve-end.js
@@ -8328,9 +8309,9 @@ function resolveEnd(end, offset, reqSpace, onError) {
 var blockMsg = "Block collections are not allowed within flow collections";
 var isBlock = (token) => token && (token.type === "block-map" || token.type === "block-seq");
 function resolveFlowCollection({ composeNode, composeEmptyNode }, ctx, fc, onError, tag) {
-  const isMap2 = fc.start.source === "{";
-  const fcName = isMap2 ? "flow map" : "flow sequence";
-  const NodeClass = tag?.nodeClass ?? (isMap2 ? YAMLMap : YAMLSeq);
+  const isMap = fc.start.source === "{";
+  const fcName = isMap ? "flow map" : "flow sequence";
+  const NodeClass = tag?.nodeClass ?? (isMap ? YAMLMap : YAMLSeq);
   const coll = new NodeClass(ctx.schema);
   coll.flow = true;
   const atRoot = ctx.atRoot;
@@ -8339,8 +8320,8 @@ function resolveFlowCollection({ composeNode, composeEmptyNode }, ctx, fc, onErr
   if (ctx.atKey)
     ctx.atKey = false;
   let offset = fc.offset + fc.start.source.length;
-  for (let i7 = 0;i7 < fc.items.length; ++i7) {
-    const collItem = fc.items[i7];
+  for (let i = 0;i < fc.items.length; ++i) {
+    const collItem = fc.items[i];
     const { start, key, sep, value } = collItem;
     const props = resolveProps(start, {
       flow: fcName,
@@ -8353,9 +8334,9 @@ function resolveFlowCollection({ composeNode, composeEmptyNode }, ctx, fc, onErr
     });
     if (!props.found) {
       if (!props.anchor && !props.tag && !sep && !value) {
-        if (i7 === 0 && props.comma)
+        if (i === 0 && props.comma)
           onError(props.comma, "UNEXPECTED_TOKEN", `Unexpected , in ${fcName}`);
-        else if (i7 < fc.items.length - 1)
+        else if (i < fc.items.length - 1)
           onError(props.start, "UNEXPECTED_TOKEN", `Unexpected empty item in ${fcName}`);
         if (props.comment) {
           if (coll.comment)
@@ -8367,10 +8348,10 @@ function resolveFlowCollection({ composeNode, composeEmptyNode }, ctx, fc, onErr
         offset = props.end;
         continue;
       }
-      if (!isMap2 && ctx.options.strict && containsNewline(key))
+      if (!isMap && ctx.options.strict && containsNewline(key))
         onError(key, "MULTILINE_IMPLICIT_KEY", "Implicit keys of flow sequence pairs need to be on a single line");
     }
-    if (i7 === 0) {
+    if (i === 0) {
       if (props.comma)
         onError(props.comma, "UNEXPECTED_TOKEN", `Unexpected , in ${fcName}`);
     } else {
@@ -8404,7 +8385,7 @@ function resolveFlowCollection({ composeNode, composeEmptyNode }, ctx, fc, onErr
         }
       }
     }
-    if (!isMap2 && !sep && !props.found) {
+    if (!isMap && !sep && !props.found) {
       const valueNode = value ? composeNode(ctx, value, props, onError) : composeEmptyNode(ctx, props.end, sep, null, props, onError);
       coll.items.push(valueNode);
       offset = valueNode.range[2];
@@ -8427,7 +8408,7 @@ function resolveFlowCollection({ composeNode, composeEmptyNode }, ctx, fc, onErr
         startOnNewline: false
       });
       if (valueProps.found) {
-        if (!isMap2 && !props.found && ctx.options.strict) {
+        if (!isMap && !props.found && ctx.options.strict) {
           if (sep)
             for (const st of sep) {
               if (st === valueProps.found)
@@ -8460,23 +8441,23 @@ function resolveFlowCollection({ composeNode, composeEmptyNode }, ctx, fc, onErr
       const pair = new Pair(keyNode, valueNode);
       if (ctx.options.keepSourceTokens)
         pair.srcToken = collItem;
-      if (isMap2) {
-        const map2 = coll;
-        if (mapIncludes(ctx, map2.items, keyNode))
+      if (isMap) {
+        const map = coll;
+        if (mapIncludes(ctx, map.items, keyNode))
           onError(keyStart, "DUPLICATE_KEY", "Map keys must be unique");
-        map2.items.push(pair);
+        map.items.push(pair);
       } else {
-        const map2 = new YAMLMap(ctx.schema);
-        map2.flow = true;
-        map2.items.push(pair);
+        const map = new YAMLMap(ctx.schema);
+        map.flow = true;
+        map.items.push(pair);
         const endRange = (valueNode ?? keyNode).range;
-        map2.range = [keyNode.range[0], endRange[1], endRange[2]];
-        coll.items.push(map2);
+        map.range = [keyNode.range[0], endRange[1], endRange[2]];
+        coll.items.push(map);
       }
       offset = valueNode ? valueNode.range[2] : valueProps.end;
     }
   }
-  const expectedEnd = isMap2 ? "}" : "]";
+  const expectedEnd = isMap ? "}" : "]";
   const [ce, ...ee] = fc.end;
   let cePos = offset;
   if (ce?.source === expectedEnd)
@@ -8531,7 +8512,7 @@ function composeCollection(CN, ctx, token, props, onError) {
   if (!tagToken || !tagName || tagName === "!" || tagName === YAMLMap.tagName && expType === "map" || tagName === YAMLSeq.tagName && expType === "seq") {
     return resolveCollection(CN, ctx, token, onError, tagName);
   }
-  let tag = ctx.schema.tags.find((t5) => t5.tag === tagName && t5.collection === expType);
+  let tag = ctx.schema.tags.find((t) => t.tag === tagName && t.collection === expType);
   if (!tag) {
     const kt = ctx.schema.knownTags[tagName];
     if (kt?.collection === expType) {
@@ -8565,26 +8546,26 @@ function resolveBlockScalar(ctx, scalar, onError) {
   const type = header.mode === ">" ? Scalar.BLOCK_FOLDED : Scalar.BLOCK_LITERAL;
   const lines = scalar.source ? splitLines(scalar.source) : [];
   let chompStart = lines.length;
-  for (let i7 = lines.length - 1;i7 >= 0; --i7) {
-    const content = lines[i7][1];
+  for (let i = lines.length - 1;i >= 0; --i) {
+    const content = lines[i][1];
     if (content === "" || content === "\r")
-      chompStart = i7;
+      chompStart = i;
     else
       break;
   }
   if (chompStart === 0) {
-    const value2 = header.chomp === "+" && lines.length > 0 ? `
+    const value = header.chomp === "+" && lines.length > 0 ? `
 `.repeat(Math.max(1, lines.length - 1)) : "";
-    let end2 = start + header.length;
+    let end = start + header.length;
     if (scalar.source)
-      end2 += scalar.source.length;
-    return { value: value2, type, comment: header.comment, range: [start, end2, end2] };
+      end += scalar.source.length;
+    return { value, type, comment: header.comment, range: [start, end, end] };
   }
   let trimIndent = scalar.indent + header.indent;
   let offset = scalar.offset + header.length;
   let contentStart = 0;
-  for (let i7 = 0;i7 < chompStart; ++i7) {
-    const [indent, content] = lines[i7];
+  for (let i = 0;i < chompStart; ++i) {
+    const [indent, content] = lines[i];
     if (content === "" || content === "\r") {
       if (header.indent === 0 && indent.length > trimIndent)
         trimIndent = indent.length;
@@ -8595,7 +8576,7 @@ function resolveBlockScalar(ctx, scalar, onError) {
       }
       if (header.indent === 0)
         trimIndent = indent.length;
-      contentStart = i7;
+      contentStart = i;
       if (trimIndent === 0 && !ctx.atRoot) {
         const message = "Block scalar values in collections must be indented";
         onError(offset, "BAD_INDENT", message);
@@ -8604,18 +8585,18 @@ function resolveBlockScalar(ctx, scalar, onError) {
     }
     offset += indent.length + content.length + 1;
   }
-  for (let i7 = lines.length - 1;i7 >= chompStart; --i7) {
-    if (lines[i7][0].length > trimIndent)
-      chompStart = i7 + 1;
+  for (let i = lines.length - 1;i >= chompStart; --i) {
+    if (lines[i][0].length > trimIndent)
+      chompStart = i + 1;
   }
   let value = "";
   let sep = "";
   let prevMoreIndented = false;
-  for (let i7 = 0;i7 < contentStart; ++i7)
-    value += lines[i7][0].slice(trimIndent) + `
+  for (let i = 0;i < contentStart; ++i)
+    value += lines[i][0].slice(trimIndent) + `
 `;
-  for (let i7 = contentStart;i7 < chompStart; ++i7) {
-    let [indent, content] = lines[i7];
+  for (let i = contentStart;i < chompStart; ++i) {
+    let [indent, content] = lines[i];
     offset += indent.length + content.length + 1;
     const crlf = content[content.length - 1] === "\r";
     if (crlf)
@@ -8661,9 +8642,9 @@ function resolveBlockScalar(ctx, scalar, onError) {
     case "-":
       break;
     case "+":
-      for (let i7 = chompStart;i7 < lines.length; ++i7)
+      for (let i = chompStart;i < lines.length; ++i)
         value += `
-` + lines[i7][0].slice(trimIndent);
+` + lines[i][0].slice(trimIndent);
       if (value[value.length - 1] !== `
 `)
         value += `
@@ -8686,16 +8667,16 @@ function parseBlockScalarHeader({ offset, props }, strict, onError) {
   let indent = 0;
   let chomp = "";
   let error = -1;
-  for (let i7 = 1;i7 < source.length; ++i7) {
-    const ch = source[i7];
+  for (let i = 1;i < source.length; ++i) {
+    const ch = source[i];
     if (!chomp && (ch === "-" || ch === "+"))
       chomp = ch;
     else {
-      const n4 = Number(ch);
-      if (!indent && n4)
-        indent = n4;
+      const n = Number(ch);
+      if (!indent && n)
+        indent = n;
       else if (error === -1)
-        error = offset + i7;
+        error = offset + i;
     }
   }
   if (error !== -1)
@@ -8703,8 +8684,8 @@ function parseBlockScalarHeader({ offset, props }, strict, onError) {
   let hasSpace = false;
   let comment = "";
   let length = source.length;
-  for (let i7 = 1;i7 < props.length; ++i7) {
-    const token = props[i7];
+  for (let i = 1;i < props.length; ++i) {
+    const token = props[i];
     switch (token.type) {
       case "space":
         hasSpace = true;
@@ -8737,11 +8718,11 @@ function parseBlockScalarHeader({ offset, props }, strict, onError) {
 function splitLines(source) {
   const split = source.split(/\n( *)/);
   const first = split[0];
-  const m3 = first.match(/^( *)/);
-  const line0 = m3?.[1] ? [m3[1], first.slice(m3[1].length)] : ["", first];
+  const m = first.match(/^( *)/);
+  const line0 = m?.[1] ? [m[1], first.slice(m[1].length)] : ["", first];
   const lines = [line0];
-  for (let i7 = 1;i7 < split.length; i7 += 2)
-    lines.push([split[i7], split[i7 + 1]]);
+  for (let i = 1;i < split.length; i += 2)
+    lines.push([split[i], split[i + 1]]);
   return lines;
 }
 
@@ -8852,49 +8833,49 @@ function unfoldLines(source) {
 }
 function doubleQuotedValue(source, onError) {
   let res = "";
-  for (let i7 = 1;i7 < source.length - 1; ++i7) {
-    const ch = source[i7];
-    if (ch === "\r" && source[i7 + 1] === `
+  for (let i = 1;i < source.length - 1; ++i) {
+    const ch = source[i];
+    if (ch === "\r" && source[i + 1] === `
 `)
       continue;
     if (ch === `
 `) {
-      const { fold, offset } = foldNewline(source, i7);
+      const { fold, offset } = foldNewline(source, i);
       res += fold;
-      i7 = offset;
+      i = offset;
     } else if (ch === "\\") {
-      let next = source[++i7];
+      let next = source[++i];
       const cc = escapeCodes[next];
       if (cc)
         res += cc;
       else if (next === `
 `) {
-        next = source[i7 + 1];
+        next = source[i + 1];
         while (next === " " || next === "\t")
-          next = source[++i7 + 1];
-      } else if (next === "\r" && source[i7 + 1] === `
+          next = source[++i + 1];
+      } else if (next === "\r" && source[i + 1] === `
 `) {
-        next = source[++i7 + 1];
+        next = source[++i + 1];
         while (next === " " || next === "\t")
-          next = source[++i7 + 1];
+          next = source[++i + 1];
       } else if (next === "x" || next === "u" || next === "U") {
         const length = next === "x" ? 2 : next === "u" ? 4 : 8;
-        res += parseCharCode(source, i7 + 1, length, onError);
-        i7 += length;
+        res += parseCharCode(source, i + 1, length, onError);
+        i += length;
       } else {
-        const raw = source.substr(i7 - 1, 2);
-        onError(i7 - 1, "BAD_DQ_ESCAPE", `Invalid escape sequence ${raw}`);
+        const raw = source.substr(i - 1, 2);
+        onError(i - 1, "BAD_DQ_ESCAPE", `Invalid escape sequence ${raw}`);
         res += raw;
       }
     } else if (ch === " " || ch === "\t") {
-      const wsStart = i7;
-      let next = source[i7 + 1];
+      const wsStart = i;
+      let next = source[i + 1];
       while (next === " " || next === "\t")
-        next = source[++i7 + 1];
+        next = source[++i + 1];
       if (next !== `
-` && !(next === "\r" && source[i7 + 2] === `
+` && !(next === "\r" && source[i + 2] === `
 `))
-        res += i7 > wsStart ? source.slice(wsStart, i7 + 1) : ch;
+        res += i > wsStart ? source.slice(wsStart, i + 1) : ch;
     } else {
       res += ch;
     }
@@ -8990,11 +8971,11 @@ function composeScalar(ctx, token, tagToken, onError) {
     scalar.comment = comment;
   return scalar;
 }
-function findScalarTagByName(schema4, value, tagName, tagToken, onError) {
+function findScalarTagByName(schema, value, tagName, tagToken, onError) {
   if (tagName === "!")
-    return schema4[SCALAR];
+    return schema[SCALAR];
   const matchWithTest = [];
-  for (const tag of schema4.tags) {
+  for (const tag of schema.tags) {
     if (!tag.collection && tag.tag === tagName) {
       if (tag.default && tag.test)
         matchWithTest.push(tag);
@@ -9005,18 +8986,18 @@ function findScalarTagByName(schema4, value, tagName, tagToken, onError) {
   for (const tag of matchWithTest)
     if (tag.test?.test(value))
       return tag;
-  const kt = schema4.knownTags[tagName];
+  const kt = schema.knownTags[tagName];
   if (kt && !kt.collection) {
-    schema4.tags.push(Object.assign({}, kt, { default: false, test: undefined }));
+    schema.tags.push(Object.assign({}, kt, { default: false, test: undefined }));
     return kt;
   }
   onError(tagToken, "TAG_RESOLVE_FAILED", `Unresolved tag: ${tagName}`, tagName !== "tag:yaml.org,2002:str");
-  return schema4[SCALAR];
+  return schema[SCALAR];
 }
-function findScalarTagByTest({ atKey, directives, schema: schema4 }, value, token, onError) {
-  const tag = schema4.tags.find((tag2) => (tag2.default === true || atKey && tag2.default === "key") && tag2.test?.test(value)) || schema4[SCALAR];
-  if (schema4.compat) {
-    const compat = schema4.compat.find((tag2) => tag2.default && tag2.test?.test(value)) ?? schema4[SCALAR];
+function findScalarTagByTest({ atKey, directives, schema }, value, token, onError) {
+  const tag = schema.tags.find((tag) => (tag.default === true || atKey && tag.default === "key") && tag.test?.test(value)) || schema[SCALAR];
+  if (schema.compat) {
+    const compat = schema.compat.find((tag) => tag.default && tag.test?.test(value)) ?? schema[SCALAR];
     if (tag.tag !== compat.tag) {
       const ts = directives.tagString(tag.tag);
       const cs = directives.tagString(compat.tag);
@@ -9031,8 +9012,8 @@ function findScalarTagByTest({ atKey, directives, schema: schema4 }, value, toke
 function emptyScalarPosition(offset, before, pos) {
   if (before) {
     pos ?? (pos = before.length);
-    for (let i7 = pos - 1;i7 >= 0; --i7) {
-      let st = before[i7];
+    for (let i = pos - 1;i >= 0; --i) {
+      let st = before[i];
       switch (st.type) {
         case "space":
         case "comment":
@@ -9040,10 +9021,10 @@ function emptyScalarPosition(offset, before, pos) {
           offset -= st.source.length;
           continue;
       }
-      st = before[++i7];
+      st = before[++i];
       while (st?.type === "space") {
         offset += st.source.length;
-        st = before[++i7];
+        st = before[++i];
       }
       break;
     }
@@ -9190,8 +9171,8 @@ function parsePrelude(prelude) {
   let comment = "";
   let atComment = false;
   let afterEmptyLine = false;
-  for (let i7 = 0;i7 < prelude.length; ++i7) {
-    const source = prelude[i7];
+  for (let i = 0;i < prelude.length; ++i) {
+    const source = prelude[i];
     switch (source[0]) {
       case "#":
         comment += (comment === "" ? "" : afterEmptyLine ? `
@@ -9202,8 +9183,8 @@ function parsePrelude(prelude) {
         afterEmptyLine = false;
         break;
       case "%":
-        if (prelude[i7 + 1]?.[0] !== "#")
-          i7 += 1;
+        if (prelude[i + 1]?.[0] !== "#")
+          i += 1;
         atComment = false;
         break;
       default:
@@ -9255,10 +9236,10 @@ ${cb}` : comment;
       }
     }
     if (afterDoc) {
-      for (let i7 = 0;i7 < this.errors.length; ++i7)
-        doc.errors.push(this.errors[i7]);
-      for (let i7 = 0;i7 < this.warnings.length; ++i7)
-        doc.warnings.push(this.warnings[i7]);
+      for (let i = 0;i < this.errors.length; ++i)
+        doc.errors.push(this.errors[i]);
+      for (let i = 0;i < this.warnings.length; ++i)
+        doc.warnings.push(this.warnings[i]);
     } else {
       doc.errors = this.errors;
       doc.warnings = this.warnings;
@@ -9393,15 +9374,15 @@ function _visit(path, item, visitor) {
   for (const field of ["key", "value"]) {
     const token = item[field];
     if (token && "items" in token) {
-      for (let i7 = 0;i7 < token.items.length; ++i7) {
-        const ci = _visit(Object.freeze(path.concat([[field, i7]])), token.items[i7], visitor);
+      for (let i = 0;i < token.items.length; ++i) {
+        const ci = _visit(Object.freeze(path.concat([[field, i]])), token.items[i], visitor);
         if (typeof ci === "number")
-          i7 = ci - 1;
+          i = ci - 1;
         else if (ci === BREAK2)
           return BREAK2;
         else if (ci === REMOVE2) {
-          token.items.splice(i7, 1);
-          i7 -= 1;
+          token.items.splice(i, 1);
+          i -= 1;
         }
       }
       if (typeof ctrl === "function" && field === "key")
@@ -9526,20 +9507,20 @@ class Lexer {
       next = yield* this.parseNext(next);
   }
   atLineEnd() {
-    let i7 = this.pos;
-    let ch = this.buffer[i7];
+    let i = this.pos;
+    let ch = this.buffer[i];
     while (ch === " " || ch === "\t")
-      ch = this.buffer[++i7];
+      ch = this.buffer[++i];
     if (!ch || ch === "#" || ch === `
 `)
       return true;
     if (ch === "\r")
-      return this.buffer[i7 + 1] === `
+      return this.buffer[i + 1] === `
 `;
     return false;
   }
-  charAt(n4) {
-    return this.buffer[this.pos + n4];
+  charAt(n) {
+    return this.buffer[this.pos + n];
   }
   continueScalar(offset) {
     let ch = this.buffer[offset];
@@ -9576,8 +9557,8 @@ class Lexer {
       end -= 1;
     return this.buffer.substring(this.pos, end);
   }
-  hasChars(n4) {
-    return this.pos + n4 <= this.buffer.length;
+  hasChars(n) {
+    return this.pos + n <= this.buffer.length;
   }
   setNext(state) {
     this.buffer = this.buffer.substring(this.pos);
@@ -9586,8 +9567,8 @@ class Lexer {
     this.next = state;
     return null;
   }
-  peek(n4) {
-    return this.buffer.substr(this.pos, n4);
+  peek(n) {
+    return this.buffer.substr(this.pos, n);
   }
   *parseNext(next) {
     switch (next) {
@@ -9636,8 +9617,8 @@ class Lexer {
         else
           break;
       }
-      const n4 = (yield* this.pushCount(dirEnd)) + (yield* this.pushSpaces(true));
-      yield* this.pushCount(line.length - n4);
+      const n = (yield* this.pushCount(dirEnd)) + (yield* this.pushSpaces(true));
+      yield* this.pushCount(line.length - n);
       this.pushNewline();
       return "stream";
     }
@@ -9657,12 +9638,12 @@ class Lexer {
     if (ch === "-" || ch === ".") {
       if (!this.atEnd && !this.hasChars(4))
         return this.setNext("line-start");
-      const s5 = this.peek(3);
-      if ((s5 === "---" || s5 === "...") && isEmpty(this.charAt(3))) {
+      const s = this.peek(3);
+      if ((s === "---" || s === "...") && isEmpty(this.charAt(3))) {
         yield* this.pushCount(3);
         this.indentValue = 0;
         this.indentNext = 0;
-        return s5 === "---" ? "doc" : "stream";
+        return s === "---" ? "doc" : "stream";
       }
     }
     this.indentValue = yield* this.pushSpaces(false);
@@ -9675,9 +9656,9 @@ class Lexer {
     if (!ch1 && !this.atEnd)
       return this.setNext("block-start");
     if ((ch0 === "-" || ch0 === "?" || ch0 === ":") && isEmpty(ch1)) {
-      const n4 = (yield* this.pushCount(1)) + (yield* this.pushSpaces(true));
+      const n = (yield* this.pushCount(1)) + (yield* this.pushSpaces(true));
       this.indentNext = this.indentValue + 1;
-      this.indentValue += n4;
+      this.indentValue += n;
       return "block-start";
     }
     return "doc";
@@ -9687,10 +9668,10 @@ class Lexer {
     const line = this.getLine();
     if (line === null)
       return this.setNext("doc");
-    let n4 = yield* this.pushIndicators();
-    switch (line[n4]) {
+    let n = yield* this.pushIndicators();
+    switch (line[n]) {
       case "#":
-        yield* this.pushCount(line.length - n4);
+        yield* this.pushCount(line.length - n);
       case undefined:
         yield* this.pushNewline();
         return yield* this.parseLineStart();
@@ -9712,9 +9693,9 @@ class Lexer {
         return yield* this.parseQuotedScalar();
       case "|":
       case ">":
-        n4 += yield* this.parseBlockScalarHeader();
-        n4 += yield* this.pushSpaces(true);
-        yield* this.pushCount(line.length - n4);
+        n += yield* this.parseBlockScalarHeader();
+        n += yield* this.pushSpaces(true);
+        yield* this.pushCount(line.length - n);
         yield* this.pushNewline();
         return yield* this.parseBlockScalar();
       default:
@@ -9745,18 +9726,18 @@ class Lexer {
         return yield* this.parseLineStart();
       }
     }
-    let n4 = 0;
-    while (line[n4] === ",") {
-      n4 += yield* this.pushCount(1);
-      n4 += yield* this.pushSpaces(true);
+    let n = 0;
+    while (line[n] === ",") {
+      n += yield* this.pushCount(1);
+      n += yield* this.pushSpaces(true);
       this.flowKey = false;
     }
-    n4 += yield* this.pushIndicators();
-    switch (line[n4]) {
+    n += yield* this.pushIndicators();
+    switch (line[n]) {
       case undefined:
         return "flow";
       case "#":
-        yield* this.pushCount(line.length - n4);
+        yield* this.pushCount(line.length - n);
         return "flow";
       case "{":
       case "[":
@@ -9799,10 +9780,10 @@ class Lexer {
         end = this.buffer.indexOf("'", end + 2);
     } else {
       while (end !== -1) {
-        let n4 = 0;
-        while (this.buffer[end - 1 - n4] === "\\")
-          n4 += 1;
-        if (n4 % 2 === 0)
+        let n = 0;
+        while (this.buffer[end - 1 - n] === "\\")
+          n += 1;
+        if (n % 2 === 0)
           break;
         end = this.buffer.indexOf('"', end + 1);
       }
@@ -9833,9 +9814,9 @@ class Lexer {
   *parseBlockScalarHeader() {
     this.blockScalarIndent = -1;
     this.blockScalarKeep = false;
-    let i7 = this.pos;
+    let i = this.pos;
     while (true) {
-      const ch = this.buffer[++i7];
+      const ch = this.buffer[++i];
       if (ch === "+")
         this.blockScalarKeep = true;
       else if (ch > "0" && ch <= "9")
@@ -9850,18 +9831,18 @@ class Lexer {
     let indent = 0;
     let ch;
     loop:
-      for (let i8 = this.pos;ch = this.buffer[i8]; ++i8) {
+      for (let i = this.pos;ch = this.buffer[i]; ++i) {
         switch (ch) {
           case " ":
             indent += 1;
             break;
           case `
 `:
-            nl = i8;
+            nl = i;
             indent = 0;
             break;
           case "\r": {
-            const next = this.buffer[i8 + 1];
+            const next = this.buffer[i + 1];
             if (!next && !this.atEnd)
               return this.setNext("block-scalar");
             if (next === `
@@ -9893,27 +9874,27 @@ class Lexer {
         nl = this.buffer.length;
       }
     }
-    let i7 = nl + 1;
-    ch = this.buffer[i7];
+    let i = nl + 1;
+    ch = this.buffer[i];
     while (ch === " ")
-      ch = this.buffer[++i7];
+      ch = this.buffer[++i];
     if (ch === "\t") {
       while (ch === "\t" || ch === " " || ch === "\r" || ch === `
 `)
-        ch = this.buffer[++i7];
-      nl = i7 - 1;
+        ch = this.buffer[++i];
+      nl = i - 1;
     } else if (!this.blockScalarKeep) {
       do {
-        let i8 = nl - 1;
-        let ch2 = this.buffer[i8];
-        if (ch2 === "\r")
-          ch2 = this.buffer[--i8];
-        const lastChar = i8;
-        while (ch2 === " ")
-          ch2 = this.buffer[--i8];
-        if (ch2 === `
-` && i8 >= this.pos && i8 + 1 + indent > lastChar)
-          nl = i8;
+        let i = nl - 1;
+        let ch = this.buffer[i];
+        if (ch === "\r")
+          ch = this.buffer[--i];
+        const lastChar = i;
+        while (ch === " ")
+          ch = this.buffer[--i];
+        if (ch === `
+` && i >= this.pos && i + 1 + indent > lastChar)
+          nl = i;
         else
           break;
       } while (true);
@@ -9925,39 +9906,39 @@ class Lexer {
   *parsePlainScalar() {
     const inFlow = this.flowLevel > 0;
     let end = this.pos - 1;
-    let i7 = this.pos - 1;
+    let i = this.pos - 1;
     let ch;
-    while (ch = this.buffer[++i7]) {
+    while (ch = this.buffer[++i]) {
       if (ch === ":") {
-        const next = this.buffer[i7 + 1];
+        const next = this.buffer[i + 1];
         if (isEmpty(next) || inFlow && flowIndicatorChars.has(next))
           break;
-        end = i7;
+        end = i;
       } else if (isEmpty(ch)) {
-        let next = this.buffer[i7 + 1];
+        let next = this.buffer[i + 1];
         if (ch === "\r") {
           if (next === `
 `) {
-            i7 += 1;
+            i += 1;
             ch = `
 `;
-            next = this.buffer[i7 + 1];
+            next = this.buffer[i + 1];
           } else
-            end = i7;
+            end = i;
         }
         if (next === "#" || inFlow && flowIndicatorChars.has(next))
           break;
         if (ch === `
 `) {
-          const cs = this.continueScalar(i7 + 1);
+          const cs = this.continueScalar(i + 1);
           if (cs === -1)
             break;
-          i7 = Math.max(i7, cs - 2);
+          i = Math.max(i, cs - 2);
         }
       } else {
         if (inFlow && flowIndicatorChars.has(ch))
           break;
-        end = i7;
+        end = i;
       }
     }
     if (!ch && !this.atEnd)
@@ -9966,36 +9947,36 @@ class Lexer {
     yield* this.pushToIndex(end + 1, true);
     return inFlow ? "flow" : "doc";
   }
-  *pushCount(n4) {
-    if (n4 > 0) {
-      yield this.buffer.substr(this.pos, n4);
-      this.pos += n4;
-      return n4;
+  *pushCount(n) {
+    if (n > 0) {
+      yield this.buffer.substr(this.pos, n);
+      this.pos += n;
+      return n;
     }
     return 0;
   }
-  *pushToIndex(i7, allowEmpty) {
-    const s5 = this.buffer.slice(this.pos, i7);
-    if (s5) {
-      yield s5;
-      this.pos += s5.length;
-      return s5.length;
+  *pushToIndex(i, allowEmpty) {
+    const s = this.buffer.slice(this.pos, i);
+    if (s) {
+      yield s;
+      this.pos += s.length;
+      return s.length;
     } else if (allowEmpty)
       yield "";
     return 0;
   }
   *pushIndicators() {
-    let n4 = 0;
+    let n = 0;
     loop:
       while (true) {
         switch (this.charAt(0)) {
           case "!":
-            n4 += yield* this.pushTag();
-            n4 += yield* this.pushSpaces(true);
+            n += yield* this.pushTag();
+            n += yield* this.pushSpaces(true);
             continue loop;
           case "&":
-            n4 += yield* this.pushUntil(isNotAnchorChar);
-            n4 += yield* this.pushSpaces(true);
+            n += yield* this.pushUntil(isNotAnchorChar);
+            n += yield* this.pushSpaces(true);
             continue loop;
           case "-":
           case "?":
@@ -10007,35 +9988,35 @@ class Lexer {
                 this.indentNext = this.indentValue + 1;
               else if (this.flowKey)
                 this.flowKey = false;
-              n4 += yield* this.pushCount(1);
-              n4 += yield* this.pushSpaces(true);
+              n += yield* this.pushCount(1);
+              n += yield* this.pushSpaces(true);
               continue loop;
             }
           }
         }
         break loop;
       }
-    return n4;
+    return n;
   }
   *pushTag() {
     if (this.charAt(1) === "<") {
-      let i7 = this.pos + 2;
-      let ch = this.buffer[i7];
+      let i = this.pos + 2;
+      let ch = this.buffer[i];
       while (!isEmpty(ch) && ch !== ">")
-        ch = this.buffer[++i7];
-      return yield* this.pushToIndex(ch === ">" ? i7 + 1 : i7, false);
+        ch = this.buffer[++i];
+      return yield* this.pushToIndex(ch === ">" ? i + 1 : i, false);
     } else {
-      let i7 = this.pos + 1;
-      let ch = this.buffer[i7];
+      let i = this.pos + 1;
+      let ch = this.buffer[i];
       while (ch) {
         if (tagChars.has(ch))
-          ch = this.buffer[++i7];
-        else if (ch === "%" && hexDigits.has(this.buffer[i7 + 1]) && hexDigits.has(this.buffer[i7 + 2])) {
-          ch = this.buffer[i7 += 3];
+          ch = this.buffer[++i];
+        else if (ch === "%" && hexDigits.has(this.buffer[i + 1]) && hexDigits.has(this.buffer[i + 2])) {
+          ch = this.buffer[i += 3];
         } else
           break;
       }
-      return yield* this.pushToIndex(i7, false);
+      return yield* this.pushToIndex(i, false);
     }
   }
   *pushNewline() {
@@ -10050,24 +10031,24 @@ class Lexer {
       return 0;
   }
   *pushSpaces(allowTabs) {
-    let i7 = this.pos - 1;
+    let i = this.pos - 1;
     let ch;
     do {
-      ch = this.buffer[++i7];
+      ch = this.buffer[++i];
     } while (ch === " " || allowTabs && ch === "\t");
-    const n4 = i7 - this.pos;
-    if (n4 > 0) {
-      yield this.buffer.substr(this.pos, n4);
-      this.pos = i7;
+    const n = i - this.pos;
+    if (n > 0) {
+      yield this.buffer.substr(this.pos, n);
+      this.pos = i;
     }
-    return n4;
+    return n;
   }
   *pushUntil(test) {
-    let i7 = this.pos;
-    let ch = this.buffer[i7];
+    let i = this.pos;
+    let ch = this.buffer[i];
     while (!test(ch))
-      ch = this.buffer[++i7];
-    return yield* this.pushToIndex(i7, false);
+      ch = this.buffer[++i];
+    return yield* this.pushToIndex(i, false);
   }
 }
 // node_modules/yaml/browser/dist/parse/line-counter.js
@@ -10096,20 +10077,20 @@ class LineCounter {
 }
 // node_modules/yaml/browser/dist/parse/parser.js
 function includesToken(list, type) {
-  for (let i7 = 0;i7 < list.length; ++i7)
-    if (list[i7].type === type)
+  for (let i = 0;i < list.length; ++i)
+    if (list[i].type === type)
       return true;
   return false;
 }
 function findNonEmptyIndex(list) {
-  for (let i7 = 0;i7 < list.length; ++i7) {
-    switch (list[i7].type) {
+  for (let i = 0;i < list.length; ++i) {
+    switch (list[i].type) {
       case "space":
       case "comment":
       case "newline":
         break;
       default:
-        return i7;
+        return i;
     }
   }
   return -1;
@@ -10143,10 +10124,10 @@ function getPrevProps(parent) {
 function getFirstKeyStartProps(prev) {
   if (prev.length === 0)
     return [];
-  let i7 = prev.length;
+  let i = prev.length;
   loop:
-    while (--i7 >= 0) {
-      switch (prev[i7].type) {
+    while (--i >= 0) {
+      switch (prev[i].type) {
         case "doc-start":
         case "explicit-key-ind":
         case "map-value-ind":
@@ -10155,15 +10136,15 @@ function getFirstKeyStartProps(prev) {
           break loop;
       }
     }
-  while (prev[++i7]?.type === "space") {}
-  return prev.splice(i7, prev.length);
+  while (prev[++i]?.type === "space") {}
+  return prev.splice(i, prev.length);
 }
 function arrayPushArray(target, source) {
   if (source.length < 1e5)
     Array.prototype.push.apply(target, source);
   else
-    for (let i7 = 0;i7 < source.length; ++i7)
-      target.push(source[i7]);
+    for (let i = 0;i < source.length; ++i)
+      target.push(source[i]);
 }
 function fixFlowSeqItems(fc) {
   if (fc.start.type === "flow-seq-start") {
@@ -10300,8 +10281,8 @@ class Parser {
     }
     yield* this.pop();
   }
-  peek(n4) {
-    return this.stack[this.stack.length - n4];
+  peek(n) {
+    return this.stack[this.stack.length - n];
   }
   *pop(error) {
     const token = error ?? this.stack.pop();
@@ -10449,14 +10430,14 @@ class Parser {
         delete scalar.end;
       } else
         sep = [this.sourceToken];
-      const map2 = {
+      const map = {
         type: "block-map",
         offset: scalar.offset,
         indent: scalar.indent,
         items: [{ start, key: scalar, sep }]
       };
       this.onKeyLine = true;
-      this.stack[this.stack.length - 1] = map2;
+      this.stack[this.stack.length - 1] = map;
     } else
       yield* this.lineEnd(scalar);
   }
@@ -10487,8 +10468,8 @@ class Parser {
         yield* this.step();
     }
   }
-  *blockMap(map2) {
-    const it = map2.items[map2.items.length - 1];
+  *blockMap(map) {
+    const it = map.items[map.items.length - 1];
     switch (this.type) {
       case "newline":
         this.onKeyLine = false;
@@ -10498,7 +10479,7 @@ class Parser {
           if (last?.type === "comment")
             end?.push(this.sourceToken);
           else
-            map2.items.push({ start: [this.sourceToken] });
+            map.items.push({ start: [this.sourceToken] });
         } else if (it.sep) {
           it.sep.push(this.sourceToken);
         } else {
@@ -10508,17 +10489,17 @@ class Parser {
       case "space":
       case "comment":
         if (it.value) {
-          map2.items.push({ start: [this.sourceToken] });
+          map.items.push({ start: [this.sourceToken] });
         } else if (it.sep) {
           it.sep.push(this.sourceToken);
         } else {
-          if (this.atIndentedComment(it.start, map2.indent)) {
-            const prev = map2.items[map2.items.length - 2];
+          if (this.atIndentedComment(it.start, map.indent)) {
+            const prev = map.items[map.items.length - 2];
             const end = prev?.value?.end;
             if (Array.isArray(end)) {
               arrayPushArray(end, it.start);
               end.push(this.sourceToken);
-              map2.items.pop();
+              map.items.pop();
               return;
             }
           }
@@ -10526,22 +10507,22 @@ class Parser {
         }
         return;
     }
-    if (this.indent >= map2.indent) {
-      const atMapIndent = !this.onKeyLine && this.indent === map2.indent;
+    if (this.indent >= map.indent) {
+      const atMapIndent = !this.onKeyLine && this.indent === map.indent;
       const atNextItem = atMapIndent && (it.sep || it.explicitKey) && this.type !== "seq-item-ind";
       let start = [];
       if (atNextItem && it.sep && !it.value) {
         const nl = [];
-        for (let i7 = 0;i7 < it.sep.length; ++i7) {
-          const st = it.sep[i7];
+        for (let i = 0;i < it.sep.length; ++i) {
+          const st = it.sep[i];
           switch (st.type) {
             case "newline":
-              nl.push(i7);
+              nl.push(i);
               break;
             case "space":
               break;
             case "comment":
-              if (st.indent > map2.indent)
+              if (st.indent > map.indent)
                 nl.length = 0;
               break;
             default:
@@ -10556,7 +10537,7 @@ class Parser {
         case "tag":
           if (atNextItem || it.value) {
             start.push(this.sourceToken);
-            map2.items.push({ start });
+            map.items.push({ start });
             this.onKeyLine = true;
           } else if (it.sep) {
             it.sep.push(this.sourceToken);
@@ -10570,7 +10551,7 @@ class Parser {
             it.explicitKey = true;
           } else if (atNextItem || it.value) {
             start.push(this.sourceToken);
-            map2.items.push({ start, explicitKey: true });
+            map.items.push({ start, explicitKey: true });
           } else {
             this.stack.push({
               type: "block-map",
@@ -10587,16 +10568,16 @@ class Parser {
               if (includesToken(it.start, "newline")) {
                 Object.assign(it, { key: null, sep: [this.sourceToken] });
               } else {
-                const start2 = getFirstKeyStartProps(it.start);
+                const start = getFirstKeyStartProps(it.start);
                 this.stack.push({
                   type: "block-map",
                   offset: this.offset,
                   indent: this.indent,
-                  items: [{ start: start2, key: null, sep: [this.sourceToken] }]
+                  items: [{ start, key: null, sep: [this.sourceToken] }]
                 });
               }
             } else if (it.value) {
-              map2.items.push({ start: [], key: null, sep: [this.sourceToken] });
+              map.items.push({ start: [], key: null, sep: [this.sourceToken] });
             } else if (includesToken(it.sep, "map-value-ind")) {
               this.stack.push({
                 type: "block-map",
@@ -10605,7 +10586,7 @@ class Parser {
                 items: [{ start, key: null, sep: [this.sourceToken] }]
               });
             } else if (isFlowToken(it.key) && !includesToken(it.sep, "newline")) {
-              const start2 = getFirstKeyStartProps(it.start);
+              const start = getFirstKeyStartProps(it.start);
               const key = it.key;
               const sep = it.sep;
               sep.push(this.sourceToken);
@@ -10615,7 +10596,7 @@ class Parser {
                 type: "block-map",
                 offset: this.offset,
                 indent: this.indent,
-                items: [{ start: start2, key, sep }]
+                items: [{ start, key, sep }]
               });
             } else if (start.length > 0) {
               it.sep = it.sep.concat(start, this.sourceToken);
@@ -10626,7 +10607,7 @@ class Parser {
             if (!it.sep) {
               Object.assign(it, { key: null, sep: [this.sourceToken] });
             } else if (it.value || atNextItem) {
-              map2.items.push({ start, key: null, sep: [this.sourceToken] });
+              map.items.push({ start, key: null, sep: [this.sourceToken] });
             } else if (includesToken(it.sep, "map-value-ind")) {
               this.stack.push({
                 type: "block-map",
@@ -10646,7 +10627,7 @@ class Parser {
         case "double-quoted-scalar": {
           const fs = this.flowScalar(this.type);
           if (atNextItem || it.value) {
-            map2.items.push({ start, key: fs, sep: [] });
+            map.items.push({ start, key: fs, sep: [] });
             this.onKeyLine = true;
           } else if (it.sep) {
             this.stack.push(fs);
@@ -10657,7 +10638,7 @@ class Parser {
           return;
         }
         default: {
-          const bv = this.startBlockValue(map2);
+          const bv = this.startBlockValue(map);
           if (bv) {
             if (bv.type === "block-seq") {
               if (!it.explicitKey && it.sep && !includesToken(it.sep, "newline")) {
@@ -10670,7 +10651,7 @@ class Parser {
                 return;
               }
             } else if (atMapIndent) {
-              map2.items.push({ start });
+              map.items.push({ start });
             }
             this.stack.push(bv);
             return;
@@ -10681,8 +10662,8 @@ class Parser {
     yield* this.pop();
     yield* this.step();
   }
-  *blockSequence(seq2) {
-    const it = seq2.items[seq2.items.length - 1];
+  *blockSequence(seq) {
+    const it = seq.items[seq.items.length - 1];
     switch (this.type) {
       case "newline":
         if (it.value) {
@@ -10691,22 +10672,22 @@ class Parser {
           if (last?.type === "comment")
             end?.push(this.sourceToken);
           else
-            seq2.items.push({ start: [this.sourceToken] });
+            seq.items.push({ start: [this.sourceToken] });
         } else
           it.start.push(this.sourceToken);
         return;
       case "space":
       case "comment":
         if (it.value)
-          seq2.items.push({ start: [this.sourceToken] });
+          seq.items.push({ start: [this.sourceToken] });
         else {
-          if (this.atIndentedComment(it.start, seq2.indent)) {
-            const prev = seq2.items[seq2.items.length - 2];
+          if (this.atIndentedComment(it.start, seq.indent)) {
+            const prev = seq.items[seq.items.length - 2];
             const end = prev?.value?.end;
             if (Array.isArray(end)) {
               arrayPushArray(end, it.start);
               end.push(this.sourceToken);
-              seq2.items.pop();
+              seq.items.pop();
               return;
             }
           }
@@ -10715,21 +10696,21 @@ class Parser {
         return;
       case "anchor":
       case "tag":
-        if (it.value || this.indent <= seq2.indent)
+        if (it.value || this.indent <= seq.indent)
           break;
         it.start.push(this.sourceToken);
         return;
       case "seq-item-ind":
-        if (this.indent !== seq2.indent)
+        if (this.indent !== seq.indent)
           break;
         if (it.value || includesToken(it.start, "seq-item-ind"))
-          seq2.items.push({ start: [this.sourceToken] });
+          seq.items.push({ start: [this.sourceToken] });
         else
           it.start.push(this.sourceToken);
         return;
     }
-    if (this.indent > seq2.indent) {
-      const bv = this.startBlockValue(seq2);
+    if (this.indent > seq.indent) {
+      const bv = this.startBlockValue(seq);
       if (bv) {
         this.stack.push(bv);
         return;
@@ -10811,14 +10792,14 @@ class Parser {
         fixFlowSeqItems(fc);
         const sep = fc.end.splice(1, fc.end.length);
         sep.push(this.sourceToken);
-        const map2 = {
+        const map = {
           type: "block-map",
           offset: fc.offset,
           indent: fc.indent,
           items: [{ start, key: fc, sep }]
         };
         this.onKeyLine = true;
-        this.stack[this.stack.length - 1] = map2;
+        this.stack[this.stack.length - 1] = map;
       } else {
         yield* this.lineEnd(fc);
       }
@@ -11032,7 +11013,7 @@ var audioFields = [
 ];
 function tuningSnapshot(options, audio) {
   const gateway = {};
-  for (const key of gatewayFields.filter((key2) => !["models", "max_tokens", "timeouts"].includes(key2)))
+  for (const key of gatewayFields.filter((key) => !["models", "max_tokens", "timeouts"].includes(key)))
     if (options[key] !== undefined)
       gateway[key] = options[key];
   for (const [key, suffix] of [
@@ -11067,8 +11048,8 @@ function parseTuning(text) {
     if (Object.keys(values).some((key) => !allowed.includes(key)))
       throw new Error("Unsupported tuning field / 不支持的调音字段");
     if (section === "audio") {
-      for (const [key, value2] of Object.entries(values)) {
-        if (["audio_muted", "night_mode"].includes(key) ? typeof value2 !== "boolean" : typeof value2 !== "number" || !Number.isFinite(value2) || value2 < 0 || value2 > 1)
+      for (const [key, value] of Object.entries(values)) {
+        if (["audio_muted", "night_mode"].includes(key) ? typeof value !== "boolean" : typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1)
           throw new Error("Invalid audio value: " + key);
       }
       result.audio = { ...values };
@@ -11120,46 +11101,46 @@ class VoiceHarnessSettings extends i4 {
     return this.language.startsWith("zh") ? zh : en;
   }
   render() {
-    const t5 = this.t.bind(this);
-    const groups2 = [
+    const t = this.t.bind(this);
+    const groups = [
       {
         id: "audio",
         icon: "mdi:tune-variant",
-        title: t5("Acoustic tuning", "声学调音"),
-        hint: t5("Scenes, cues & speech", "场景、提示音与播报")
+        title: t("Acoustic tuning", "声学调音"),
+        hint: t("Scenes, cues & speech", "场景、提示音与播报")
       },
       {
         id: "routing",
         icon: "mdi:source-branch",
-        title: t5("Models & routing", "大模型路由策略"),
-        hint: t5("Providers, models & API", "服务商、模型与 API")
+        title: t("Models & routing", "大模型路由策略"),
+        hint: t("Providers, models & API", "服务商、模型与 API")
       },
       {
         id: "pipeline",
         icon: "mdi:waveform",
-        title: t5("ASR / TTS & Wyoming", "ASR / TTS 与 Wyoming"),
-        hint: t5("From capture to playback", "从收音到播放")
+        title: t("ASR / TTS & Wyoming", "ASR / TTS 与 Wyoming"),
+        hint: t("From capture to playback", "从收音到播放")
       },
       {
         id: "system",
         icon: "mdi:database-outline",
-        title: t5("System & storage", "系统与存储策略"),
-        hint: t5("Retention & configuration", "保留周期与配置迁移")
+        title: t("System & storage", "系统与存储策略"),
+        hint: t("Retention & configuration", "保留周期与配置迁移")
       }
     ];
     return b2`
       <div class="section-head">
         <div>
-          <span class="eyebrow">VOICE HARNESS / ${t5("SETTINGS", "设置")}</span>
-          <h2>${t5("Make it feel like home.", "让声音，更懂你的生活。")}</h2>
+          <span class="eyebrow">VOICE HARNESS / ${t("SETTINGS", "设置")}</span>
+          <h2>${t("Make it feel like home.", "让声音，更懂你的生活。")}</h2>
           <p class="muted">
-            ${t5("Thoughtful defaults. A little room to make them yours.", "从恰好的默认值出发，把细节调到适合自己。")}
+            ${t("Thoughtful defaults. A little room to make them yours.", "从恰好的默认值出发，把细节调到适合自己。")}
           </p>
         </div>
       </div>
       <div class="layout">
-        <nav class="groups" aria-label=${t5("Settings groups", "设置分组")}>
-          ${groups2.map((group) => b2`<button
+        <nav class="groups" aria-label=${t("Settings groups", "设置分组")}>
+          ${groups.map((group) => b2`<button
             aria-current=${this.section === group.id ? "page" : "false"}
             @click=${() => {
       this.section = group.id;
@@ -11185,9 +11166,9 @@ class VoiceHarnessSettings extends i4 {
             <div class="section-head">
               <div>
                 <span class="eyebrow">LIVE CHECK</span>
-                <h3>${t5("Listen to the connection", "看见链路是否畅通")}</h3>
+                <h3>${t("Listen to the connection", "看见链路是否畅通")}</h3>
                 <p class="muted">
-                  ${t5("Probe from Home Assistant and measure the response.", "通过 Home Assistant 发起探测，记录本次响应。")}
+                  ${t("Probe from Home Assistant and measure the response.", "通过 Home Assistant 发起探测，记录本次响应。")}
                 </p>
               </div>
             </div>
@@ -11199,13 +11180,13 @@ class VoiceHarnessSettings extends i4 {
     ].map(([key, label]) => b2`<article>
                 <strong>${label}</strong>
                 <p class="muted" role="status">
-                  ${this.probeResult[key] || t5("Not measured", "尚未测量")}
+                  ${this.probeResult[key] || t("Not measured", "尚未测量")}
                 </p>
                 <button
                   ?disabled=${Boolean(this.probing)}
                   @click=${() => this.probe(key)}
                 >
-                  ${this.probing === key ? t5("Measuring…", "测量中…") : t5("Probe now", "立即探测")}
+                  ${this.probing === key ? t("Measuring…", "测量中…") : t("Probe now", "立即探测")}
                 </button>
               </article>`)}
             </div>
@@ -11221,15 +11202,15 @@ class VoiceHarnessSettings extends i4 {
               <div>
                 <span class="eyebrow">TAKE YOUR SETTINGS WITH YOU</span>
                 <h3>
-                  ${t5("Your tuning, wherever you need it", "把合适的调音，带到下一处")}
+                  ${t("Your tuning, wherever you need it", "把合适的调音，带到下一处")}
                 </h3>
                 <p class="muted">
-                  ${t5("JSON or YAML. Saved tuning values only; API keys stay in Home Assistant.", "支持 JSON 与 YAML。导出已保存的调音参数，API 密钥留在 Home Assistant。")}
+                  ${t("JSON or YAML. Saved tuning values only; API keys stay in Home Assistant.", "支持 JSON 与 YAML。导出已保存的调音参数，API 密钥留在 Home Assistant。")}
                 </p>
               </div>
             </div>
             ${this.entries.length > 1 ? b2`<label
-                    >${t5("Gateway", "网关")}<select
+                    >${t("Gateway", "网关")}<select
                       .value=${this.selectedEntry()}
                       @change=${(event) => {
       this.entryId = event.target.value;
@@ -11244,14 +11225,14 @@ class VoiceHarnessSettings extends i4 {
                 ?disabled=${this.busy || !this.entries.length}
                 @click=${() => this.export("json")}
               >
-                ↓ ${t5("Export JSON", "导出 JSON")}</button
+                ↓ ${t("Export JSON", "导出 JSON")}</button
               ><button
                 ?disabled=${this.busy || !this.entries.length}
                 @click=${() => this.export("yaml")}
               >
-                ↓ ${t5("Export YAML", "导出 YAML")}</button
+                ↓ ${t("Export YAML", "导出 YAML")}</button
               ><label class="import-button"
-                ><span>↑ ${t5("Import tuning", "导入调音配置")}</span
+                ><span>↑ ${t("Import tuning", "导入调音配置")}</span
                 ><input
                   type="file"
                   accept=".json,.yaml,.yml,application/json,application/yaml"
@@ -11260,14 +11241,14 @@ class VoiceHarnessSettings extends i4 {
               /></label>
             </div>
             ${this.pending ? b2`<div class="import-preview">
-                    <h3>${t5("Review imported values", "检查待导入参数")}</h3>
+                    <h3>${t("Review imported values", "检查待导入参数")}</h3>
                     <pre>${JSON.stringify(this.pending, null, 2)}</pre>
                     <button
                       class="primary"
                       ?disabled=${this.busy}
                       @click=${() => this.apply()}
                     >
-                      ${this.busy ? t5("Applying…", "应用中…") : t5("Apply these values", "应用这些参数")}</button
+                      ${this.busy ? t("Applying…", "应用中…") : t("Apply these values", "应用这些参数")}</button
                     ><button
                       class="quiet"
                       ?disabled=${this.busy}
@@ -11275,7 +11256,7 @@ class VoiceHarnessSettings extends i4 {
       this.pending = null;
     }}
                     >
-                      ${t5("Cancel", "取消")}
+                      ${t("Cancel", "取消")}
                     </button>
                   </div>` : A}
             ${this.error ? b2`<p class="error" role="alert">${this.error}</p>` : A}${this.message ? b2`<p class="message" role="status">${this.message}</p>` : A}
@@ -11708,7 +11689,7 @@ var shellStyles = `
   @media (prefers-reduced-motion:reduce) {.content {view-transition-name:none;} }
 `;
 export {
-  voiceSettingsRequest,
+  renderHarnessShell,
   resolveReplayPair,
-  renderHarnessShell
+  voiceSettingsRequest
 };

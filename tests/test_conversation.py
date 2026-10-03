@@ -274,7 +274,22 @@ def test_tool_events_are_limited_to_current_turn():
 def test_action_tool_detection():
     assert _is_action_tool("HassTurnOn")
     assert _is_action_tool("HassLightSet")
+    assert _is_action_tool("intent__HassTurnOn")
     assert not _is_action_tool("GetLiveContext")
+    assert not _is_action_tool("homeassistant__GetLiveContext")
+
+
+def test_namespaced_live_context_preserves_actual_ha_tool_name():
+    name = "homeassistant__GetLiveContext"
+    tools = [{"type": "function", "function": {"name": name}}]
+    assert _tool_choice_for_turn(
+        "卧室温度是多少", tools, force_tool_call=False, force_live_context=True
+    ) == {"type": "function", "function": {"name": name}}
+    assert _normalize_tool_args(name, {"area": "空气质量"}) == {}
+    calls = [llm.ToolInput(id="namespaced", tool_name=name, tool_args={})]
+    counts = {}
+    _record_tool_calls(calls, counts)
+    assert _duplicate_tool_reason(calls[0], counts) == "duplicate_live_context"
 
 
 def test_duplicate_tool_guard_suppresses_live_context_once_recorded():
@@ -1599,8 +1614,11 @@ async def test_device_state_loop_expands_scope_after_unrelated_observation(
     assert loop["outcome_verdict"]["target_covered"] is True
 
 
+@pytest.mark.parametrize(
+    "tool_name", ["GetLiveContext", "homeassistant__GetLiveContext"]
+)
 async def test_climate_temperature_read_uses_local_live_context_without_model(
-    hass, aioclient_mock, mock_config_entry
+    hass, aioclient_mock, mock_config_entry, tool_name
 ):
     aioclient_mock.get(
         MODELS_URL, json={"data": [{"id": "qwen/qwen3-next-80b-a3b-instruct"}]}
@@ -1619,10 +1637,10 @@ async def test_climate_temperature_read_uses_local_live_context_without_model(
         custom_serializer = None
 
         def __init__(self) -> None:
-            self.tools = [SimpleNamespace(name=LIVE_CONTEXT_TOOL_NAME)]
+            self.tools = [SimpleNamespace(name=tool_name)]
 
         async def async_call_tool(self, tool_input: llm.ToolInput):
-            assert tool_input.tool_name == LIVE_CONTEXT_TOOL_NAME
+            assert tool_input.tool_name == tool_name
             assert tool_input.tool_args == {"domain": "climate"}
             return {
                 "success": True,

@@ -94,9 +94,9 @@ function chip(content, tone = "muted", title = "") {
   return `<span class="chip ${escapeHtml(tone)}"${title ? ` title="${escapeHtml(title)}"` : ""}>${escapeHtml(content)}</span>`;
 }
 export {
-  iconButton,
-  icon,
-  chip,
+  attrs,
   button,
-  attrs
+  chip,
+  icon,
+  iconButton
 };

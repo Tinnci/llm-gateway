@@ -67,6 +67,7 @@ from .grounding import (
     GroundingResult,
     initial_grounding_result,
 )
+from .ha_tool_names import canonical_ha_tool_name
 from .history_policy import bound_model_messages, content_to_messages
 from .policy import should_force_search_in_voice_path, validate_tool_call
 from .providers import async_chat_completion_with_fallback
@@ -245,7 +246,7 @@ def _normalize_tool_args(
 ) -> dict[str, Any]:
     """Normalize model tool args before HA tool execution."""
     normalized = dict(args) if isinstance(args, dict) else {}
-    if tool_name == LIVE_CONTEXT_TOOL_NAME:
+    if canonical_ha_tool_name(tool_name) == LIVE_CONTEXT_TOOL_NAME:
         if normalized.get("name") == LIVE_CONTEXT_TOOL_NAME:
             normalized.pop("name", None)
         area = normalized.get("area")
@@ -297,7 +298,7 @@ def _normalize_live_context_hint(value: str) -> str:
 
 def _is_action_tool(tool_name: str) -> bool:
     """Return whether a built-in Assist tool changes Home Assistant state."""
-    return tool_name.startswith("Hass")
+    return canonical_ha_tool_name(tool_name).startswith("Hass")
 
 
 def _tool_choice_for_turn(  # noqa: PLR0913
@@ -312,8 +313,11 @@ def _tool_choice_for_turn(  # noqa: PLR0913
     """Return a narrow tool choice for turns that need deterministic grounding."""
     if force_tool_call:
         return "required"
-    if force_live_context and _has_tool(tools, LIVE_CONTEXT_TOOL_NAME):
-        return {"type": "function", "function": {"name": LIVE_CONTEXT_TOOL_NAME}}
+    if force_live_context:
+        for tool in tools or []:
+            name = _tool_name(tool)
+            if canonical_ha_tool_name(name) == LIVE_CONTEXT_TOOL_NAME:
+                return {"type": "function", "function": {"name": name}}
     if (
         require_grounding
         and should_force_search_in_voice_path(user_text, route_decision)
@@ -346,7 +350,9 @@ def _filter_visible_tools(
     allowed = set(route_decision.allowed_tools)
     if not allowed:
         return []
-    return [tool for tool in tools if _tool_name(tool) in allowed]
+    return [
+        tool for tool in tools if canonical_ha_tool_name(_tool_name(tool)) in allowed
+    ]
 
 
 def _is_live_context_task_type(task_type: str) -> bool:
@@ -397,10 +403,19 @@ def _ensure_sentence(text: str) -> str:
 
 
 def _chat_log_has_tool(chat_log: conversation.ChatLog, tool_name: str) -> bool:
+    return _chat_log_tool_name(chat_log, tool_name) is not None
+
+
+def _chat_log_tool_name(chat_log: conversation.ChatLog, tool_name: str) -> str | None:
+    """Resolve a policy name to the exact name advertised by this API instance."""
     llm_api = getattr(chat_log, "llm_api", None)
-    return any(
-        getattr(tool, "name", "") == tool_name
-        for tool in getattr(llm_api, "tools", ()) or ()
+    return next(
+        (
+            name
+            for tool in getattr(llm_api, "tools", ()) or ()
+            if canonical_ha_tool_name(name := getattr(tool, "name", "")) == tool_name
+        ),
+        None,
     )
 
 
@@ -483,8 +498,8 @@ def _local_live_context_metric(normalized: str) -> str:
 
 def _tool_call_fingerprint(tool_call: llm.ToolInput) -> tuple[str, str]:
     """Return a stable per-turn fingerprint for duplicate tool suppression."""
-    if tool_call.tool_name == LIVE_CONTEXT_TOOL_NAME:
-        return (tool_call.tool_name, "*")
+    if canonical_ha_tool_name(tool_call.tool_name) == LIVE_CONTEXT_TOOL_NAME:
+        return (LIVE_CONTEXT_TOOL_NAME, "*")
     return (
         tool_call.tool_name,
         json.dumps(
@@ -509,7 +524,7 @@ def _duplicate_tool_reason(
         < SAME_TOOL_SAME_ARGS_LIMIT
     ):
         return None
-    if tool_call.tool_name == LIVE_CONTEXT_TOOL_NAME:
+    if canonical_ha_tool_name(tool_call.tool_name) == LIVE_CONTEXT_TOOL_NAME:
         return "duplicate_live_context"
     if tool_call.tool_name == SEARCH_TOOL_NAME:
         return "duplicate_search"
@@ -1208,7 +1223,8 @@ class LLMGatewayConversationEntity(
         tool_args: dict[str, Any],
     ) -> dict[str, Any]:
         """Execute one Harness-owned live-context step through the HA tool seam."""
-        if not _chat_log_has_tool(chat_log, LIVE_CONTEXT_TOOL_NAME):
+        tool_name = _chat_log_tool_name(chat_log, LIVE_CONTEXT_TOOL_NAME)
+        if tool_name is None:
             return {
                 "error": "missing_GetLiveContext_tool",
                 "code": "tool_unavailable",
@@ -1216,7 +1232,7 @@ class LLMGatewayConversationEntity(
             }
         tool_call = llm.ToolInput(
             id=ulid.ulid_now(),
-            tool_name=LIVE_CONTEXT_TOOL_NAME,
+            tool_name=tool_name,
             tool_args=tool_args,
         )
         try:
@@ -2405,7 +2421,8 @@ class LLMGatewayConversationEntity(
                 )
                 if (
                     _is_live_context_task_type(first_response.task_type)
-                    and tool_result.tool_name == LIVE_CONTEXT_TOOL_NAME
+                    and canonical_ha_tool_name(tool_result.tool_name)
+                    == LIVE_CONTEXT_TOOL_NAME
                     and "error" not in result
                 ):
                     force_final = True

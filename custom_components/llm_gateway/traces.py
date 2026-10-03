@@ -23,6 +23,7 @@ from .const import (
     RECOMMENDED_TRACE_MAX_RUNS,
     RECOMMENDED_TRACE_RETENTION_HOURS,
 )
+from .ha_tool_names import canonical_ha_tool_name
 from .observability import RunQuery, query_runs
 from .satellite_diagnostics import (
     SATELLITE_DIAGNOSTIC_SNAPSHOT_ENTITY_ID,
@@ -1450,12 +1451,14 @@ def _weather_context_path(
     live_context_calls = [
         tool
         for tool in tools
-        if tool.get("phase") == "call" and tool.get("name") == "GetLiveContext"
+        if tool.get("phase") == "call"
+        and canonical_ha_tool_name(str(tool.get("name") or "")) == "GetLiveContext"
     ]
     live_context_results = [
         tool
         for tool in tools
-        if tool.get("phase") == "result" and tool.get("name") == "GetLiveContext"
+        if tool.get("phase") == "result"
+        and canonical_ha_tool_name(str(tool.get("name") or "")) == "GetLiveContext"
     ]
     stages = {str(span.get("stage") or "") for span in timeline_spans}
     suppressed_reasons = [
