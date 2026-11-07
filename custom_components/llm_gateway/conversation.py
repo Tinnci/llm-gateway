@@ -1243,7 +1243,7 @@ class LLMGatewayConversationEntity(
                     tool_calls=[tool_call],
                 )
             ):
-                result = tool_result.tool_result
+                result = tool_result.result.data
                 return (
                     dict(result)
                     if isinstance(result, dict)
@@ -2402,27 +2402,30 @@ class LLMGatewayConversationEntity(
                     return provider_runs
                 _record_tool_calls(content.tool_calls, tool_counts)
             async for tool_result in chat_log.async_add_assistant_content(content):
-                result = tool_result.tool_result
+                result = tool_result.result.data
                 if _is_action_tool(tool_result.tool_name):
-                    force_tool_call = "error" in result
+                    force_tool_call = tool_result.result.error or "error" in result
                 LOGGER.info(
                     "Tool result iteration=%d name=%s success=%s error=%s",
                     iteration,
                     tool_result.tool_name,
-                    "error" not in result,
+                    not tool_result.result.error and "error" not in result,
                     result.get("error", "none"),
                 )
                 self._mark_run(
                     runtime,
                     run_id,
                     "tool_result",
-                    status="error" if "error" in result else "ok",
+                    status="error"
+                    if tool_result.result.error or "error" in result
+                    else "ok",
                     attrs={"name": tool_result.tool_name, "iteration": iteration},
                 )
                 if (
                     _is_live_context_task_type(first_response.task_type)
                     and canonical_ha_tool_name(tool_result.tool_name)
                     == LIVE_CONTEXT_TOOL_NAME
+                    and not tool_result.result.error
                     and "error" not in result
                 ):
                     force_final = True
@@ -2486,7 +2489,7 @@ class LLMGatewayConversationEntity(
                             agent_id=self.entity_id,
                             tool_call_id=tool_call.id,
                             tool_name=tool_call.tool_name,
-                            tool_result=result,
+                            result=llm.ToolResult(data=result, error="error" in result),
                         )
                     )
 
@@ -2698,7 +2701,7 @@ def _search_results_from_content(
     for item in content:
         if item.role != "tool_result" or item.tool_name != SEARCH_TOOL_NAME:
             continue
-        result = item.tool_result
+        result = item.result.data
         if isinstance(result, dict):
             results.append(result)
     return results
@@ -2724,13 +2727,15 @@ def _tool_events_from_content(
                 ]
             )
         elif item.role == "tool_result":
-            result = item.tool_result if isinstance(item.tool_result, dict) else {}
+            result = item.result.data if isinstance(item.result.data, dict) else {}
             events.append(
                 {
                     "phase": "result",
                     "tool_call_id": item.tool_call_id,
                     "name": item.tool_name,
-                    "status": "error" if "error" in result else "ok",
+                    "status": "error"
+                    if item.result.error or "error" in result
+                    else "ok",
                     "error": str(result.get("error") or ""),
                     "result": result,
                 }

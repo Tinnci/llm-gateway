@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from homeassistant.helpers.llm import ToolResult
+
 from custom_components.llm_gateway.history_policy import (
     bound_model_messages,
     content_to_messages,
@@ -23,7 +25,7 @@ class _Item:
     content: str | None = None
     tool_calls: list[_Call] | None = None
     tool_call_id: str | None = None
-    tool_result: dict | None = None
+    result: ToolResult | None = None
 
 
 def _conversation(turns: int):
@@ -37,7 +39,7 @@ def _conversation(turns: int):
                 _Item(
                     "tool_result",
                     tool_call_id="c1",
-                    tool_result={"ok": True},
+                    result=ToolResult(data={"ok": True}),
                 )
             )
         items.append(_Item("assistant", f"a{i}"))

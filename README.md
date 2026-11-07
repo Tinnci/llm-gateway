@@ -2,6 +2,9 @@
 
 Use OpenAI-compatible models as a routed Home Assistant conversation agent.
 
+Version 0.3.57 requires Home Assistant 2026.10.4 or newer and uses its structured
+LLM tool-result API.
+
 LLM Gateway provides model routing, Home Assistant tool policy, web search,
 short memory, bounded traces, and an admin Voice Harness.
 

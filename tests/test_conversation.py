@@ -141,7 +141,7 @@ def test_content_to_messages_roundtrip():
             agent_id="a",
             tool_call_id="42",
             tool_name="t",
-            tool_result={"ok": True},
+            result=llm.ToolResult(data={"ok": True}),
         ),
     ]
     messages = _content_to_messages(content)
@@ -262,7 +262,7 @@ def test_tool_events_are_limited_to_current_turn():
             agent_id="a",
             tool_call_id="old-live",
             tool_name=LIVE_CONTEXT_TOOL_NAME,
-            tool_result={"error": "old failure"},
+            result=llm.ToolResult(data={"error": "old failure"}, error=True),
         ),
         conversation.UserContent(content="你能看到哪些设备？"),
         conversation.AssistantContent(agent_id="a", content="我能看到设备。"),
@@ -391,15 +391,17 @@ async def test_async_grounding_for_turn_uses_cheap_canonical_evidence():
             agent_id="a",
             tool_call_id="search-1",
             tool_name="search_web",
-            tool_result={
-                "source_candidates": ["诗经", "关雎"],
-                "results": [
-                    {
-                        "title": "关雎原文翻译",
-                        "content": "《关雎》是《诗经·周南》第一篇。",
-                    }
-                ],
-            },
+            result=llm.ToolResult(
+                data={
+                    "source_candidates": ["诗经", "关雎"],
+                    "results": [
+                        {
+                            "title": "关雎原文翻译",
+                            "content": "《关雎》是《诗经·周南》第一篇。",
+                        }
+                    ],
+                }
+            ),
         )
     ]
     runtime = SimpleNamespace(
@@ -444,10 +446,12 @@ async def test_async_grounding_for_turn_does_not_call_deep_verifier_without_evid
             agent_id="a",
             tool_call_id="search-1",
             tool_name="search_web",
-            tool_result={
-                "source_candidates": ["已凉", "诗经", "禽经", "关雎"],
-                "results": [],
-            },
+            result=llm.ToolResult(
+                data={
+                    "source_candidates": ["已凉", "诗经", "禽经", "关雎"],
+                    "results": [],
+                }
+            ),
         )
     ]
     runtime = SimpleNamespace(session=object(), client=object(), provider_selector=None)
@@ -1430,7 +1434,7 @@ async def test_home_state_uses_local_live_context_without_model(
         async def async_call_tool(self, tool_input: llm.ToolInput):
             assert tool_input.tool_name == LIVE_CONTEXT_TOOL_NAME
             assert tool_input.tool_args == {"domain": "sensor", "area": "卧室"}
-            return LIVE_CONTEXT_RESULT
+            return llm.ToolResult(data=LIVE_CONTEXT_RESULT)
 
     async def provide_live_context_api(
         self,
@@ -1495,16 +1499,18 @@ async def test_device_state_uses_targeted_harness_loop_without_model(
 
         async def async_call_tool(self, tool_input: llm.ToolInput):
             assert tool_input.tool_args == {"domain": "fan"}
-            return {
-                "success": True,
-                "result": (
-                    "Live Context:\n"
-                    "- names: 米家循环扇 风扇\n"
-                    "  domain: fan\n"
-                    "  state: on\n"
-                    "  areas: 客厅\n"
-                ),
-            }
+            return llm.ToolResult(
+                data={
+                    "success": True,
+                    "result": (
+                        "Live Context:\n"
+                        "- names: 米家循环扇 风扇\n"
+                        "  domain: fan\n"
+                        "  state: on\n"
+                        "  areas: 客厅\n"
+                    ),
+                }
+            )
 
     async def provide_live_context_api(self, *_args: object, **_kwargs: object) -> None:
         self.llm_api = FakeLiveContextApi()
@@ -1564,19 +1570,24 @@ async def test_device_state_loop_expands_scope_after_unrelated_observation(
         async def async_call_tool(self, tool_input: llm.ToolInput):
             tool_args.append(tool_input.tool_args)
             if len(tool_args) == 1:
-                return {
+                return llm.ToolResult(
+                    data={
+                        "success": True,
+                        "result": (
+                            "Live Context:\n- names: 温度\n"
+                            "  domain: sensor\n  state: 26\n"
+                        ),
+                    }
+                )
+            return llm.ToolResult(
+                data={
                     "success": True,
                     "result": (
-                        "Live Context:\n- names: 温度\n  domain: sensor\n  state: 26\n"
+                        "Live Context:\n- names: 米家循环扇 风扇\n"
+                        "  domain: fan\n  state: off\n  areas: 卧室\n"
                     ),
                 }
-            return {
-                "success": True,
-                "result": (
-                    "Live Context:\n- names: 米家循环扇 风扇\n"
-                    "  domain: fan\n  state: off\n  areas: 卧室\n"
-                ),
-            }
+            )
 
     async def provide_live_context_api(self, *_args: object, **_kwargs: object) -> None:
         self.llm_api = FakeLiveContextApi()
@@ -1642,19 +1653,21 @@ async def test_climate_temperature_read_uses_local_live_context_without_model(
         async def async_call_tool(self, tool_input: llm.ToolInput):
             assert tool_input.tool_name == tool_name
             assert tool_input.tool_args == {"domain": "climate"}
-            return {
-                "success": True,
-                "result": (
-                    "Live Context:\n"
-                    "- names: 卧室空调\n"
-                    "  domain: climate\n"
-                    "  state: cool\n"
-                    "  areas: 卧室\n"
-                    "  attributes:\n"
-                    "    current_temperature: 27.8\n"
-                    "    temperature: 25.5\n"
-                ),
-            }
+            return llm.ToolResult(
+                data={
+                    "success": True,
+                    "result": (
+                        "Live Context:\n"
+                        "- names: 卧室空调\n"
+                        "  domain: climate\n"
+                        "  state: cool\n"
+                        "  areas: 卧室\n"
+                        "  attributes:\n"
+                        "    current_temperature: 27.8\n"
+                        "    temperature: 25.5\n"
+                    ),
+                }
+            )
 
     async def provide_live_context_api(
         self,
@@ -1722,7 +1735,7 @@ async def test_multi_intent_inventory_and_temperature_answers_both_subtasks(
         async def async_call_tool(self, tool_input: llm.ToolInput):
             assert tool_input.tool_name == LIVE_CONTEXT_TOOL_NAME
             live_calls.append(dict(tool_input.tool_args))
-            return LIVE_CONTEXT_RESULT
+            return llm.ToolResult(data=LIVE_CONTEXT_RESULT)
 
     async def provide_live_context_api(
         self,
@@ -1800,7 +1813,7 @@ async def test_multi_intent_temperature_and_humidity_answers_both_metrics(
 
         async def async_call_tool(self, tool_input: llm.ToolInput):
             assert tool_input.tool_name == LIVE_CONTEXT_TOOL_NAME
-            return LIVE_CONTEXT_RESULT
+            return llm.ToolResult(data=LIVE_CONTEXT_RESULT)
 
     async def provide_live_context_api(
         self,

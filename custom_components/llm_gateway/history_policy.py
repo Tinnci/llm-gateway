@@ -60,7 +60,7 @@ def content_to_messages(content: list[Any]) -> list[dict[str, Any]]:
                 {
                     "role": "tool",
                     "tool_call_id": item.tool_call_id,
-                    "content": json_dumps(item.tool_result),
+                    "content": json_dumps(item.result.data),
                 }
             )
     return messages

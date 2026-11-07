@@ -121,7 +121,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ha-version: ["2026.6.3", "2026.9.4"]
+        ha-version: ["2026.10.4"]
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Install declared requirements and import platforms
