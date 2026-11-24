@@ -71,10 +71,10 @@ ROUTING_MODES = (
     ROUTING_MODE_DEEP,
 )
 
-RECOMMENDED_FAST_MODEL = "nvidia/nemotron-3-nano-30b-a3b"
-RECOMMENDED_MID_MODEL = "nvidia/nemotron-3-nano-30b-a3b"
-RECOMMENDED_DEEP_MODEL = "nvidia/nemotron-3-super-120b-a12b"
-RECOMMENDED_DEEP_FALLBACK_MODEL = "nvidia/llama-3_3-nemotron-super-49b-v1"
+RECOMMENDED_FAST_MODEL = "nvidia/nemotron-3.5-lightning-30b-a3b"
+RECOMMENDED_MID_MODEL = "nvidia/nemotron-3.5-super-vl-120b-a12b"
+RECOMMENDED_DEEP_MODEL = "nvidia/nemotron-3.5-super-vl-120b-a12b"
+RECOMMENDED_DEEP_FALLBACK_MODEL = "nvidia/nemotron-3.5-lightning-30b-a3b"
 RECOMMENDED_CHAT_MODEL = RECOMMENDED_FAST_MODEL
 RECOMMENDED_MAX_TOKENS = 1024
 RECOMMENDED_FAST_MAX_TOKENS = 512

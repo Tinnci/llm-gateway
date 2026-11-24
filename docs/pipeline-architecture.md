@@ -33,9 +33,9 @@ LLM Gateway uses three route classes:
 
 The bundled editable model examples are:
 
-- Fast: `nvidia/nemotron-3-nano-30b-a3b`
-- Mid: `nvidia/nemotron-3-nano-30b-a3b`
-- Deep: `nvidia/nemotron-3-super-120b-a12b`
+- Fast: `nvidia/nemotron-3.5-lightning-30b-a3b`
+- Mid: `nvidia/nemotron-3.5-super-vl-120b-a12b`
+- Deep: `nvidia/nemotron-3.5-super-vl-120b-a12b`
 
 These are examples, not a provider requirement. Legacy `chat_model`,
 `max_tokens`, `chat_timeout`, and `extra_body` remain fallbacks for the Fast
