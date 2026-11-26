@@ -6,8 +6,8 @@ readme = "README.md"
 requires-python = ">=3.14.2,<3.15"
 license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
 dependencies = [
-    "mistune>=3.3.4,<4",
-    "voluptuous-openapi>=0.3.0,<0.5",
+    "mistune>=3.4.0,<4",
+    "voluptuous-openapi>=0.4.1,<0.5",
 ]
 
 [tool.uv]
@@ -22,12 +22,12 @@ override-dependencies = [
 [dependency-groups]
 dev = [
     # Match the optional conversation component requirements of stable HA.
-    "gazetteer-matcher==1.1.0",
+    "gazetteer-matcher==1.2.0",
     "hassil==3.12.1",
-    "home-assistant-intents==2026.10.6",
-    "homeassistant==2026.10.4",
+    "home-assistant-intents==2026.10.27",
+    "homeassistant==2026.11.2",
     "pytest-homeassistant-custom-component==0.13.375",
-    "ruff==0.16.10",
+    "ruff==0.17.6",
 ]
 
 [tool.pytest.ini_options]
