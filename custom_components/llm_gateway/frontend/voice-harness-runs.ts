@@ -689,6 +689,8 @@ export class VoiceHarnessRuns extends LitElement {
         display: flex;
         gap: 4px;
         flex-wrap: wrap;
+        max-width: 100%;
+        overflow-x: auto;
       }
       .filter {
         border: 0;
@@ -696,6 +698,8 @@ export class VoiceHarnessRuns extends LitElement {
         padding: 10px 14px;
         border-radius: 999px;
         color: var(--vh-muted);
+        white-space: nowrap;
+        flex-shrink: 0;
       }
       [aria-pressed="true"] {
         background: var(--vh-soft);
@@ -735,6 +739,7 @@ export class VoiceHarnessRuns extends LitElement {
         border: 0;
         border-radius: 14px;
         padding: 22px 8px;
+        white-space: normal;
       }
       .identity {
         min-width: 0;

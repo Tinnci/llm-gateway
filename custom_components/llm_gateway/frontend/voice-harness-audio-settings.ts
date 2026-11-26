@@ -329,7 +329,7 @@ export class VoiceHarnessAudioSettings extends LitElement {
     :host { display: block; container-type: inline-size; color: var(--primary-text-color, #213b3b); --accent: var(--primary-color, #257a70); --surface: var(--card-background-color, #fff); --muted: var(--secondary-text-color, #637773); }
     * { box-sizing: border-box; }
     section { background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 7%, var(--surface)), var(--surface) 45%); border: 1px solid var(--divider-color, #dfe7e3); border-radius: 26px; padding: 26px; }
-    header { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+    header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 20px; }
     .eyebrow { color: var(--muted); font-size: 11px; letter-spacing: .14em; }
     h2 { font-size: 27px; font-weight: 550; margin: 7px 0 8px; letter-spacing: -.03em; }
     h3 { font-size: 14px; font-weight: 550; margin: 0; }
@@ -339,23 +339,23 @@ export class VoiceHarnessAudioSettings extends LitElement {
     p { color: var(--muted); font-size: 12px; line-height: 1.6; margin: 0; }
     .profile { color: var(--muted); font-size: 11px; text-align: right; white-space: nowrap; }
     .profile strong { display: block; color: var(--primary-text-color, #213b3b); font-size: 30px; font-weight: 450; font-variant-numeric: tabular-nums; }
-    button { font: inherit; font-size: 13px; border: 1px solid var(--divider-color, #d6e2de); background: transparent; color: inherit; border-radius: 14px; min-height: 44px; min-width: 44px; padding: 10px 14px; cursor: pointer; transition: background .18s, transform .18s; touch-action: manipulation; }
+    button { font: inherit; font-size: 13px; border: 1px solid var(--divider-color, #d6e2de); background: transparent; color: inherit; border-radius: 14px; min-height: 44px; min-width: 44px; padding: 10px 14px; cursor: pointer; transition: background .18s, transform .18s; touch-action: manipulation; white-space: nowrap; }
     button:hover:enabled { background: color-mix(in srgb, var(--accent) 9%, transparent); }
     button:active:enabled { transform: scale(.98); }
     button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
     button:disabled { opacity: .45; cursor: default; }
     button[aria-pressed=true] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
     .toggles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 24px; }
-    .capture { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; font-size: 12px; color: var(--muted); }
+    .capture { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; font-size: 12px; color: var(--muted); }
     .capture > span::before { content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 8px; background: currentColor; border-radius: 50%; }
     .capture .listening { color: var(--accent); }
     .capture .listening::before { animation: listen 1.2s ease-in-out infinite alternate; }
     .capture button { font-size: 12px; padding: 8px 10px; border-color: transparent; flex-shrink: 0; }
     .explanation { margin-top: 3px; font-size: 11px; }
-    .section-label { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 26px 0 12px; }
+    .section-label { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; margin: 26px 0 12px; }
     .section-label > span { font-size: 12px; color: var(--muted); }
-    .scenes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-    .scenes button { text-align: left; padding: 14px; }
+    .scenes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr)); gap: 10px; }
+    .scenes button { text-align: left; padding: 14px; white-space: normal; }
     .scenes strong { display: block; font-size: 14px; font-weight: 550; }
     .scenes span { display: block; margin-top: 6px; font-size: 11px; color: var(--muted); line-height: 1.4; }
     .groups { display: grid; gap: 20px; margin-top: 28px; }

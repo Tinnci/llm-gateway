@@ -896,7 +896,7 @@ class VoiceHarnessAudioSettings extends i4 {
     :host { display: block; container-type: inline-size; color: var(--primary-text-color, #213b3b); --accent: var(--primary-color, #257a70); --surface: var(--card-background-color, #fff); --muted: var(--secondary-text-color, #637773); }
     * { box-sizing: border-box; }
     section { background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 7%, var(--surface)), var(--surface) 45%); border: 1px solid var(--divider-color, #dfe7e3); border-radius: 26px; padding: 26px; }
-    header { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+    header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 20px; }
     .eyebrow { color: var(--muted); font-size: 11px; letter-spacing: .14em; }
     h2 { font-size: 27px; font-weight: 550; margin: 7px 0 8px; letter-spacing: -.03em; }
     h3 { font-size: 14px; font-weight: 550; margin: 0; }
@@ -906,23 +906,23 @@ class VoiceHarnessAudioSettings extends i4 {
     p { color: var(--muted); font-size: 12px; line-height: 1.6; margin: 0; }
     .profile { color: var(--muted); font-size: 11px; text-align: right; white-space: nowrap; }
     .profile strong { display: block; color: var(--primary-text-color, #213b3b); font-size: 30px; font-weight: 450; font-variant-numeric: tabular-nums; }
-    button { font: inherit; font-size: 13px; border: 1px solid var(--divider-color, #d6e2de); background: transparent; color: inherit; border-radius: 14px; min-height: 44px; min-width: 44px; padding: 10px 14px; cursor: pointer; transition: background .18s, transform .18s; touch-action: manipulation; }
+    button { font: inherit; font-size: 13px; border: 1px solid var(--divider-color, #d6e2de); background: transparent; color: inherit; border-radius: 14px; min-height: 44px; min-width: 44px; padding: 10px 14px; cursor: pointer; transition: background .18s, transform .18s; touch-action: manipulation; white-space: nowrap; }
     button:hover:enabled { background: color-mix(in srgb, var(--accent) 9%, transparent); }
     button:active:enabled { transform: scale(.98); }
     button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
     button:disabled { opacity: .45; cursor: default; }
     button[aria-pressed=true] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
     .toggles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 24px; }
-    .capture { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; font-size: 12px; color: var(--muted); }
+    .capture { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; font-size: 12px; color: var(--muted); }
     .capture > span::before { content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 8px; background: currentColor; border-radius: 50%; }
     .capture .listening { color: var(--accent); }
     .capture .listening::before { animation: listen 1.2s ease-in-out infinite alternate; }
     .capture button { font-size: 12px; padding: 8px 10px; border-color: transparent; flex-shrink: 0; }
     .explanation { margin-top: 3px; font-size: 11px; }
-    .section-label { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 26px 0 12px; }
+    .section-label { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; margin: 26px 0 12px; }
     .section-label > span { font-size: 12px; color: var(--muted); }
-    .scenes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-    .scenes button { text-align: left; padding: 14px; }
+    .scenes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr)); gap: 10px; }
+    .scenes button { text-align: left; padding: 14px; white-space: normal; }
     .scenes strong { display: block; font-size: 14px; font-weight: 550; }
     .scenes span { display: block; margin-top: 6px; font-size: 11px; color: var(--muted); line-height: 1.4; }
     .groups { display: grid; gap: 20px; margin-top: 28px; }
@@ -1063,6 +1063,7 @@ var harnessButtonStyles = i`
     justify-content: center;
     gap: 8px;
     font-weight: 550;
+    white-space: nowrap;
     transition:
       background 180ms,
       transform 180ms var(--vh-ease),
@@ -1137,9 +1138,10 @@ var harnessSurfaceStyles = i`
   }
   .section-head {
     display: flex;
+    flex-wrap: wrap;
     justify-content: space-between;
     align-items: center;
-    gap: 16px;
+    gap: 10px 16px;
     margin-bottom: 20px;
   }
   .section-head > div {
@@ -1323,6 +1325,12 @@ class VoiceHarnessNavigation extends i4 {
         min-width: 0;
         overflow: hidden;
         text-overflow: ellipsis;
+      }
+      @media (max-width: 720px) {
+        button {
+          padding: 0 8px;
+          gap: 5px;
+        }
       }
       @media (max-width: 560px) {
         button {
@@ -1851,7 +1859,11 @@ class VoiceHarnessOverview extends i4 {
           <div class="reply"><span class="eyebrow">${t("THE REPLY", "系统的回应")}</span>
             <p>${facts?.reply || (latest ? t("The reply has not been recorded yet.", "暂未记录到回复。") : t("Speak as you normally would.", "像平常一样开口就好。"))}</p>
           </div>
-          <button class="quiet" @click=${() => this.navigate("runs")}>${t("Conversation records", "查看对话记录")} <ha-icon icon="mdi:arrow-top-right"></ha-icon></button>
+          <div class="quick-actions">
+            <button class="quiet" @click=${() => this.navigate("runs")}>${t("Conversation records", "查看对话记录")} <ha-icon icon="mdi:arrow-top-right"></ha-icon></button>
+            <button class="quiet" @click=${() => this.navigate("test")}>${t("Test a phrase", "测试一句话")} <ha-icon icon="mdi:flask-outline"></ha-icon></button>
+            <button class="quiet" @click=${() => this.navigate("settings")}>${t("Voice settings", "语音设置")} <ha-icon icon="mdi:tune-variant"></ha-icon></button>
+          </div>
         </section>
         <section class="surface reality" aria-label=${t("Result and next step", "结果与下一步")}>
           <span class="eyebrow">${t("WHAT HAPPENED", "实际结果")}</span>
@@ -1904,26 +1916,27 @@ class VoiceHarnessOverview extends i4 {
     .conversation { padding: 32px; background: radial-gradient(ellipse at top left, color-mix(in srgb, var(--vh-accent) 6%, transparent), transparent 70%), var(--vh-surface); }
     .conversation .section-head { align-items: center; }
     time { font-size: 12px; color: var(--vh-muted); font-variant-numeric: tabular-nums; }
-    .utterance { margin: 34px 0 28px; font-size: clamp(24px, 2.5vw, 34px); font-weight: 500; line-height: 1.55; letter-spacing: -.025em; overflow-wrap: anywhere; }
+    .utterance { margin: 34px 0 28px; font-size: clamp(24px, 2.5vw, 34px); font-weight: 500; line-height: 1.55; letter-spacing: -.025em; overflow-wrap: break-word; }
     .resolved { display: grid; gap: 5px; font-size: 15px; line-height: 1.65; margin: -10px 0 28px; }
     .resolved span { color: var(--vh-muted); font-size: 12px; }
     .reply { border-top: 1px solid var(--vh-line); padding-top: 24px; }
-    .reply p { font-size: 17px; line-height: 1.8; margin: 14px 0 24px; white-space: pre-wrap; overflow-wrap: anywhere; }
-    .conversation button { padding-left: 0; color: var(--vh-accent); }
+    .reply p { font-size: 17px; line-height: 1.8; margin: 14px 0 24px; white-space: pre-wrap; overflow-wrap: break-word; }
+    .quick-actions { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center; }
+    .quick-actions button { padding-left: 0; color: var(--vh-accent); }
     .reality { padding: 32px; }
     .evidence { display: flex; gap: 12px; align-items: flex-start; margin: 24px 0 16px; }
     .evidence ha-icon { color: var(--vh-muted); width: 24px; height: 24px; flex-shrink: 0; }
     .evidence[data-tone="ok"] ha-icon { color: var(--success-color, #43806c); }
     .evidence[data-tone="bad"] ha-icon { color: var(--error-color, #b54747); }
     .evidence h3 { margin: 0; font-size: 20px; font-weight: 550; line-height: 1.5; }
-    .source { color: var(--vh-muted); font-size: 13px; line-height: 1.75; overflow-wrap: anywhere; }
+    .source { color: var(--vh-muted); font-size: 13px; line-height: 1.75; overflow-wrap: break-word; }
     .next-step { border-top: 1px solid var(--vh-line); padding-top: 24px; margin-top: 30px; }
     .next-step p { font-size: 15px; line-height: 1.8; margin: 12px 0 0; }
     .reality button { margin-top: 16px; }
     .diagnostics { padding: 0 26px; background: transparent; }
     summary { min-height: 60px; padding: 18px 0; font-size: 14px; font-weight: 550; cursor: pointer; }
     summary span { color: var(--vh-muted); font-size: 12px; font-weight: 400; margin-left: 18px; }
-    .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin: 6px 0 20px; }
+    .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(190px, 100%), 1fr)); gap: 14px; margin: 6px 0 20px; }
     .system-state { color: var(--vh-muted); font-size: 12px; margin-bottom: 24px; }
     .memory { border-top: 1px solid var(--vh-line); }
     ::slotted(*) { display: block; padding-bottom: 20px; }
@@ -3406,6 +3419,8 @@ class VoiceHarnessRuns extends i4 {
         display: flex;
         gap: 4px;
         flex-wrap: wrap;
+        max-width: 100%;
+        overflow-x: auto;
       }
       .filter {
         border: 0;
@@ -3413,6 +3428,8 @@ class VoiceHarnessRuns extends i4 {
         padding: 10px 14px;
         border-radius: 999px;
         color: var(--vh-muted);
+        white-space: nowrap;
+        flex-shrink: 0;
       }
       [aria-pressed="true"] {
         background: var(--vh-soft);
@@ -3452,6 +3469,7 @@ class VoiceHarnessRuns extends i4 {
         border: 0;
         border-radius: 14px;
         padding: 22px 8px;
+        white-space: normal;
       }
       .identity {
         min-width: 0;
@@ -4265,6 +4283,12 @@ class VoiceHarnessPlayground extends i4 {
       [field]: event.target.value
     };
   }
+  onPromptKeydown(event) {
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter" && !["connecting", "streaming", "evaluating"].includes(this.status) && this.draft.user.trim() && this.entries.length) {
+      event.preventDefault();
+      this.run("stream");
+    }
+  }
   render() {
     const t = this.t.bind(this);
     const working = ["connecting", "streaming", "evaluating"].includes(this.status);
@@ -4323,6 +4347,7 @@ class VoiceHarnessPlayground extends i4 {
               .value=${this.draft.user}
               ?disabled=${working}
               @input=${(event) => this.edit("user", event)}
+              @keydown=${(event) => this.onPromptKeydown(event)}
               placeholder=${t("What is the temperature in the bedroom?", "卧室现在温度怎么样？")}
             ></textarea>
           </label>
@@ -4349,9 +4374,24 @@ class VoiceHarnessPlayground extends i4 {
               </select></label
             >
           </div>
-          <details class="draft-details" open>
+          <div class="actions">
+            <button
+              class="primary"
+              ?disabled=${working || !this.draft.user.trim() || !this.entries.length}
+              @click=${() => this.run("stream")}
+            >
+              ${t("Run & watch", "运行并观察")} ↗</button
+            ><button
+              ?disabled=${working || !this.draft.user.trim()}
+              @click=${() => this.run("evaluate")}
+            >
+              ${t("Check assertions", "检查断言")}
+            </button>
+          </div>
+          <details class="draft-details">
             <summary>
-              ${t("Assertions & reference reply", "断言与参考回答")}
+              <span>${t("Assertions & reference reply", "断言与参考回答")}</span>
+              ${this.draft.response.trim() || this.draft.expected.trim() ? b2`<span class="chip">${t("Configured", "已配置")}</span>` : A}
             </summary>
             <label
               >${t("Reference reply (assertion check only)", "参考回答（用于断言检查）")}<textarea
@@ -4370,20 +4410,6 @@ class VoiceHarnessPlayground extends i4 {
               ></textarea>
             </label>
           </details>
-          <div class="actions">
-            <button
-              class="primary"
-              ?disabled=${working || !this.draft.user.trim() || !this.entries.length}
-              @click=${() => this.run("stream")}
-            >
-              ${t("Run & watch", "运行并观察")} ↗</button
-            ><button
-              ?disabled=${working || !this.draft.user.trim()}
-              @click=${() => this.run("evaluate")}
-            >
-              ${t("Check assertions", "检查断言")}
-            </button>
-          </div>
           <p class="muted boundary">
             ${t("Model preview makes a real provider request. Tool calls are shown as proposals; device state is never changed. Text scenarios do not measure microphone or network reliability.", "模型演练会真实请求服务商；工具调用显示为提案，设备状态不变。文本场景不代表麦克风或弱网实测。")}
           </p>
@@ -4594,6 +4620,7 @@ class VoiceHarnessPlayground extends i4 {
         gap: 10px;
         text-align: left;
         border-radius: 20px;
+        white-space: normal;
       }
       .scenario[aria-pressed="true"] {
         border-color: var(--vh-accent);
@@ -4649,15 +4676,40 @@ class VoiceHarnessPlayground extends i4 {
       }
       .route-fields {
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
         gap: 12px;
       }
       .draft-details {
         border-top: 1px solid var(--vh-line);
       }
       .draft-details summary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        list-style: none;
         color: var(--vh-muted);
         font-size: 13px;
+      }
+      .draft-details summary::-webkit-details-marker {
+        display: none;
+      }
+      .draft-details summary > span:first-child {
+        margin-right: auto;
+      }
+      .draft-details summary::after {
+        content: "";
+        width: 7px;
+        height: 7px;
+        flex: 0 0 auto;
+        border-right: 1.75px solid currentColor;
+        border-bottom: 1.75px solid currentColor;
+        opacity: 0.65;
+        transform: rotate(-45deg);
+        transition: transform 160ms ease;
+      }
+      .draft-details[open] summary::after {
+        transform: rotate(45deg);
       }
       .draft-details label {
         margin-top: 14px;
@@ -4715,7 +4767,7 @@ class VoiceHarnessPlayground extends i4 {
       }
       .stream-text {
         white-space: pre-wrap;
-        overflow-wrap: anywhere;
+        overflow-wrap: break-word;
         font-size: 16px;
         line-height: 1.9;
         min-height: 130px;
@@ -4754,7 +4806,7 @@ class VoiceHarnessPlayground extends i4 {
       }
       .stream-event strong {
         font-weight: 500;
-        overflow-wrap: anywhere;
+        overflow-wrap: break-word;
       }
       .stream-event code {
         white-space: pre-wrap;
@@ -4779,7 +4831,7 @@ class VoiceHarnessPlayground extends i4 {
       }
       .assertions p {
         margin-top: 8px;
-        overflow-wrap: anywhere;
+        overflow-wrap: break-word;
       }
       .monitor-actions {
         display: flex;
@@ -11402,6 +11454,8 @@ class VoiceHarnessSettings extends i4 {
         padding: 16px 14px;
         border-radius: 16px;
         color: var(--vh-muted);
+        white-space: normal;
+        min-width: 0;
       }
       .groups [aria-current="page"] {
         color: var(--vh-accent);
@@ -11441,6 +11495,9 @@ class VoiceHarnessSettings extends i4 {
       }
       .import-button {
         position: relative;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
         min-height: 44px;
         padding: 10px 16px;
         border: 1px solid var(--vh-line);
@@ -11449,6 +11506,7 @@ class VoiceHarnessSettings extends i4 {
         font-size: 14px;
         cursor: pointer;
         overflow: hidden;
+        white-space: nowrap;
       }
       .import-button input {
         position: absolute;
@@ -11477,7 +11535,7 @@ class VoiceHarnessSettings extends i4 {
       }
       .probe-grid {
         display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr));
         gap: 16px;
       }
       .probe-grid article {
@@ -11497,9 +11555,6 @@ class VoiceHarnessSettings extends i4 {
         .layout {
           grid-template-columns: 210px minmax(0, 1fr);
           gap: 18px;
-        }
-        .probe-grid {
-          grid-template-columns: 1fr;
         }
       }
       @media (max-width: 850px) {
@@ -11638,8 +11693,9 @@ function renderHarnessShell(root, model, legacyStyles) {
 var shellStyles = `
   :host { display:block; height:100%; overflow:auto; color-scheme:light dark; background:var(--vh-background); }
   .shell { max-width:1500px; margin:0 auto; padding:28px 42px 16px; box-sizing:border-box; font-family:inherit; min-height:100%; }
-  .topbar { display:grid; grid-template-columns:1fr minmax(350px,480px) 1fr; align-items:center; gap:24px; margin:0 0 44px; padding:0 0 24px; border-bottom:1px solid var(--vh-line); }
+  .topbar { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); align-items:center; gap:24px; margin:0 0 44px; padding:0 0 24px; border-bottom:1px solid var(--vh-line); }
   .brand {display:flex; align-items:center; gap:14px; min-width:0;}
+  .brand > div {min-width:0;}
   .brand-icon {display:flex; justify-content:center; align-items:center; gap:3px; width:44px; height:44px; border-radius:14px; background:var(--vh-accent); color:var(--text-primary-color,white); flex-shrink:0;}
   .brand-icon i {width:3px; height:12px; border-radius:3px; background:currentColor;}
   .brand-icon i:nth-child(2), .brand-icon i:nth-child(4) {height:20px;} .brand-icon i:nth-child(3) {height:28px;}
@@ -11654,7 +11710,7 @@ var shellStyles = `
   .surface {background:var(--vh-surface); border:1px solid var(--vh-line); border-radius:20px; box-shadow:none; padding:24px;}
   h2 {font-size:18px; letter-spacing:-.02em;} h3 {font-size:15px;}
   .meta, .settingsNote, .settingsDescription {font-size:12px; line-height:1.7; color:var(--vh-muted);}
-  .sectionHead {margin-bottom:20px; gap:14px;}
+  .sectionHead {margin-bottom:20px; gap:14px; flex-wrap:wrap;}
   .settingsForm .sectionHead h2 {font-size:18px;}
   .settingsGrid {display:grid; grid-template-columns:1fr; gap:18px;}
   .settingsForm {padding:24px; min-width:0;}
@@ -11669,8 +11725,8 @@ var shellStyles = `
   .settingsTriples {gap:16px;}
   .modelPicker .pickerToggle {min-height:48px; border-radius:10px; border-color:var(--vh-line); background:var(--vh-background);}
   .pickerRow, .pickerPick, .pickerProbe {min-height:44px;}
-  .pickerMenu {z-index:10; border-radius:14px;}
-  .modelsToolbar {gap:10px;}
+  .pickerMenu {z-index:40; border-radius:14px;}
+  .modelsToolbar {gap:10px; flex-wrap:wrap;}
   button, select, summary {min-height:44px;}
   .sound-library {margin-top:20px; padding-top:0; padding-bottom:0;}
   .sound-library > summary {padding:18px 0; font-size:14px;}
@@ -11684,7 +11740,7 @@ var shellStyles = `
   .satelliteLayout .surface {grid-column:auto;}
   .satelliteSummary {gap:12px;}
   [slot=policies] {padding-bottom:20px;}
-  @media (max-width:1150px) {.shell {padding:24px;} .topbar {grid-template-columns:1fr auto; gap:20px; margin-bottom:30px;} .topbar voice-harness-navigation {grid-column:1 / -1; grid-row:2;} .topbar .refresh {grid-column:2; grid-row:1;} }
+  @media (max-width:1200px) {.shell {padding:24px;} .topbar {grid-template-columns:1fr auto; gap:20px; margin-bottom:30px;} .topbar voice-harness-navigation {grid-column:1 / -1; grid-row:2;} .topbar .refresh {grid-column:2; grid-row:1;} }
   @media (max-width:600px) {.shell {padding:18px 16px 12px;} .topbar {margin-bottom:28px; padding-bottom:16px; gap:18px;} .topbar h1 {font-size:18px;} .brand {gap:10px;} .brand-icon {width:40px; height:40px;} .refresh .subline {display:none;} .shell-footer {font-size:9px; gap:12px; flex-wrap:wrap; margin-top:28px;} .shell-footer > span:last-child {display:none;} .surface, .settingsForm {padding:18px;} .configCard > summary {padding:14px;} .configCard fieldset {padding:14px;} .settingsTriples, .settingsTriples.two {grid-template-columns:1fr;} .earconGrid {grid-template-columns:1fr;} .modelsToolbar {flex-wrap:wrap;} .sectionHead {flex-wrap:wrap;} }
   @media (prefers-reduced-motion:reduce) {.content {view-transition-name:none;} }
 `;

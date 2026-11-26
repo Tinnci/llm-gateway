@@ -456,6 +456,8 @@ export class VoiceHarnessSettings extends LitElement {
         padding: 16px 14px;
         border-radius: 16px;
         color: var(--vh-muted);
+        white-space: normal;
+        min-width: 0;
       }
       .groups [aria-current="page"] {
         color: var(--vh-accent);
@@ -495,6 +497,9 @@ export class VoiceHarnessSettings extends LitElement {
       }
       .import-button {
         position: relative;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
         min-height: 44px;
         padding: 10px 16px;
         border: 1px solid var(--vh-line);
@@ -503,6 +508,7 @@ export class VoiceHarnessSettings extends LitElement {
         font-size: 14px;
         cursor: pointer;
         overflow: hidden;
+        white-space: nowrap;
       }
       .import-button input {
         position: absolute;
@@ -531,7 +537,7 @@ export class VoiceHarnessSettings extends LitElement {
       }
       .probe-grid {
         display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr));
         gap: 16px;
       }
       .probe-grid article {
@@ -551,9 +557,6 @@ export class VoiceHarnessSettings extends LitElement {
         .layout {
           grid-template-columns: 210px minmax(0, 1fr);
           gap: 18px;
-        }
-        .probe-grid {
-          grid-template-columns: 1fr;
         }
       }
       @media (max-width: 850px) {

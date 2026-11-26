@@ -284,7 +284,8 @@ const I18N = {
     "settings.api_fallbacks": "Fallback providers",
     "settings.api_open_options": "Open Home Assistant options",
     "config.title": "Configuration",
-    "config.group_core": "Connection, models and budgets",
+    "config.group_core": "Connection & models",
+    "config.group_advanced_generation": "Budgets, sampling & extra body (JSON)",
     "config.group_ha_prompt": "Home Assistant control and prompt",
     "config.group_search_fallbacks": "Search and provider fallbacks",
     "config.group_audio_traces": "Audio and diagnostics",
@@ -742,7 +743,8 @@ const I18N = {
     "settings.api_fallbacks": "Fallback Providers",
     "settings.api_open_options": "打开 Home Assistant 集成选项",
     "config.title": "配置中心",
-    "config.group_core": "连接、模型与预算",
+    "config.group_core": "连接与模型",
+    "config.group_advanced_generation": "预算、采样与额外请求体（JSON）",
     "config.group_ha_prompt": "Home Assistant 控制与提示词",
     "config.group_search_fallbacks": "搜索与提供商回退",
     "config.group_audio_traces": "音频与诊断",
@@ -2365,10 +2367,6 @@ class VoiceHarnessPanel extends HTMLElement {
             ${["fast", "mid", "deep"].map((tier) => (
               this._modelPickerField(entry.entry_id, tier, options[`${tier}_model`] || "", candidates)
             )).join("")}
-          </fieldset>
-
-          <fieldset>
-            <legend>${escapeHtml(this._t("config.routing_budgets"))}</legend>
             <label>
               <span>${escapeHtml(this._t("settings.routing_mode"))}</span>
               <select name="routing_mode">
@@ -2377,6 +2375,14 @@ class VoiceHarnessPanel extends HTMLElement {
                 `).join("")}
               </select>
             </label>
+          </fieldset>
+        </details>
+
+        <details class="configCard" data-settings-section="routing" data-open-key="${entry.entry_id}:advanced_generation">
+          <summary>${escapeHtml(this._t("config.group_advanced_generation"))}</summary>
+
+          <fieldset>
+            <legend>${escapeHtml(this._t("config.routing_budgets"))}</legend>
             <div class="settingsTriples">
               ${["fast", "mid", "deep"].map((tier) => `
                 ${this._configNumber(`${tier}_max_tokens`, this._t("settings.max_tokens", { tier: this._tierLabel(tier) }), options[`${tier}_max_tokens`] || 0, tokenRange.min, tokenRange.max)}
@@ -3863,12 +3869,12 @@ const styles = `
 
   .settingsTriples {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
     gap: 10px;
   }
 
   .settingsTriples.two {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
   }
 
   .modelPicker {
@@ -3965,6 +3971,7 @@ const styles = `
 
   .pickerToggle .pickerValue {
     flex: 1;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -3976,7 +3983,7 @@ const styles = `
   .pickerMenu {
     position: absolute;
     z-index: 40;
-    top: calc(100% - 20px);
+    top: calc(100% + 4px);
     left: 0;
     right: 0;
     color: var(--primary-text-color, #1a1a1a);
@@ -4031,6 +4038,7 @@ const styles = `
     cursor: pointer;
     font-size: 13px;
     text-align: left;
+    white-space: normal;
   }
 
   .pickerName,
@@ -4154,17 +4162,40 @@ const styles = `
     font-size: 15px;
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: 8px;
     list-style: none;
     user-select: none;
+  }
+
+  .configCard > summary::after {
+    content: "";
+    width: 8px;
+    height: 8px;
+    flex: 0 0 auto;
+    border-right: 1.75px solid currentColor;
+    border-bottom: 1.75px solid currentColor;
+    opacity: 0.6;
+    transform: rotate(-45deg);
+    transition: transform 160ms ease;
   }
 
   .configCard[open] > summary {
     border-bottom: 1px solid var(--divider-color, #eeeeee);
   }
 
+  .configCard[open] > summary::after {
+    transform: rotate(45deg);
+  }
+
   .configCard > summary::-webkit-details-marker {
     display: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .configCard > summary::after {
+      transition: none;
+    }
   }
 
   .earconSection {

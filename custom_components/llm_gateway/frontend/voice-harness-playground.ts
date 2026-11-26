@@ -120,6 +120,18 @@ export class VoiceHarnessPlayground extends LitElement {
       [field]: (event.target as HTMLTextAreaElement).value,
     };
   }
+  private onPromptKeydown(event: KeyboardEvent) {
+    if (
+      (event.metaKey || event.ctrlKey) &&
+      event.key === "Enter" &&
+      !["connecting", "streaming", "evaluating"].includes(this.status) &&
+      this.draft.user.trim() &&
+      this.entries.length
+    ) {
+      event.preventDefault();
+      void this.run("stream");
+    }
+  }
   render() {
     const t = this.t.bind(this);
     const working = ["connecting", "streaming", "evaluating"].includes(
@@ -187,6 +199,7 @@ export class VoiceHarnessPlayground extends LitElement {
               .value=${this.draft.user}
               ?disabled=${working}
               @input=${(event: Event) => this.edit("user", event)}
+              @keydown=${(event: KeyboardEvent) => this.onPromptKeydown(event)}
               placeholder=${t("What is the temperature in the bedroom?", "卧室现在温度怎么样？")}
             ></textarea>
           </label>
@@ -213,9 +226,24 @@ export class VoiceHarnessPlayground extends LitElement {
               </select></label
             >
           </div>
-          <details class="draft-details" open>
+          <div class="actions">
+            <button
+              class="primary"
+              ?disabled=${working || !this.draft.user.trim() || !this.entries.length}
+              @click=${() => this.run("stream")}
+            >
+              ${t("Run & watch", "运行并观察")} ↗</button
+            ><button
+              ?disabled=${working || !this.draft.user.trim()}
+              @click=${() => this.run("evaluate")}
+            >
+              ${t("Check assertions", "检查断言")}
+            </button>
+          </div>
+          <details class="draft-details">
             <summary>
-              ${t("Assertions & reference reply", "断言与参考回答")}
+              <span>${t("Assertions & reference reply", "断言与参考回答")}</span>
+              ${this.draft.response.trim() || this.draft.expected.trim() ? html`<span class="chip">${t("Configured", "已配置")}</span>` : nothing}
             </summary>
             <label
               >${t("Reference reply (assertion check only)", "参考回答（用于断言检查）")}<textarea
@@ -234,20 +262,6 @@ export class VoiceHarnessPlayground extends LitElement {
               ></textarea>
             </label>
           </details>
-          <div class="actions">
-            <button
-              class="primary"
-              ?disabled=${working || !this.draft.user.trim() || !this.entries.length}
-              @click=${() => this.run("stream")}
-            >
-              ${t("Run & watch", "运行并观察")} ↗</button
-            ><button
-              ?disabled=${working || !this.draft.user.trim()}
-              @click=${() => this.run("evaluate")}
-            >
-              ${t("Check assertions", "检查断言")}
-            </button>
-          </div>
           <p class="muted boundary">
             ${t("Model preview makes a real provider request. Tool calls are shown as proposals; device state is never changed. Text scenarios do not measure microphone or network reliability.", "模型演练会真实请求服务商；工具调用显示为提案，设备状态不变。文本场景不代表麦克风或弱网实测。")}
           </p>
@@ -486,6 +500,7 @@ export class VoiceHarnessPlayground extends LitElement {
         gap: 10px;
         text-align: left;
         border-radius: 20px;
+        white-space: normal;
       }
       .scenario[aria-pressed="true"] {
         border-color: var(--vh-accent);
@@ -541,15 +556,40 @@ export class VoiceHarnessPlayground extends LitElement {
       }
       .route-fields {
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
         gap: 12px;
       }
       .draft-details {
         border-top: 1px solid var(--vh-line);
       }
       .draft-details summary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        list-style: none;
         color: var(--vh-muted);
         font-size: 13px;
+      }
+      .draft-details summary::-webkit-details-marker {
+        display: none;
+      }
+      .draft-details summary > span:first-child {
+        margin-right: auto;
+      }
+      .draft-details summary::after {
+        content: "";
+        width: 7px;
+        height: 7px;
+        flex: 0 0 auto;
+        border-right: 1.75px solid currentColor;
+        border-bottom: 1.75px solid currentColor;
+        opacity: 0.65;
+        transform: rotate(-45deg);
+        transition: transform 160ms ease;
+      }
+      .draft-details[open] summary::after {
+        transform: rotate(45deg);
       }
       .draft-details label {
         margin-top: 14px;
@@ -607,7 +647,7 @@ export class VoiceHarnessPlayground extends LitElement {
       }
       .stream-text {
         white-space: pre-wrap;
-        overflow-wrap: anywhere;
+        overflow-wrap: break-word;
         font-size: 16px;
         line-height: 1.9;
         min-height: 130px;
@@ -646,7 +686,7 @@ export class VoiceHarnessPlayground extends LitElement {
       }
       .stream-event strong {
         font-weight: 500;
-        overflow-wrap: anywhere;
+        overflow-wrap: break-word;
       }
       .stream-event code {
         white-space: pre-wrap;
@@ -671,7 +711,7 @@ export class VoiceHarnessPlayground extends LitElement {
       }
       .assertions p {
         margin-top: 8px;
-        overflow-wrap: anywhere;
+        overflow-wrap: break-word;
       }
       .monitor-actions {
         display: flex;

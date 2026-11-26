@@ -9,6 +9,7 @@ for (const key of [
   "HTMLElement",
   "HTMLInputElement",
   "HTMLDetailsElement",
+  "KeyboardEvent",
   "CustomEvent",
   "Document",
   "CSSStyleSheet",
@@ -367,4 +368,59 @@ test("reference-only assertion checks do not claim a provider completed", async 
   } finally {
     playground.remove();
   }
+});
+
+test("playground starts with assertions collapsed and submits on Ctrl/Cmd+Enter", async () => {
+  const playground = document.createElement("voice-harness-playground");
+  const messages = [];
+  playground.entries = [{ entry_id: "e", title: "Gateway" }];
+  playground.hass = {
+    connection: {
+      subscribeMessage: async (_cb, message) => {
+        messages.push(message);
+        return () => {};
+      },
+    },
+  };
+  document.body.append(playground);
+  try {
+    await playground.updateComplete;
+    const details = playground.shadowRoot.querySelector("details.draft-details");
+    expect(details.open).toBe(false);
+    const input = playground.shadowRoot.querySelector("textarea");
+    input.value = "Turn off kitchen lights";
+    input.dispatchEvent(new dom.Event("input"));
+    await playground.updateComplete;
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }),
+    );
+    await playground.updateComplete;
+    expect(messages).toHaveLength(1);
+    expect(messages[0].type).toBe("llm_gateway/harness/stream");
+    expect(messages[0].user).toBe("Turn off kitchen lights");
+  } finally {
+    playground.remove();
+  }
+});
+
+test("config form keeps core open and collapses advanced budgets, sampling, and extra_body", () => {
+  const panel = createPanel();
+  panel._data = {
+    entries: [{ entry_id: "e", title: "Gateway", state: "loaded" }],
+    editable: { routing_modes: ["auto", "fast", "mid", "deep"] },
+  };
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML = panel._configForm(
+    { entry_id: "e", title: "Gateway", first_response_audio: {} },
+    { base_url: "https://example.com/v1", options: { routing_mode: "auto" } },
+  );
+  const coreCard = wrapper.querySelector('[data-open-key="e:core"]');
+  const advCard = wrapper.querySelector('[data-open-key="e:advanced_generation"]');
+  expect(coreCard).toBeTruthy();
+  expect(coreCard.hasAttribute("open")).toBe(true);
+  expect(coreCard.querySelector('select[name="routing_mode"]')).toBeTruthy();
+  expect(advCard).toBeTruthy();
+  expect(advCard.hasAttribute("open")).toBe(false);
+  expect(advCard.querySelector('[name="temperature"]')).toBeTruthy();
+  expect(advCard.querySelector('[name="extra_body"]')).toBeTruthy();
 });

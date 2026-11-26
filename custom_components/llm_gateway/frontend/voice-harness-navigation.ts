@@ -128,6 +128,12 @@ export class VoiceHarnessNavigation extends LitElement {
         overflow: hidden;
         text-overflow: ellipsis;
       }
+      @media (max-width: 720px) {
+        button {
+          padding: 0 8px;
+          gap: 5px;
+        }
+      }
       @media (max-width: 560px) {
         button {
           padding: 8px 4px;

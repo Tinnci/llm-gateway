@@ -83,7 +83,11 @@ export class VoiceHarnessOverview extends LitElement {
           <div class="reply"><span class="eyebrow">${t("THE REPLY", "系统的回应")}</span>
             <p>${facts?.reply || (latest ? t("The reply has not been recorded yet.", "暂未记录到回复。") : t("Speak as you normally would.", "像平常一样开口就好。"))}</p>
           </div>
-          <button class="quiet" @click=${() => this.navigate("runs")}>${t("Conversation records", "查看对话记录")} <ha-icon icon="mdi:arrow-top-right"></ha-icon></button>
+          <div class="quick-actions">
+            <button class="quiet" @click=${() => this.navigate("runs")}>${t("Conversation records", "查看对话记录")} <ha-icon icon="mdi:arrow-top-right"></ha-icon></button>
+            <button class="quiet" @click=${() => this.navigate("test")}>${t("Test a phrase", "测试一句话")} <ha-icon icon="mdi:flask-outline"></ha-icon></button>
+            <button class="quiet" @click=${() => this.navigate("settings")}>${t("Voice settings", "语音设置")} <ha-icon icon="mdi:tune-variant"></ha-icon></button>
+          </div>
         </section>
         <section class="surface reality" aria-label=${t("Result and next step", "结果与下一步")}>
           <span class="eyebrow">${t("WHAT HAPPENED", "实际结果")}</span>
@@ -123,7 +127,7 @@ export class VoiceHarnessOverview extends LitElement {
       <p class="system-state">${loaded ? t("Gateway loaded", "网关已加载") : t("Gateway state unknown", "网关状态未知")} · ${t("Connection checks and missing measurements follow below.", "连接检查与缺失测量见下方。")}</p>
     `;
   }
-  private navigate(destination: "runs" | "settings") {
+  private navigate(destination: "runs" | "test" | "settings") {
     this.dispatchEvent(new CustomEvent("harness-overview-navigate", { bubbles: true, composed: true, detail: { destination } }));
   }
   static styles = [harnessFoundationStyles, harnessButtonStyles, harnessSurfaceStyles, css`
@@ -136,26 +140,27 @@ export class VoiceHarnessOverview extends LitElement {
     .conversation { padding: 32px; background: radial-gradient(ellipse at top left, color-mix(in srgb, var(--vh-accent) 6%, transparent), transparent 70%), var(--vh-surface); }
     .conversation .section-head { align-items: center; }
     time { font-size: 12px; color: var(--vh-muted); font-variant-numeric: tabular-nums; }
-    .utterance { margin: 34px 0 28px; font-size: clamp(24px, 2.5vw, 34px); font-weight: 500; line-height: 1.55; letter-spacing: -.025em; overflow-wrap: anywhere; }
+    .utterance { margin: 34px 0 28px; font-size: clamp(24px, 2.5vw, 34px); font-weight: 500; line-height: 1.55; letter-spacing: -.025em; overflow-wrap: break-word; }
     .resolved { display: grid; gap: 5px; font-size: 15px; line-height: 1.65; margin: -10px 0 28px; }
     .resolved span { color: var(--vh-muted); font-size: 12px; }
     .reply { border-top: 1px solid var(--vh-line); padding-top: 24px; }
-    .reply p { font-size: 17px; line-height: 1.8; margin: 14px 0 24px; white-space: pre-wrap; overflow-wrap: anywhere; }
-    .conversation button { padding-left: 0; color: var(--vh-accent); }
+    .reply p { font-size: 17px; line-height: 1.8; margin: 14px 0 24px; white-space: pre-wrap; overflow-wrap: break-word; }
+    .quick-actions { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center; }
+    .quick-actions button { padding-left: 0; color: var(--vh-accent); }
     .reality { padding: 32px; }
     .evidence { display: flex; gap: 12px; align-items: flex-start; margin: 24px 0 16px; }
     .evidence ha-icon { color: var(--vh-muted); width: 24px; height: 24px; flex-shrink: 0; }
     .evidence[data-tone="ok"] ha-icon { color: var(--success-color, #43806c); }
     .evidence[data-tone="bad"] ha-icon { color: var(--error-color, #b54747); }
     .evidence h3 { margin: 0; font-size: 20px; font-weight: 550; line-height: 1.5; }
-    .source { color: var(--vh-muted); font-size: 13px; line-height: 1.75; overflow-wrap: anywhere; }
+    .source { color: var(--vh-muted); font-size: 13px; line-height: 1.75; overflow-wrap: break-word; }
     .next-step { border-top: 1px solid var(--vh-line); padding-top: 24px; margin-top: 30px; }
     .next-step p { font-size: 15px; line-height: 1.8; margin: 12px 0 0; }
     .reality button { margin-top: 16px; }
     .diagnostics { padding: 0 26px; background: transparent; }
     summary { min-height: 60px; padding: 18px 0; font-size: 14px; font-weight: 550; cursor: pointer; }
     summary span { color: var(--vh-muted); font-size: 12px; font-weight: 400; margin-left: 18px; }
-    .metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin: 6px 0 20px; }
+    .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(190px, 100%), 1fr)); gap: 14px; margin: 6px 0 20px; }
     .system-state { color: var(--vh-muted); font-size: 12px; margin-bottom: 24px; }
     .memory { border-top: 1px solid var(--vh-line); }
     ::slotted(*) { display: block; padding-bottom: 20px; }

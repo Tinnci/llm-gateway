@@ -156,8 +156,9 @@ export function renderHarnessShell(
 const shellStyles = `
   :host { display:block; height:100%; overflow:auto; color-scheme:light dark; background:var(--vh-background); }
   .shell { max-width:1500px; margin:0 auto; padding:28px 42px 16px; box-sizing:border-box; font-family:inherit; min-height:100%; }
-  .topbar { display:grid; grid-template-columns:1fr minmax(350px,480px) 1fr; align-items:center; gap:24px; margin:0 0 44px; padding:0 0 24px; border-bottom:1px solid var(--vh-line); }
+  .topbar { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); align-items:center; gap:24px; margin:0 0 44px; padding:0 0 24px; border-bottom:1px solid var(--vh-line); }
   .brand {display:flex; align-items:center; gap:14px; min-width:0;}
+  .brand > div {min-width:0;}
   .brand-icon {display:flex; justify-content:center; align-items:center; gap:3px; width:44px; height:44px; border-radius:14px; background:var(--vh-accent); color:var(--text-primary-color,white); flex-shrink:0;}
   .brand-icon i {width:3px; height:12px; border-radius:3px; background:currentColor;}
   .brand-icon i:nth-child(2), .brand-icon i:nth-child(4) {height:20px;} .brand-icon i:nth-child(3) {height:28px;}
@@ -172,7 +173,7 @@ const shellStyles = `
   .surface {background:var(--vh-surface); border:1px solid var(--vh-line); border-radius:20px; box-shadow:none; padding:24px;}
   h2 {font-size:18px; letter-spacing:-.02em;} h3 {font-size:15px;}
   .meta, .settingsNote, .settingsDescription {font-size:12px; line-height:1.7; color:var(--vh-muted);}
-  .sectionHead {margin-bottom:20px; gap:14px;}
+  .sectionHead {margin-bottom:20px; gap:14px; flex-wrap:wrap;}
   .settingsForm .sectionHead h2 {font-size:18px;}
   .settingsGrid {display:grid; grid-template-columns:1fr; gap:18px;}
   .settingsForm {padding:24px; min-width:0;}
@@ -187,8 +188,8 @@ const shellStyles = `
   .settingsTriples {gap:16px;}
   .modelPicker .pickerToggle {min-height:48px; border-radius:10px; border-color:var(--vh-line); background:var(--vh-background);}
   .pickerRow, .pickerPick, .pickerProbe {min-height:44px;}
-  .pickerMenu {z-index:10; border-radius:14px;}
-  .modelsToolbar {gap:10px;}
+  .pickerMenu {z-index:40; border-radius:14px;}
+  .modelsToolbar {gap:10px; flex-wrap:wrap;}
   button, select, summary {min-height:44px;}
   .sound-library {margin-top:20px; padding-top:0; padding-bottom:0;}
   .sound-library > summary {padding:18px 0; font-size:14px;}
@@ -202,7 +203,7 @@ const shellStyles = `
   .satelliteLayout .surface {grid-column:auto;}
   .satelliteSummary {gap:12px;}
   [slot=policies] {padding-bottom:20px;}
-  @media (max-width:1150px) {.shell {padding:24px;} .topbar {grid-template-columns:1fr auto; gap:20px; margin-bottom:30px;} .topbar voice-harness-navigation {grid-column:1 / -1; grid-row:2;} .topbar .refresh {grid-column:2; grid-row:1;} }
+  @media (max-width:1200px) {.shell {padding:24px;} .topbar {grid-template-columns:1fr auto; gap:20px; margin-bottom:30px;} .topbar voice-harness-navigation {grid-column:1 / -1; grid-row:2;} .topbar .refresh {grid-column:2; grid-row:1;} }
   @media (max-width:600px) {.shell {padding:18px 16px 12px;} .topbar {margin-bottom:28px; padding-bottom:16px; gap:18px;} .topbar h1 {font-size:18px;} .brand {gap:10px;} .brand-icon {width:40px; height:40px;} .refresh .subline {display:none;} .shell-footer {font-size:9px; gap:12px; flex-wrap:wrap; margin-top:28px;} .shell-footer > span:last-child {display:none;} .surface, .settingsForm {padding:18px;} .configCard > summary {padding:14px;} .configCard fieldset {padding:14px;} .settingsTriples, .settingsTriples.two {grid-template-columns:1fr;} .earconGrid {grid-template-columns:1fr;} .modelsToolbar {flex-wrap:wrap;} .sectionHead {flex-wrap:wrap;} }
   @media (prefers-reduced-motion:reduce) {.content {view-transition-name:none;} }
 `;

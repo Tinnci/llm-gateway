@@ -105,6 +105,7 @@ export const harnessButtonStyles = css`
     justify-content: center;
     gap: 8px;
     font-weight: 550;
+    white-space: nowrap;
     transition:
       background 180ms,
       transform 180ms var(--vh-ease),
@@ -180,9 +181,10 @@ export const harnessSurfaceStyles = css`
   }
   .section-head {
     display: flex;
+    flex-wrap: wrap;
     justify-content: space-between;
     align-items: center;
-    gap: 16px;
+    gap: 10px 16px;
     margin-bottom: 20px;
   }
   .section-head > div {

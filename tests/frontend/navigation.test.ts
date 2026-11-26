@@ -122,8 +122,12 @@ describe("Voice Harness overview", () => {
     overview.addEventListener("harness-overview-navigate", (event) => {
       destinations.push((event as CustomEvent<{ destination: string }>).detail.destination);
     });
-    overview.shadowRoot?.querySelector("button")?.click();
-    expect(destinations).toEqual(["runs"]);
+    const buttons = [...(overview.shadowRoot?.querySelectorAll(".quick-actions button") || [])];
+    expect(buttons).toHaveLength(3);
+    buttons[0]?.click();
+    buttons[1]?.click();
+    buttons[2]?.click();
+    expect(destinations).toEqual(["runs", "test", "settings"]);
   });
 
   test("native disclosure stays open while observations refresh", async () => {
