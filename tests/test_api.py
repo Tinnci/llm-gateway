@@ -403,3 +403,55 @@ async def test_chat_completion_strips_inline_tool_syntax(hass, aioclient_mock):
     )
     assert message["content"] == "答案。"
     assert usage["total_tokens"] == 7
+
+
+async def test_catalog_304_with_client_preserves_cached_models(hass, aioclient_mock):
+    """Real LLMGatewayClient 304 NotModified return must keep cached models."""
+    aioclient_mock.get(
+        f"{BASE}/models",
+        json={"data": [{"id": "b"}, {"id": "a"}]},
+        headers={"ETag": '"v1"', "Last-Modified": "Mon, 01 Jan 2035 00:00:00 GMT"},
+    )
+    client = LLMGatewayClient(async_get_clientsession(hass), BASE, "k")
+    catalog = await _fresh_catalog(hass)
+
+    first = await catalog.async_get(client=client, base_url=BASE)
+    assert first.models == ["a", "b"]
+
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(
+        f"{BASE}/models",
+        status=304,
+        headers={"ETag": '"v2"'},
+    )
+    again = await catalog.async_get(client=client, base_url=BASE, force=True)
+
+    assert again.source == "revalidated"
+    assert again.models == ["a", "b"]
+
+
+async def test_probe_latency_forwards_extra_body(hass, aioclient_mock):
+    """Latency probes forward non-reserved extra_body options."""
+    aioclient_mock.post(
+        f"{BASE}/chat/completions",
+        text=(
+            'data: {"choices":[{"delta":{"content":"好"}}]}\n\n'
+            'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+            "data: [DONE]\n\n"
+        ),
+        headers={"Content-Type": "text/event-stream"},
+    )
+    client = LLMGatewayClient(async_get_clientsession(hass), BASE, "k")
+    sample = await client.async_probe_latency(
+        model="m1",
+        extra_body={
+            "chat_template_kwargs": {"enable_thinking": False},
+            "stream": False,
+            "model": "override-ignored",
+        },
+    )
+    assert sample.ok is True
+    sent = aioclient_mock.mock_calls[-1][2]
+    assert sent["model"] == "m1"
+    assert sent["stream"] is True
+    assert sent["chat_template_kwargs"] == {"enable_thinking": False}

@@ -93,7 +93,7 @@ from .observability import RunQuery, compare_runs, query_events
 from .policy import should_allow_search
 from .providers import normalize_provider_profiles_json, provider_profiles_from_options
 from .replay import ReplayError, ReplayOverrides, async_replay_turn
-from .router import select_model_route
+from .router import parse_extra_body, select_model_route
 from .satellite_diagnostics import satellite_diagnostic_snapshot
 from .search import search_providers_from_options
 from .voice_text import markdown_to_spoken_text
@@ -1099,6 +1099,7 @@ class HarnessConfigModelsView(HomeAssistantView):
             lookup = await model_catalog_for(hass).async_get(
                 client=client,
                 base_url=base_url,
+                force=bool(payload.get("force")),
             )
         except LLMGatewayAuthError:
             return self.json_message(
@@ -1177,12 +1178,19 @@ class HarnessConfigLatencyView(HomeAssistantView):
 
         client = LLMGatewayClient(async_get_clientsession(hass), base_url, api_key)
         semaphore = asyncio.Semaphore(_LATENCY_CONCURRENCY)
+        entry_id = payload.get("entry_id")
 
         async def _probe(model: str) -> LatencySample:
+            probe_extra = _probe_extra_body_for_model(hass, entry_id, model)
+            probe_kwargs: dict[str, Any] = (
+                {"extra_body": probe_extra} if probe_extra else {}
+            )
             async with semaphore:
                 try:
                     return await client.async_probe_latency(
-                        model=model, max_tokens=max_tokens
+                        model=model,
+                        max_tokens=max_tokens,
+                        **probe_kwargs,
                     )
                 except LLMGatewayAuthError:
                     return LatencySample(model=model, ok=False, error="invalid_auth")
@@ -1808,6 +1816,46 @@ async def _resolve_probe_creds(
     except ValueError as err:
         return None, _error_response(str(err), HTTPStatus.BAD_REQUEST, "invalid_data")
     return (base_url, api_key), None
+
+
+def _probe_extra_body_for_model(
+    hass: HomeAssistant,
+    entry_id: object,
+    model: str,
+) -> dict[str, Any] | None:
+    """Resolve short-probe extra_body, suppressing thinking for 32-token TTFT probes."""
+    entry = _select_entry(hass, entry_id)
+    if entry is None:
+        return None
+    opts = entry.options
+    candidates: list[dict[str, Any]] = []
+    tier_sources = (
+        (
+            (opts.get(CONF_FAST_MODEL), opts.get(CONF_CHAT_MODEL)),
+            opts.get(CONF_FAST_EXTRA_BODY) or opts.get(CONF_EXTRA_BODY),
+        ),
+        ((opts.get(CONF_MID_MODEL),), opts.get(CONF_MID_EXTRA_BODY)),
+        ((opts.get(CONF_DEEP_MODEL),), opts.get(CONF_DEEP_EXTRA_BODY)),
+    )
+    for tier_models, raw_extra in tier_sources:
+        if model not in tier_models:
+            continue
+        parsed = parse_extra_body(raw_extra)
+        if parsed:
+            candidates.append(parsed)
+    if not candidates:
+        return None
+    extra = dict(candidates[0])
+    ctk = extra.get("chat_template_kwargs")
+    thinking_enabled = isinstance(ctk, dict) and ctk.get("enable_thinking") is True
+    has_budget = any("reasoning_budget" in item for item in candidates)
+    if thinking_enabled or has_budget:
+        if isinstance(ctk, dict):
+            extra["chat_template_kwargs"] = {**ctk, "enable_thinking": False}
+        else:
+            extra.setdefault("chat_template_kwargs", {"enable_thinking": False})
+        extra.pop("reasoning_budget", None)
+    return extra
 
 
 def _config_base_url(data_payload: dict[str, Any], current: dict[str, Any]) -> str:

@@ -33,3 +33,6 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+filterwarnings = [
+    "ignore::aiohttp.web_exceptions.NotAppKeyWarning:homeassistant\\.components\\.http\\.",
+]

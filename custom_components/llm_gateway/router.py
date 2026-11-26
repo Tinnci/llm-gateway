@@ -116,12 +116,20 @@ def select_model_route(
 def select_verifier_route(options: dict[str, Any]) -> ModelRoute:
     """Choose a capable bounded route for synchronous verifier sub-agents."""
     route = _route_from_options("deep", options)
+    bounded_tokens = min(route.max_tokens, _VERIFIER_MAX_TOKENS)
     extra_body = dict(route.extra_body or {})
+    budget = extra_body.get("reasoning_budget")
+    if (
+        isinstance(budget, (int, float))
+        and not isinstance(budget, bool)
+        and budget > bounded_tokens // 2
+    ):
+        extra_body["reasoning_budget"] = max(1, bounded_tokens // 2)
     extra_body.setdefault("response_format", _VERIFIER_RESPONSE_FORMAT)
     return ModelRoute(
         kind="deep",
         model=route.model,
-        max_tokens=min(route.max_tokens, _VERIFIER_MAX_TOKENS),
+        max_tokens=bounded_tokens,
         timeout_s=min(route.timeout_s, _VERIFIER_TIMEOUT_S),
         extra_body=extra_body,
         async_deep_task=False,

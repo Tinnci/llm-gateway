@@ -95,6 +95,26 @@ class ModelCatalogCache:
                 break
             del self._data[oldest_key]
 
+    async def _async_revalidated_lookup(
+        self,
+        key: str,
+        entry: dict[str, Any] | None,
+        now: float,
+        *,
+        etag: str | None,
+        last_modified: str | None,
+    ) -> CatalogLookup:
+        if entry is None or not entry.get("models"):
+            raise LLMGatewayError("Catalog revalidated without a cached copy")
+        entry["checked_at"] = now
+        if etag:
+            entry["etag"] = etag
+        if last_modified:
+            entry["last_modified"] = last_modified
+        self._prune_locked(key)
+        await self._async_save()
+        return CatalogLookup(models=list(entry["models"]), source="revalidated")
+
     async def async_get(
         self,
         *,
@@ -121,18 +141,13 @@ class ModelCatalogCache:
             )
         except LLMGatewayCatalogNotModifiedError as err:
             # 304: nothing downloaded; only freshness needs bumping.
-            if entry is None:
-                raise LLMGatewayError(
-                    "Catalog revalidated without a cached copy"
-                ) from err
-            entry["checked_at"] = now
-            if err.etag:
-                entry["etag"] = err.etag
-            if err.last_modified:
-                entry["last_modified"] = err.last_modified
-            self._prune_locked(key)
-            await self._async_save()
-            return CatalogLookup(models=list(entry["models"]), source="revalidated")
+            return await self._async_revalidated_lookup(
+                key,
+                entry,
+                now,
+                etag=err.etag,
+                last_modified=err.last_modified,
+            )
         except LLMGatewayAuthError:
             raise
         except LLMGatewayQuotaExhaustedError:
@@ -149,6 +164,15 @@ class ModelCatalogCache:
                     stale=True,
                 )
             raise
+
+        if fetch.not_modified:
+            return await self._async_revalidated_lookup(
+                key,
+                entry,
+                now,
+                etag=fetch.etag,
+                last_modified=fetch.last_modified,
+            )
 
         self._data[key] = {
             "models": fetch.models,

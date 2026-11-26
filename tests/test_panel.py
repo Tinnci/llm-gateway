@@ -20,6 +20,8 @@ from custom_components.llm_gateway.api import (
 from custom_components.llm_gateway.const import (
     CONF_BASE_URL,
     CONF_CHAT_MODEL,
+    CONF_DEEP_EXTRA_BODY,
+    CONF_DEEP_MODEL,
     CONF_DIAGNOSTIC_TRACES,
     CONF_FAST_CHAT_TIMEOUT,
     CONF_FAST_MAX_TOKENS,
@@ -410,6 +412,76 @@ async def test_harness_latency_api_rejects_bad_input(
     assert response.status == 400
     data = await response.json()
     assert data["code"] == code
+
+
+async def test_harness_models_api_passes_force_flag(
+    hass, hass_client, mock_config_entry
+):
+    """POST /harness/config/models forwards the force flag to ModelCatalogCache."""
+    assert await async_setup_component(hass, "http", {})
+    calls: list[bool] = []
+
+    async def fake_async_get(self, *, client, base_url, force=False):
+        calls.append(force)
+        return SimpleNamespace(models=["nvidia/m1"], source="fetched", stale=False)
+
+    with patch(
+        "custom_components.llm_gateway.model_catalog.ModelCatalogCache.async_get",
+        fake_async_get,
+    ):
+        mock_config_entry.add_to_hass(hass)
+        await async_setup_panel(hass)
+        client = await hass_client()
+
+        response = await client.post(
+            "/api/llm_gateway/harness/config/models",
+            json={"entry_id": mock_config_entry.entry_id, "force": True},
+        )
+
+    assert response.status == 200
+    data = await response.json()
+    assert data["models"] == ["nvidia/m1"]
+    assert calls == [True]
+
+
+async def test_harness_latency_api_disables_thinking_from_entry_options(
+    hass, hass_client, mock_config_entry
+):
+    """Latency probes suppress thinking/reasoning budgets configured on deep tiers."""
+    assert await async_setup_component(hass, "http", {})
+    seen_extra: list[dict | None] = []
+
+    async def fake_probe(self, *, model, max_tokens=32, timeout_s=25, extra_body=None):
+        seen_extra.append(extra_body)
+        return LatencySample(model=model, ok=True, ttft_ms=250.0, tokens=4)
+
+    mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_config_entry,
+        options={
+            **mock_config_entry.options,
+            CONF_DEEP_MODEL: "deep-thinker",
+            CONF_DEEP_EXTRA_BODY: (
+                '{"chat_template_kwargs":{"enable_thinking":true},'
+                '"reasoning_budget":16384}'
+            ),
+        },
+    )
+
+    with patch.object(LLMGatewayClient, "async_probe_latency", fake_probe):
+        await async_setup_panel(hass)
+        client = await hass_client()
+
+        response = await client.post(
+            "/api/llm_gateway/harness/config/latency",
+            json={
+                "entry_id": mock_config_entry.entry_id,
+                "models": ["deep-thinker"],
+            },
+        )
+
+    assert response.status == 200
+    assert seen_extra == [{"chat_template_kwargs": {"enable_thinking": False}}]
 
 
 async def test_harness_status_api(hass, hass_client):

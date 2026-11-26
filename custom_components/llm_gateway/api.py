@@ -262,9 +262,10 @@ class LLMGatewayClient:
         model: str,
         max_tokens: int = PROBE_MAX_TOKENS,
         timeout_s: int = PROBE_TIMEOUT_S,
+        extra_body: dict[str, Any] | None = None,
     ) -> LatencySample:
         """Stream a tiny completion and measure TTFT plus decode speed."""
-        payload = {
+        payload: dict[str, Any] = {
             "model": model,
             "messages": [
                 {"role": "system", "content": PROBE_SYSTEM_PROMPT},
@@ -273,6 +274,10 @@ class LLMGatewayClient:
             "max_tokens": max(1, max_tokens),
             "stream": True,
         }
+        for key, value in (extra_body or {}).items():
+            if key in {"model", "messages", "max_tokens", "stream"}:
+                continue
+            payload[key] = value
         url = f"{self._base_url}/chat/completions"
         started = time.monotonic()
         LOGGER.info(
@@ -377,7 +382,7 @@ class LLMGatewayClient:
         max_tokens: int,
         temperature: float,
         top_p: float,
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], dict[str, int] | None]:
         """Run a non-streaming chat completion; return (message, usage)."""
         payload: dict[str, Any] = {
             "model": model,

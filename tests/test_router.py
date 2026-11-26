@@ -95,3 +95,22 @@ def test_select_verifier_route_preserves_extra_body_with_json_response():
         "reasoning_budget": 256,
         "response_format": {"type": "json_object"},
     }
+
+
+def test_select_verifier_route_caps_excessive_reasoning_budget():
+    route = select_verifier_route(
+        {
+            CONF_DEEP_MODEL: "deep",
+            CONF_DEEP_EXTRA_BODY: (
+                '{"chat_template_kwargs": {"enable_thinking": true}, '
+                '"reasoning_budget": 16384}'
+            ),
+        }
+    )
+
+    assert route.max_tokens == 512
+    assert route.extra_body == {
+        "chat_template_kwargs": {"enable_thinking": True},
+        "reasoning_budget": 256,
+        "response_format": {"type": "json_object"},
+    }

@@ -1678,6 +1678,7 @@ class VoiceHarnessPanel extends HTMLElement {
       payload: {
         entry_id: form.dataset.entryId || "",
         data: this._formCreds(form),
+        force: true,
       },
     });
     if (!result) {
@@ -1694,23 +1695,36 @@ class VoiceHarnessPanel extends HTMLElement {
    */
   _updatePickersWithModels(form, models) {
     const entryId = form.dataset.entryId || "";
-    const live = (models || []).filter(Boolean);
+    const live = [];
+    const seen = new Set();
+    for (const id of models || []) {
+      if (id && !seen.has(id)) {
+        seen.add(id);
+        live.push(id);
+      }
+    }
     for (const tier of ["fast", "mid", "deep"]) {
       const key = `${entryId}:${tier}`;
-      const options = this._pickerOptions[key] || [];
-      const rows = this._pickerRows[key] || new Map();
-      let changed = false;
-      for (const id of live) {
-        if (!rows.has(id)) {
-          rows.set(id, { id, primary: id, secondary: "" });
-          changed = true;
-        }
+      const container = this.shadowRoot?.querySelector(`[data-picker-key="${key}"]`);
+      const hidden = container?.querySelector('input[type="hidden"]');
+      const currentValue = hidden instanceof HTMLInputElement ? hidden.value : "";
+      const nextIds = [...live];
+      if (currentValue && !seen.has(currentValue)) {
+        nextIds.unshift(currentValue);
       }
-      if (!changed && options.length === rows.size) {
+      const prevOptions = this._pickerOptions[key] || [];
+      if (
+        prevOptions.length === nextIds.length &&
+        prevOptions.every((id, idx) => id === nextIds[idx])
+      ) {
         continue;
       }
+      const rows = new Map();
+      for (const id of nextIds) {
+        rows.set(id, { id, primary: id, secondary: "" });
+      }
       this._pickerRows[key] = rows;
-      this._pickerOptions[key] = Array.from(rows.keys());
+      this._pickerOptions[key] = nextIds;
       this._renderPicker(key);
     }
   }
